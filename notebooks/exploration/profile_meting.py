@@ -25,8 +25,8 @@
 
 # COMMAND ----------
 
-dbutils.widgets.text("catalog", "hl_grondwaterpeilmeting", "Catalog")
-dbutils.widgets.text("schema", "default", "Schema")
+dbutils.widgets.text("catalog", "gold_prd", "Catalog")
+dbutils.widgets.text("schema", "hl_grondwaterpeilmeting", "Schema")
 dbutils.widgets.text("table", "meting", "Table")
 dbutils.widgets.text("min_days", "365", "Minimum span in days")
 
