@@ -11,6 +11,8 @@ dist/
 *.csv
 *.pas
 !tests/data/*.csv
+# Forcing is small and ships with the code: the cluster has no internet.
+!data/forcing/*.csv
 
 # Databricks / local config with secrets
 .databricks/

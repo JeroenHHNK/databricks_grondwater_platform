@@ -48,11 +48,14 @@ dbutils.widgets.text("station", "249", "KNMI station")
 dbutils.widgets.text("backlog_start", "2020-01-01", "Backlog start (first run)")
 dbutils.widgets.text("lookback_days", "2", "Re-fetch days before watermark")
 
+# "repo" read data/forcing/knmi_forcing_<station>.csv, committed to this repo and
+#        refreshed locally by scripts/check_knmi.py. The default, because the
+#        cluster has no outbound internet.
 # "api"  call KNMI directly. Needs outbound HTTPS from the cluster.
-# "file" read a CSV exported by scripts/check_knmi.py --export, for a cluster
-#        with no internet egress. Everything downstream is identical.
-dbutils.widgets.dropdown("source", "api", ["api", "file"], "Source")
-dbutils.widgets.text("source_path", "", "Export CSV path (source=file)")
+# "file" read an export from an explicit path (a Volume, /Workspace/Users/...).
+# All three produce the same frame, so everything downstream is identical.
+dbutils.widgets.dropdown("source", "repo", ["repo", "api", "file"], "Source")
+dbutils.widgets.text("source_path", "", "CSV path (source=file only)")
 
 # COMMAND ----------
 
@@ -99,6 +102,7 @@ from tarso_pipeline.forcing_plot import (
     use_headless_backend,
 )
 from tarso_pipeline.knmi import fetch_daily, plan_window, read_export
+from tarso_pipeline.paths import forcing_path
 
 CATALOG = dbutils.widgets.get("catalog")
 SCHEMA = dbutils.widgets.get("schema")
@@ -112,11 +116,13 @@ TODAY = dt.date.today()
 
 if SOURCE == "file" and not SOURCE_PATH:
     raise ValueError("source=file needs source_path, e.g. /Workspace/Users/<you>/knmi.csv")
+if SOURCE == "repo":
+    SOURCE_PATH = str(forcing_path(STATION))
 
 print(f"target      {TABLE}")
 print(f"station     {STATION}")
 print(f"backlog     {BACKLOG_START} -> {TODAY}")
-print(f"source      {SOURCE}{' ' + SOURCE_PATH if SOURCE == 'file' else ''}")
+print(f"source      {SOURCE}{'' if SOURCE == 'api' else ' ' + SOURCE_PATH}")
 
 # COMMAND ----------
 
@@ -182,7 +188,7 @@ else:
 
 # COMMAND ----------
 
-if SOURCE == "file":
+if SOURCE in ("repo", "file"):
     fetched = read_export(SOURCE_PATH, station=STATION)
     print(f"{len(fetched)} rows from {SOURCE_PATH}")
     if not fetched.empty:
@@ -191,7 +197,9 @@ if SOURCE == "file":
         if stale_by > 3:
             # KNMI itself runs 1-2 days behind, so a few days is normal; more than
             # that means the export needs regenerating on a machine with egress.
-            print(f"  NOTE: export ends {stale_by} days ago; re-run check_knmi.py --export")
+            print(f"  NOTE: forcing ends {stale_by} days ago. To refresh, run")
+            print("        python scripts/check_knmi.py")
+            print("        locally, then commit, push, and pull the Git folder.")
 else:
     fetched = fetch_daily(window, station=STATION)
     print(f"{len(fetched)} rows from KNMI")

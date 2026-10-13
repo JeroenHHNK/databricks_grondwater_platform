@@ -63,6 +63,7 @@ from tarso_pipeline.knmi import (  # noqa: E402
     plan_window,
     write_export,
 )
+from tarso_pipeline.paths import forcing_path  # noqa: E402
 
 KEY = ["station", "date"]
 
@@ -116,8 +117,13 @@ def main() -> int:
     parser.add_argument(
         "--export",
         metavar="PATH",
-        help="also write the full store as a hand-off CSV, to upload to Databricks "
-        "when the cluster has no internet egress",
+        help="where to write the committed forcing file "
+        "(default: data/forcing/knmi_forcing_<station>.csv)",
+    )
+    parser.add_argument(
+        "--no-export",
+        action="store_true",
+        help="only check; leave the committed forcing file alone",
     )
     args = parser.parse_args()
 
@@ -164,12 +170,14 @@ def main() -> int:
     gap = coverage(merged)["gap"]
     print("  no missing days" if gap == 0 else f"  WARNING: {abs(gap)} day(s) missing")
 
-    if args.export:
-        exported = write_export(merged, args.export)
-        print(f"\nexport -> {exported}  ({exported.stat().st_size / 1024:.0f} KB, "
-              f"{len(merged)} rows)")
-        print("  upload this file to Databricks, then run the notebook with "
-              "source=file and source_path pointing at it")
+    if not args.no_export:
+        # Default: refresh the file that ships with the repo, so the whole
+        # hand-off to Databricks is commit -> push -> pull.
+        target = args.export or forcing_path(args.station, REPO_ROOT)
+        exported = write_export(merged, target)
+        size_kb = exported.stat().st_size / 1024
+        print(f"\nforcing file -> {exported}  ({size_kb:.0f} KB, {len(merged)} rows)")
+        print("  commit and push it, then pull the Git folder on Databricks")
 
     totals = annual_totals(merged)
     print("\nannual totals (mm)")

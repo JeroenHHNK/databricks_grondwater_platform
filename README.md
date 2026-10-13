@@ -52,32 +52,49 @@ To run the Spark and Delta parts locally as well, use
 [Databricks Connect](https://docs.databricks.com/dev-tools/databricks-connect/)
 (`pip install databricks-connect`), which executes against a real cluster from the IDE.
 
-### When the cluster has no internet egress
+## Forcing data ships with the repo
 
-If the cluster cannot reach KNMI (`Failed to resolve 'www.daggegevens.knmi.nl'`,
-i.e. a DNS/egress block — not an authorisation problem; the API needs no
-credentials), fetch on a machine that can and hand the result over as a file:
+The cluster has no outbound internet (`Failed to resolve 'www.daggegevens.knmi.nl'`
+— a DNS/egress block, not an authorisation problem; the API needs no credentials).
+So the forcing is fetched locally and **committed**, and a Git folder pull is the
+whole deployment:
 
 ```bash
-# 1. on your laptop: one API call, ~58 KB
-python scripts/check_knmi.py --export .local/knmi_export.csv
-
-# 2. upload .local/knmi_export.csv to Databricks, e.g. to
-#    /Workspace/Users/<you>/knmi_export.csv
-
-# 3. run the notebook with
-#      source      = file
-#      source_path = /Workspace/Users/<you>/knmi_export.csv
+python scripts/check_knmi.py      # fetch + refresh data/forcing/knmi_forcing_249.csv
+git add data/forcing && git commit -m "Refresh KNMI forcing" && git push
+#   then: pull the Git folder in Databricks
 ```
 
-`read_export` returns exactly what `fetch_daily` would have, so the `MERGE`,
-the coverage check and the chart are unchanged — only the source differs. Repeat
-steps 1–3 to refresh; re-merging rows already stored is harmless because the key
-is `(station, date)`.
+The file is ~58 KB for 2020-to-date and only grows by a line a day, so it is
+cheap to carry. Committing it also pins the data version to the commit that used
+it, which is worth something on its own.
 
-This is a stopgap. The real fix is outbound HTTPS from the cluster subnet to
-`www.daggegevens.knmi.nl:443`; once that exists, set `source=api` and the
-notebook runs unattended on a schedule.
+Downstream notebooks read it through the normal loader — no KNMI-specific code,
+and no hardcoded `/Workspace/...` path:
+
+```python
+from tarso_pipeline.io import load_forcing
+from tarso_pipeline.paths import forcing_path
+
+path = forcing_path(249)                            # resolves inside the Git folder
+precipitation = load_forcing(path, "precipitation_mm")   # pd.Series, mm/day
+evaporation   = load_forcing(path, "makkink_mm")         # pd.Series, mm/day
+```
+
+The ingestion notebook has a `source` widget for the three cases:
+
+| `source` | Reads | When |
+|---|---|---|
+| `repo` *(default)* | `data/forcing/knmi_forcing_<station>.csv` | no cluster egress — the current situation |
+| `api` | KNMI directly | once outbound HTTPS to `www.daggegevens.knmi.nl:443` is allowed |
+| `file` | an explicit `source_path` | a Volume or `/Workspace/Users/...` copy |
+
+All three produce the same frame, so the `MERGE`, the coverage check and the chart
+are identical code paths.
+
+**The committed-file route is a stopgap**: refreshing needs a person at a laptop,
+so the pipeline cannot run unattended. The real fix is cluster egress, after which
+`source=api` runs on a schedule and `data/forcing/` can be dropped.
 
 ## Databricks
 

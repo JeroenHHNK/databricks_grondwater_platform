@@ -109,12 +109,25 @@ through *D−2*. The notebook's coverage check compares stored days against
 `datediff(max, min) + 1`; a non-zero gap is a genuinely missing KNMI day, which matters
 because Pastas wants an unbroken daily forcing series.
 
-**Hand-off CSV (`source=file`).** When the cluster has no outbound internet, the fetch
-runs elsewhere and the result is handed over as a file: `write_export` / `read_export`,
-produced by `scripts/check_knmi.py --export`. Columns are exactly the four above
-(no `ingested_at`), dates ISO `YYYY-MM-DD`, missing values empty. ~58 KB for
-2020-to-date. `read_export` returns the same frame `fetch_daily` would, so the `MERGE`
-is identical and re-merging stored rows is a no-op.
+**Committed forcing file `data/forcing/knmi_forcing_<station>.csv`.** The cluster has no
+outbound internet, so the fetch runs locally and the result is **committed to the repo**;
+a Git folder pull delivers it. Written by `write_export`, read by `read_export` (for the
+`MERGE`) or by `load_forcing` (for training). Columns are exactly the four above
+**without `ingested_at`**, dates ISO `YYYY-MM-DD`, missing values empty; ~58 KB for
+2020-to-date. Locate it with `tarso_pipeline.paths.forcing_path(station)` rather than a
+hardcoded `/Workspace/...` path.
+
+One file carries both variables — `load_forcing(path, column)` selects which — so
+section 3's "two files" is satisfied by two calls on one file:
+
+```python
+precipitation = load_forcing(forcing_path(249), "precipitation_mm")
+evaporation   = load_forcing(forcing_path(249), "makkink_mm")
+```
+
+`read_export` returns the same frame `fetch_daily` would, so the ingestion notebook's
+`MERGE` is one code path for all three `source` modes (`repo` / `api` / `file`) and
+re-merging stored rows is a no-op.
 
 > **Hourly is not an option for evaporation.** KNMI's `uurgegevens` product has no
 > Makkink: its `PRCP` set is `DR:RH` (duration + hourly sum). `EV24` is daily-only.
