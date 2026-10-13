@@ -54,12 +54,28 @@ import datetime as dt
 import os
 import sys
 
-# Databricks puts the notebook's own folder on sys.path; the package lives in
-# <repo>/src, two levels up. (Alternative: %pip install -e ../.. , which needs a
-# Python restart.)
-SRC = os.path.abspath(os.path.join(os.getcwd(), "..", "..", "src"))
+# The package lives in <repo>/src. Walk up from the working directory for the
+# pyproject rather than assuming a fixed depth, so this survives being run as a
+# job task (where the working directory is not always the notebook's folder).
+# Alternative: %pip install -e <repo> , which needs a Python restart.
+def _repo_root() -> str:
+    current = os.getcwd()
+    while True:
+        if os.path.isfile(os.path.join(current, "pyproject.toml")):
+            return current
+        parent = os.path.dirname(current)
+        if parent == current:
+            raise RuntimeError(
+                f"No pyproject.toml above {os.getcwd()}. Is this notebook running "
+                "inside the Git folder for this repo?"
+            )
+        current = parent
+
+
+SRC = os.path.join(_repo_root(), "src")
 if SRC not in sys.path:
     sys.path.insert(0, SRC)
+print(f"importing tarso_pipeline from {SRC}")
 
 import pandas as pd
 from pyspark.sql.types import (

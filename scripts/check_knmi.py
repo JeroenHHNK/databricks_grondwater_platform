@@ -1,5 +1,10 @@
 """Run the KNMI ingestion locally, without Databricks, to check the output.
 
+**Not the Databricks entry point.** On a cluster run the notebook,
+``notebooks/ingestion/knmi_forcing.py`` -- that is the one that creates the Delta
+table and MERGEs into it. This script writes a local CSV and never touches Delta,
+so running it on Databricks does the wrong work even when it does not fail.
+
 The notebook needs a cluster: ``dbutils``, ``spark`` and ``display`` are cluster
 globals. Everything the notebook actually *decides* -- which days to fetch, how to
 parse them, what the annual totals are, what the chart looks like -- is plain
@@ -23,7 +28,28 @@ from pathlib import Path
 
 import pandas as pd
 
-REPO_ROOT = Path(__file__).resolve().parent.parent
+def _find_repo_root() -> Path:
+    """Locate the repo root without assuming how this file was started.
+
+    ``__file__`` is undefined when the file is ``exec``'d rather than run as a
+    script -- which is exactly what Databricks does if you open this .py in the
+    workspace and press Run, and what ``exec(open(...).read())`` does anywhere.
+    Fall back to walking up from the working directory for the pyproject.
+    """
+    try:
+        return Path(__file__).resolve().parent.parent
+    except NameError:
+        pass
+    for candidate in [Path.cwd(), *Path.cwd().parents]:
+        if (candidate / "pyproject.toml").is_file():
+            return candidate
+    raise RuntimeError(
+        "Cannot locate the repo root: no __file__ and no pyproject.toml above "
+        f"{Path.cwd()}. Run this from a terminal:  python scripts/check_knmi.py"
+    )
+
+
+REPO_ROOT = _find_repo_root()
 sys.path.insert(0, str(REPO_ROOT / "src"))
 
 from tarso_pipeline.forcing_plot import (  # noqa: E402
