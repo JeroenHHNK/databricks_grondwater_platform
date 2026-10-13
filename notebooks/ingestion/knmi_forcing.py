@@ -61,10 +61,7 @@ SRC = os.path.abspath(os.path.join(os.getcwd(), "..", "..", "src"))
 if SRC not in sys.path:
     sys.path.insert(0, SRC)
 
-import matplotlib
-import matplotlib.pyplot as plt
 import pandas as pd
-from pyspark.sql import functions as F
 from pyspark.sql.types import (
     DateType,
     DoubleType,
@@ -74,6 +71,11 @@ from pyspark.sql.types import (
     TimestampType,
 )
 
+from tarso_pipeline.forcing_plot import (
+    annual_totals,
+    plot_annual_totals,
+    use_headless_backend,
+)
 from tarso_pipeline.knmi import fetch_daily, plan_window
 
 CATALOG = dbutils.widgets.get("catalog")
@@ -244,87 +246,11 @@ daily = spark.sql(
 daily["date"] = pd.to_datetime(daily["date"])
 
 
-def annual_totals(df: pd.DataFrame) -> pd.DataFrame:
-    """Year -> cumulative precipitation and Makkink evaporation in mm, plus coverage."""
-    grouped = df.assign(year=df["date"].dt.year).groupby("year")
-    out = grouped[["precipitation_mm", "makkink_mm"]].sum().round(1)
-    out["days"] = grouped["date"].size()
-    out["last_date"] = grouped["date"].max()
-    # Only a year with every day present is comparable to the others.
-    out["complete"] = out["days"] == out.index.map(
-        lambda y: 366 if (y % 4 == 0 and (y % 100 != 0 or y % 400 == 0)) else 365
-    )
-    return out
-
-
 totals = annual_totals(daily)
 display(totals.reset_index())
 
 # COMMAND ----------
 
-# Palette: categorical slots 1 and 2, validated for colour-vision deficiency
-# against the light surface (CVD dE 24.7, normal-vision dE 33.6, both >= 3:1 contrast).
-SURFACE = "#fcfcfb"
-INK = "#0b0b0b"
-INK_MUTED = "#52514e"
-GRID = "#e6e5e2"
-PRECIP = "#2a78d6"
-EVAP = "#eb6834"
-
-matplotlib.use("Agg")  # no interactive backend on a cluster
-
-
-def plot_annual_totals(totals: pd.DataFrame, station: int):
-    years = totals.index.tolist()
-    x = range(len(years))
-    width = 0.30
-    gap = 0.02  # surface gap between the paired bars, never a border
-
-    fig, ax = plt.subplots(figsize=(9.5, 4.6), dpi=140)
-    fig.patch.set_facecolor(SURFACE)
-    ax.set_facecolor(SURFACE)
-
-    ax.set_axisbelow(True)
-    ax.yaxis.grid(True, color=GRID, linewidth=0.8, linestyle="-")
-    ax.xaxis.grid(False)
-    for side in ("top", "right", "left"):
-        ax.spines[side].set_visible(False)
-    ax.spines["bottom"].set_color(GRID)
-    ax.spines["bottom"].set_linewidth(0.8)
-    ax.tick_params(axis="both", length=0, colors=INK_MUTED, labelsize=9)
-
-    ax.bar([i - width / 2 - gap for i in x], totals["precipitation_mm"],
-           width=width, color=PRECIP, label="Precipitation", zorder=3)
-    ax.bar([i + width / 2 + gap for i in x], totals["makkink_mm"],
-           width=width, color=EVAP, label="Makkink evaporation", zorder=3)
-
-    # A partial year is marked rather than silently compared against full ones.
-    ax.set_xticks(list(x))
-    ax.set_xticklabels([f"{y}*" if not totals.loc[y, "complete"] else str(y) for y in years])
-    ax.set_ylabel("mm per year", color=INK_MUTED, fontsize=9)
-    ax.set_title(
-        f"Annual precipitation and Makkink evaporation - KNMI station {station}",
-        color=INK, fontsize=12, pad=26, loc="left",
-    )
-
-    legend = ax.legend(loc="upper left", bbox_to_anchor=(0, 1.08), ncols=2,
-                       frameon=False, fontsize=9, handlelength=0.9, handleheight=0.9)
-    for text in legend.get_texts():
-        text.set_color(INK_MUTED)
-
-    incomplete = totals.index[~totals["complete"]].tolist()
-    if incomplete:
-        fig.text(
-            0.005, -0.02,
-            ", ".join(f"{y}* partial: through {totals.loc[y, 'last_date'].date()}"
-                      for y in incomplete),
-            fontsize=8, color=INK_MUTED,
-        )
-
-    ax.margins(x=0.04)
-    fig.tight_layout()
-    return fig
-
-
+use_headless_backend()  # no interactive display on a cluster
 fig = plot_annual_totals(totals, STATION)
 display(fig)

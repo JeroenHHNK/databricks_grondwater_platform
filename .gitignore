@@ -17,3 +17,6 @@ dist/
 .env
 *.tfstate
 .DS_Store
+
+# Local output from scripts/check_knmi.py (not a cluster artefact)
+.local/
