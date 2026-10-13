@@ -122,6 +122,85 @@ def span_buckets_sql(table: str, values_only: bool = False) -> str:
     """
 
 
+TRAINABLE = "trainable"
+
+# Why a series cannot be modelled. Ordered: the first matching reason wins, so a
+# series with no values at all is reported as such rather than as "too short".
+VERDICTS = (TRAINABLE, "no values", "too few values", "too short")
+
+
+def series_verdict_sql(table: str, min_days: int = 365, min_obs: int = 100) -> str:
+    """One row per series, with a verdict on whether it can be modelled.
+
+    The span is measured **between the first and last row that actually has a
+    ``waarde``**, not between bare timestamps: a series carrying two years of
+    empty rows is not two years of data.
+
+    Verdicts are mutually exclusive and ordered, so the counts add up to the
+    total and each series is reported by its most fundamental problem.
+    """
+    if min_days < 0:
+        raise ValueError(f"min_days must be >= 0, got {min_days}")
+    if min_obs < 0:
+        raise ValueError(f"min_obs must be >= 0, got {min_obs}")
+    return f"""
+        WITH per_series AS (
+            SELECT
+                {SERIES_COLUMN}                                       AS series_id,
+                count(*)                                              AS n_rows,
+                count({VALUE_COLUMN})                                 AS n_values,
+                min(CASE WHEN {VALUE_COLUMN} IS NOT NULL
+                         THEN {TIME_COLUMN} END)                      AS first_value_at,
+                max(CASE WHEN {VALUE_COLUMN} IS NOT NULL
+                         THEN {TIME_COLUMN} END)                      AS last_value_at
+            FROM {table}
+            GROUP BY {SERIES_COLUMN}
+        )
+        SELECT
+            series_id,
+            n_rows,
+            n_values,
+            first_value_at,
+            last_value_at,
+            datediff(last_value_at, first_value_at)                   AS span_days,
+            CASE
+                WHEN n_values = 0          THEN 'no values'
+                WHEN n_values < {min_obs}  THEN 'too few values'
+                WHEN datediff(last_value_at, first_value_at) < {min_days}
+                                           THEN 'too short'
+                ELSE '{TRAINABLE}'
+            END                                                       AS verdict
+        FROM per_series
+    """
+
+
+def verdict_summary_sql(table: str, min_days: int = 365, min_obs: int = 100) -> str:
+    """How many series fall into each verdict -- the headline count."""
+    return f"""
+        WITH scored AS ({series_verdict_sql(table, min_days, min_obs)})
+        SELECT
+            verdict,
+            count(*)                                      AS series,
+            sum(n_values)                                 AS values_total,
+            round(avg(span_days), 1)                      AS mean_span_days,
+            max(span_days)                                AS max_span_days
+        FROM scored
+        GROUP BY verdict
+        ORDER BY series DESC
+    """
+
+
+def trainable_series_sql(table: str, min_days: int = 365, min_obs: int = 100) -> str:
+    """Just the series that can be modelled, longest first."""
+    return f"""
+        WITH scored AS ({series_verdict_sql(table, min_days, min_obs)})
+        SELECT series_id, n_values, first_value_at, last_value_at, span_days
+        FROM scored
+        WHERE verdict = '{TRAINABLE}'
+        ORDER BY span_days DESC, n_values DESC
+    """
+
+
 def status_sql(table: str) -> str:
     """Distribution of the reviewer verdict, and how it relates to missing values."""
     return f"""

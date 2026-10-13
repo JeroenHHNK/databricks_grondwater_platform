@@ -106,3 +106,55 @@ def test_every_builder_targets_the_given_table():
         status_sql(TABLE),
     ):
         assert TABLE in sql
+
+
+# --- verdicts --------------------------------------------------------------
+
+
+def test_every_verdict_is_reachable_in_the_sql():
+    from tarso_pipeline.meting import VERDICTS, series_verdict_sql
+
+    sql = series_verdict_sql(TABLE)
+    for verdict in VERDICTS:
+        assert f"'{verdict}'" in sql
+
+
+def test_verdict_order_puts_no_values_before_too_short():
+    # A series with no values must be reported as such, not as "too short":
+    # ordering the CASE the other way would hide the real problem.
+    from tarso_pipeline.meting import series_verdict_sql
+
+    sql = series_verdict_sql(TABLE)
+    assert sql.index("'no values'") < sql.index("'too short'")
+
+
+def test_span_is_measured_between_rows_that_have_values():
+    # Not between bare timestamps: empty rows are not data.
+    from tarso_pipeline.meting import series_verdict_sql
+
+    sql = series_verdict_sql(TABLE)
+    assert f"CASE WHEN {VALUE_COLUMN} IS NOT NULL" in sql
+    assert "first_value_at" in sql and "last_value_at" in sql
+
+
+def test_both_thresholds_are_applied():
+    from tarso_pipeline.meting import series_verdict_sql
+
+    sql = series_verdict_sql(TABLE, min_days=400, min_obs=50)
+    assert "n_values < 50" in sql
+    assert "< 400" in sql
+
+
+def test_trainable_list_selects_only_the_trainable_verdict():
+    from tarso_pipeline.meting import TRAINABLE, trainable_series_sql
+
+    assert f"WHERE verdict = '{TRAINABLE}'" in trainable_series_sql(TABLE)
+
+
+def test_verdict_builders_reject_negative_thresholds():
+    from tarso_pipeline.meting import series_verdict_sql
+
+    with pytest.raises(ValueError, match="min_obs"):
+        series_verdict_sql(TABLE, min_obs=-1)
+    with pytest.raises(ValueError, match="min_days"):
+        series_verdict_sql(TABLE, min_days=-1)
