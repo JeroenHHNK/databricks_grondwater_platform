@@ -22,6 +22,7 @@ from __future__ import annotations
 import datetime as dt
 import io
 from dataclasses import dataclass
+from pathlib import Path
 
 import pandas as pd
 import requests
@@ -173,6 +174,55 @@ def parse_daily_csv(text: str) -> pd.DataFrame:
         out[column] = values.astype("float64")
 
     out = out[out["date"].notna() & out["station"].notna()]
+    out = out.sort_values(["station", "date"]).drop_duplicates(
+        subset=["station", "date"], keep="last"
+    )
+    return out.reset_index(drop=True)[list(OUTPUT_COLUMNS)]
+
+
+def write_export(frame: pd.DataFrame, path: str | Path) -> Path:
+    """Write a fetched frame as the hand-off CSV, for a cluster without egress.
+
+    The file is the same shape ``fetch_daily`` returns, so the notebook merges it
+    through exactly the same code path as a live response. Dates are ISO
+    ``YYYY-MM-DD`` and missing values are left empty.
+    """
+    path = Path(path)
+    path.parent.mkdir(parents=True, exist_ok=True)
+    out = frame.loc[:, list(OUTPUT_COLUMNS)].copy()
+    out["date"] = pd.to_datetime(out["date"]).dt.strftime("%Y-%m-%d")
+    out.to_csv(path, index=False)
+    return path
+
+
+def read_export(path: str | Path, station: int | None = None) -> pd.DataFrame:
+    """Read a hand-off CSV back, returning what ``fetch_daily`` would have.
+
+    ``station`` filters to one station when the file holds several. Raises if the
+    file is not an export of this pipeline, rather than silently merging rubbish
+    into the table.
+    """
+    raw = pd.read_csv(path)
+    missing = [column for column in OUTPUT_COLUMNS if column not in raw.columns]
+    if missing:
+        raise ValueError(
+            f"{path} is not a KNMI export: missing column(s) {missing}. "
+            f"Expected {list(OUTPUT_COLUMNS)}, found {list(raw.columns)}"
+        )
+
+    out = pd.DataFrame(
+        {
+            "station": pd.to_numeric(raw["station"], errors="coerce").astype("Int64"),
+            "date": pd.to_datetime(raw["date"], errors="coerce"),
+            "precipitation_mm": pd.to_numeric(
+                raw["precipitation_mm"], errors="coerce"
+            ).astype("float64"),
+            "makkink_mm": pd.to_numeric(raw["makkink_mm"], errors="coerce").astype("float64"),
+        }
+    )
+    out = out[out["date"].notna() & out["station"].notna()]
+    if station is not None:
+        out = out[out["station"] == station]
     out = out.sort_values(["station", "date"]).drop_duplicates(
         subset=["station", "date"], keep="last"
     )

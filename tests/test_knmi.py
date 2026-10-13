@@ -9,6 +9,8 @@ from tarso_pipeline.knmi import (
     fetch_daily,
     parse_daily_csv,
     plan_window,
+    read_export,
+    write_export,
 )
 
 # A trimmed copy of a real response: banner comments, the station line, the
@@ -174,3 +176,48 @@ def test_fetch_returns_the_parsed_frame():
     )
     assert len(df) == 3
     assert df["precipitation_mm"].tolist() == [0.0, 0.0, 7.1]
+
+
+# --- export / import hand-off ----------------------------------------------
+
+
+def test_export_round_trips_through_csv(tmp_path):
+    original = parse_daily_csv(RESPONSE)
+    path = write_export(original, tmp_path / "knmi.csv")
+    restored = read_export(path)
+    pd.testing.assert_frame_equal(original, restored)
+
+
+def test_export_creates_missing_parent_directories(tmp_path):
+    path = write_export(parse_daily_csv(RESPONSE), tmp_path / "a" / "b" / "knmi.csv")
+    assert path.is_file()
+
+
+def test_export_writes_iso_dates(tmp_path):
+    path = write_export(parse_daily_csv(RESPONSE), tmp_path / "knmi.csv")
+    header, first = path.read_text().splitlines()[:2]
+    assert header == "station,date,precipitation_mm,makkink_mm"
+    assert first.split(",")[1] == "2020-01-01"
+
+
+def test_export_preserves_missing_values_as_empty(tmp_path):
+    frame = parse_daily_csv(RESPONSE + "  249,20200104,     ,    8\n")
+    restored = read_export(write_export(frame, tmp_path / "knmi.csv"))
+    row = restored[restored["date"] == pd.Timestamp("2020-01-04")].iloc[0]
+    assert pd.isna(row["precipitation_mm"])
+    assert row["makkink_mm"] == 0.8
+
+
+def test_read_export_can_filter_to_one_station(tmp_path):
+    frame = parse_daily_csv(RESPONSE + "  235,20200101,   10,    2\n")
+    path = write_export(frame, tmp_path / "knmi.csv")
+    assert read_export(path)["station"].nunique() == 2
+    only_235 = read_export(path, station=235)
+    assert only_235["station"].tolist() == [235]
+
+
+def test_read_export_rejects_a_file_that_is_not_an_export(tmp_path):
+    path = tmp_path / "wrong.csv"
+    path.write_text("date,rainfall\n2020-01-01,5\n")
+    with pytest.raises(ValueError, match="not a KNMI export"):
+        read_export(path)

@@ -52,6 +52,33 @@ To run the Spark and Delta parts locally as well, use
 [Databricks Connect](https://docs.databricks.com/dev-tools/databricks-connect/)
 (`pip install databricks-connect`), which executes against a real cluster from the IDE.
 
+### When the cluster has no internet egress
+
+If the cluster cannot reach KNMI (`Failed to resolve 'www.daggegevens.knmi.nl'`,
+i.e. a DNS/egress block — not an authorisation problem; the API needs no
+credentials), fetch on a machine that can and hand the result over as a file:
+
+```bash
+# 1. on your laptop: one API call, ~58 KB
+python scripts/check_knmi.py --export .local/knmi_export.csv
+
+# 2. upload .local/knmi_export.csv to Databricks, e.g. to
+#    /Workspace/Users/<you>/knmi_export.csv
+
+# 3. run the notebook with
+#      source      = file
+#      source_path = /Workspace/Users/<you>/knmi_export.csv
+```
+
+`read_export` returns exactly what `fetch_daily` would have, so the `MERGE`,
+the coverage check and the chart are unchanged — only the source differs. Repeat
+steps 1–3 to refresh; re-merging rows already stored is harmless because the key
+is `(station, date)`.
+
+This is a stopgap. The real fix is outbound HTTPS from the cluster subnet to
+`www.daggegevens.knmi.nl:443`; once that exists, set `source=api` and the
+notebook runs unattended on a schedule.
+
 ## Databricks
 
 Add this repo as a **Git folder** (Workspace > Create > Git folder). In a notebook or

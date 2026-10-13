@@ -57,7 +57,12 @@ from tarso_pipeline.forcing_plot import (  # noqa: E402
     plot_annual_totals,
     use_headless_backend,
 )
-from tarso_pipeline.knmi import DEFAULT_STATION, fetch_daily, plan_window  # noqa: E402
+from tarso_pipeline.knmi import (  # noqa: E402
+    DEFAULT_STATION,
+    fetch_daily,
+    plan_window,
+    write_export,
+)
 
 KEY = ["station", "date"]
 
@@ -108,6 +113,12 @@ def main() -> int:
     parser.add_argument("--lookback-days", type=int, default=2)
     parser.add_argument("--out-dir", default=str(REPO_ROOT / ".local"))
     parser.add_argument("--reset", action="store_true", help="discard the local store first")
+    parser.add_argument(
+        "--export",
+        metavar="PATH",
+        help="also write the full store as a hand-off CSV, to upload to Databricks "
+        "when the cluster has no internet egress",
+    )
     args = parser.parse_args()
 
     out_dir = Path(args.out_dir)
@@ -152,6 +163,13 @@ def main() -> int:
         print(f"  {key:<20} {value}")
     gap = coverage(merged)["gap"]
     print("  no missing days" if gap == 0 else f"  WARNING: {abs(gap)} day(s) missing")
+
+    if args.export:
+        exported = write_export(merged, args.export)
+        print(f"\nexport -> {exported}  ({exported.stat().st_size / 1024:.0f} KB, "
+              f"{len(merged)} rows)")
+        print("  upload this file to Databricks, then run the notebook with "
+              "source=file and source_path pointing at it")
 
     totals = annual_totals(merged)
     print("\nannual totals (mm)")

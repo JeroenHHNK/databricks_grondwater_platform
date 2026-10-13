@@ -48,6 +48,12 @@ dbutils.widgets.text("station", "249", "KNMI station")
 dbutils.widgets.text("backlog_start", "2020-01-01", "Backlog start (first run)")
 dbutils.widgets.text("lookback_days", "2", "Re-fetch days before watermark")
 
+# "api"  call KNMI directly. Needs outbound HTTPS from the cluster.
+# "file" read a CSV exported by scripts/check_knmi.py --export, for a cluster
+#        with no internet egress. Everything downstream is identical.
+dbutils.widgets.dropdown("source", "api", ["api", "file"], "Source")
+dbutils.widgets.text("source_path", "", "Export CSV path (source=file)")
+
 # COMMAND ----------
 
 import datetime as dt
@@ -92,7 +98,7 @@ from tarso_pipeline.forcing_plot import (
     plot_annual_totals,
     use_headless_backend,
 )
-from tarso_pipeline.knmi import fetch_daily, plan_window
+from tarso_pipeline.knmi import fetch_daily, plan_window, read_export
 
 CATALOG = dbutils.widgets.get("catalog")
 SCHEMA = dbutils.widgets.get("schema")
@@ -100,11 +106,17 @@ TABLE = f"{CATALOG}.{SCHEMA}.{dbutils.widgets.get('table')}"
 STATION = int(dbutils.widgets.get("station"))
 BACKLOG_START = dt.date.fromisoformat(dbutils.widgets.get("backlog_start"))
 LOOKBACK_DAYS = int(dbutils.widgets.get("lookback_days"))
+SOURCE = dbutils.widgets.get("source")
+SOURCE_PATH = dbutils.widgets.get("source_path").strip()
 TODAY = dt.date.today()
+
+if SOURCE == "file" and not SOURCE_PATH:
+    raise ValueError("source=file needs source_path, e.g. /Workspace/Users/<you>/knmi.csv")
 
 print(f"target      {TABLE}")
 print(f"station     {STATION}")
 print(f"backlog     {BACKLOG_START} -> {TODAY}")
+print(f"source      {SOURCE}{' ' + SOURCE_PATH if SOURCE == 'file' else ''}")
 
 # COMMAND ----------
 
@@ -160,12 +172,29 @@ else:
 # MAGIC %md
 # MAGIC ## Fetch and merge
 # MAGIC
-# MAGIC An empty window short-circuits inside `fetch_daily`, so no HTTP request is made.
+# MAGIC `source=api` calls KNMI; an empty window short-circuits inside `fetch_daily`, so
+# MAGIC no HTTP request is made.
+# MAGIC
+# MAGIC `source=file` reads a CSV exported by `scripts/check_knmi.py --export` instead —
+# MAGIC for a cluster with no outbound internet. The frame is the same shape either way,
+# MAGIC so the `MERGE` below does not know or care which produced it. Re-merging rows
+# MAGIC that are already stored is harmless: the key is `(station, date)`.
 
 # COMMAND ----------
 
-fetched = fetch_daily(window, station=STATION)
-print(f"{len(fetched)} rows from KNMI")
+if SOURCE == "file":
+    fetched = read_export(SOURCE_PATH, station=STATION)
+    print(f"{len(fetched)} rows from {SOURCE_PATH}")
+    if not fetched.empty:
+        print(f"  covering {fetched['date'].min().date()} -> {fetched['date'].max().date()}")
+        stale_by = (TODAY - fetched["date"].max().date()).days
+        if stale_by > 3:
+            # KNMI itself runs 1-2 days behind, so a few days is normal; more than
+            # that means the export needs regenerating on a machine with egress.
+            print(f"  NOTE: export ends {stale_by} days ago; re-run check_knmi.py --export")
+else:
+    fetched = fetch_daily(window, station=STATION)
+    print(f"{len(fetched)} rows from KNMI")
 
 SCHEMA_SPARK = StructType(
     [

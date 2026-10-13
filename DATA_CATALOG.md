@@ -109,6 +109,13 @@ through *D−2*. The notebook's coverage check compares stored days against
 `datediff(max, min) + 1`; a non-zero gap is a genuinely missing KNMI day, which matters
 because Pastas wants an unbroken daily forcing series.
 
+**Hand-off CSV (`source=file`).** When the cluster has no outbound internet, the fetch
+runs elsewhere and the result is handed over as a file: `write_export` / `read_export`,
+produced by `scripts/check_knmi.py --export`. Columns are exactly the four above
+(no `ingested_at`), dates ISO `YYYY-MM-DD`, missing values empty. ~58 KB for
+2020-to-date. `read_export` returns the same frame `fetch_daily` would, so the `MERGE`
+is identical and re-merging stored rows is a no-op.
+
 > **Hourly is not an option for evaporation.** KNMI's `uurgegevens` product has no
 > Makkink: its `PRCP` set is `DR:RH` (duration + hourly sum). `EV24` is daily-only.
 
