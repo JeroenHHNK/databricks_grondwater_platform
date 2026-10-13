@@ -1,0 +1,19 @@
+__pycache__/
+*.py[cod]
+*.egg-info/
+.pytest_cache/
+.venv/
+venv/
+build/
+dist/
+
+# Data and model outputs never go to git
+*.csv
+*.pas
+!tests/data/*.csv
+
+# Databricks / local config with secrets
+.databricks/
+.env
+*.tfstate
+.DS_Store
