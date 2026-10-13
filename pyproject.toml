@@ -26,3 +26,6 @@ where = ["src"]
 [tool.pytest.ini_options]
 testpaths = ["tests"]
 pythonpath = ["src"]
+markers = [
+    "slow: runs a real Pastas fit (seconds, needs the pastas extra)",
+]

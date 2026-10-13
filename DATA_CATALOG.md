@@ -186,6 +186,7 @@ spec asks for without fixing names.
 | `length_series` | `int` | `int` | yes | spec | Observations **used** (after resampling). For skips: the count that triggered the skip. |
 | `min_value` | `float` | `double` | yes | spec | Observed head minimum, m NAP. |
 | `max_value` | `float` | `double` | yes | spec | Observed head maximum, m NAP. |
+| `span_days` | `int` | `int` | yes | proposed | Calendar days from first to last observation. What the `min_days` filter tests. |
 
 ### 6.3 Fit statistics
 
@@ -227,7 +228,8 @@ From `ml.stats.summary()`, a DataFrame indexed by metric name with a single colu
 | `evap_file` | `str` | `string` | no | Evaporation forcing file name. |
 | `evap_column` | `str` | `string` | no | Column used. |
 | `validation_filter` | `bool` | `boolean` | no | Whether the verdict filter was applied. |
-| `min_obs` | `int` | `int` | no | Minimum observations (default 100, validated only). |
+| `min_obs` | `int` | `int` | no | Minimum observations (default 100, **validated files only**). |
+| `min_days` | `int` | `int` | no | Minimum span in days (default 365, **every format**). 0 disables. |
 | `tmin_cal_param` | `str` | `string` | yes | Requested calibration start (parameter), null if none. |
 | `tmax_cal_param` | `str` | `string` | yes | Requested calibration end (parameter), null if none. |
 | `pastas_version` | `str` | `string` | no | e.g. `1.12.0`. |
@@ -254,7 +256,8 @@ From `ml.stats.summary()`, a DataFrame indexed by metric name with a single colu
 | `resample_rule` | string | `D` | pandas offset alias. |
 | `resample_method` | string | `mean` | One of `mean, median, min, max, first, last, sum`. |
 | `validation_filter` | bool | `true` | Apply `gecontroleerd == 1 & afgekeurd != 1`. |
-| `min_obs` | int | `100` | Validated files only. |
+| `min_obs` | int | `100` | Minimum observations. Validated files only. |
+| `min_days` | int | `365` | Minimum series span in days. Applies to every format; 0 disables. A Tarso fit needs a full seasonal cycle. |
 | `tmin_cal`, `tmax_cal` | string (date) | none | Optional calibration window. |
 | `run_id` | string | `yy_mm_dd_HH_MM` now | Identifies the run. |
 | `output_volume_path` | string | none | Where `.pas` files go. |

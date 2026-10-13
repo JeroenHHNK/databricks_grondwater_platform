@@ -13,15 +13,32 @@ src/tarso_pipeline/
   preprocess.py    prepare_head: trim, resample, dropna, min_obs skip
   knmi.py          KNMI daily forcing download (precipitation + Makkink)
   forcing_plot.py  annual totals and the check chart
+  paths.py         repo_root / forcing_path
+  discover.py      list head CSVs -> (survey, file_path, series_name)
+  train.py         train_tarso (the fit) + train_one (never raises)
 notebooks/
-  ingestion/knmi_forcing.py   KNMI -> Delta, incremental
+  ingestion/knmi_forcing.py      KNMI -> Delta, incremental
+  transformation/train_tarso.py  one Tarso model per series -> tarso_runs
 scripts/
   check_knmi.py    run the ingestion locally, no cluster needed
 tests/             pytest suite (no Spark, no Pastas needed)
 ```
 
-Planned next steps: `train.py` (Tarso fit + stats row), `spark.py` (discovery +
-`mapInPandas`), `notebooks/run_tarso.py` (the Databricks Job entry point).
+## Training
+
+`notebooks/transformation/train_tarso.py` fits one `TarsoModel` per head series:
+discover -> load forcing -> train (distributed) -> append to `tarso_runs`.
+
+Only series spanning at least `min_days` (**default 365**) are fitted — a Tarso
+fit needs a full seasonal cycle, and a few months of data gives a number that
+looks like a result but is not one. Shorter series are **not dropped**: they get a
+row with `status="skipped"` and the reason. Likewise a fit that throws becomes
+`status="error"` with the message — one bad series never aborts the run.
+
+```bash
+pytest -m "not slow"   # fast: no Pastas fit
+pytest                 # includes a real fit (needs the pastas extra)
+```
 
 ## Local development
 
