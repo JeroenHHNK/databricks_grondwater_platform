@@ -1,0 +1,10 @@
+environment: prod
+
+catalog: prod_catalog
+schema: default
+
+storage:
+  raw: /mnt/raw
+  bronze: /mnt/bronze
+  silver: /mnt/silver
+  gold: /mnt/gold
