@@ -11,6 +11,8 @@ requires-python = ">=3.12"
 dependencies = [
     "pandas",
     "numpy",
+    # KNMI forcing download (src/tarso_pipeline/knmi.py).
+    "requests",
 ]
 
 [project.optional-dependencies]

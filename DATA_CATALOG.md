@@ -69,6 +69,49 @@ Pastas in mm unchanged. **Column names are pipeline parameters**, not hardcoded.
 `load_forcing()` returns a `pd.Series`: `float64`, `DatetimeIndex` (`datetime64[us]`),
 sorted, duplicate dates removed (first kept), `name` = the column name.
 
+## 3a. Source: Delta table `knmi_daily_forcing` (**proposed**)
+
+The forcing CSVs of section 3 can also be produced from KNMI directly. Written by
+`notebooks/ingestion/knmi_forcing.py` via `src/tarso_pipeline/knmi.py`; column names
+match section 3 so `load_forcing()` reads an export of this table unchanged.
+
+**Natural key `(station, date)`**, upserted with a `MERGE` — re-running never duplicates.
+
+| Column | pandas | Spark / Delta | Nullable | Notes |
+|---|---|---|---|---|
+| `station` | `Int64` | `int` | no | KNMI station number. Default **249 Berkhout**, the station named in section 3. |
+| `date` | `datetime64[ns]` | `date` | no | Observation day. |
+| `precipitation_mm` | `float64` | `double` | yes | Daily sum, mm. KNMI `RH` ÷ 10. |
+| `makkink_mm` | `float64` | `double` | yes | Makkink reference evaporation, mm. KNMI `EV24` ÷ 10. |
+| `ingested_at` | — | `timestamp` | no | When the row was last written. Not part of the key. |
+
+**Source API.** `POST https://www.daggegevens.knmi.nl/klimatologie/daggegevens` with
+`start`/`end` as `YYYYMMDD`, `vars=RH:EV24`, `stns=<station>`. The response is CSV:
+comment lines prefixed `#`, the last of which (`# STN,YYYYMMDD,   RH, EV24`) carries the
+column names in KNMI's own order — so the header is parsed, never assumed.
+
+**Conversions applied on ingest.**
+
+| KNMI | Meaning | Stored as |
+|---|---|---|
+| `RH` / `EV24` in 0.1 mm | — | ÷ 10 → mm |
+| `RH = -1` | measured, below 0.05 mm | `0.0` (a dry day, **not** NULL) |
+| blank field | missing | `NULL` |
+
+**Incremental refresh.** `max(date)` for the station is the watermark; the next window
+is `[watermark + 1 − lookback_days, today]`, clamped to `backlog_start` (2020-01-01).
+When the table is current the window is empty and **no HTTP request is made**. The
+`lookback_days` overlap (default 2) re-fetches recently published days, which KNMI
+revises as they are validated.
+
+**Publication lag.** KNMI runs 1–2 days behind, so a run on day *D* normally stores
+through *D−2*. The notebook's coverage check compares stored days against
+`datediff(max, min) + 1`; a non-zero gap is a genuinely missing KNMI day, which matters
+because Pastas wants an unbroken daily forcing series.
+
+> **Hourly is not an option for evaporation.** KNMI's `uurgegevens` product has no
+> Makkink: its `PRCP` set is `DR:RH` (duration + hourly sum). `EV24` is daily-only.
+
 ## 4. In-memory objects (Python, no Spark)
 
 ### `LoadedHead` (output of `read_head_csv`)
