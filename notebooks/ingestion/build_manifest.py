@@ -64,12 +64,12 @@ if SRC not in sys.path:
 
 from pyspark.sql import functions as F
 
+from tarso_pipeline.fit_metrics import make_run_id
 from tarso_pipeline.meting import (
     duplicate_timestamps_sql,
     manifest_sql,
     verdict_summary_sql,
 )
-from tarso_pipeline.train import make_run_id
 
 SOURCE = dbutils.widgets.get("source_table").strip()
 MANIFEST = dbutils.widgets.get("manifest_table").strip()

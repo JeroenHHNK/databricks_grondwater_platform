@@ -93,11 +93,10 @@ import pastas as ps
 from pyspark.sql import functions as F
 
 from tarso_pipeline.fit import fit_series
-from tarso_pipeline.fit_metrics import rows_to_frame, spark_schema
+from tarso_pipeline.fit_metrics import make_run_id, rows_to_frame, spark_schema
 from tarso_pipeline.io import load_forcing
 from tarso_pipeline.meting import series_rows_sql
 from tarso_pipeline.paths import forcing_path, model_dir_for
-from tarso_pipeline.train import make_run_id
 
 SOURCE = dbutils.widgets.get("source_table").strip()
 MANIFEST = dbutils.widgets.get("manifest_table").strip()

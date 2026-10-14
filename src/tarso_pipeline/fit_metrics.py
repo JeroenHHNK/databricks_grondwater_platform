@@ -85,6 +85,14 @@ def _timedelta_days(value) -> int | None:
         return None
 
 
+def make_run_id(now: dt.datetime | None = None) -> str:
+    """``yy_mm_dd_HH_MM``, as the original repo tags its runs.
+
+    One per run, so appended metrics rows stay grouped and comparable.
+    """
+    return (now or dt.datetime.now()).strftime("%y_%m_%d_%H_%M")
+
+
 def empty_row() -> dict:
     """Every column present and null -- the base every row is built on."""
     return {name: None for name in FIT_METRICS_SCHEMA}

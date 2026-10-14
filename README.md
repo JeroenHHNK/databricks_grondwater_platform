@@ -8,27 +8,23 @@ series, persist the model and its fit statistics.
 
 ```
 src/tarso_pipeline/
-  naming.py        sanitize_name: file stem -> valid Pastas model name
-  io.py            read_head_csv (raw/validated detection), load_forcing
-  preprocess.py    prepare_head: trim, resample, dropna, min_obs skip
-  knmi.py          KNMI daily forcing download (precipitation + Makkink)
-  forcing_plot.py  annual totals and the check chart
-  paths.py         repo_root / forcing_path
-  discover.py      list head CSVs -> (survey, file_path, series_name)
-  train.py         train_tarso (the fit) + train_one (never raises)
-  meting.py        SQL over gold_prd...meting: verdicts, manifest, duplicates
-  clean.py         dedup duplicate timestamps + resample, counts recorded
+  meting.py        SQL over the meting table: verdicts, manifest, duplicates
+  clean.py         collapse duplicate timestamps + resample; counts recorded
   fit.py           fit_series: load -> clean -> fit -> save -> metrics row
-  fit_metrics.py   the pastas_fit_metrics row, read from the API
+  fit_metrics.py   the pastas_fit_metrics row, read from the Pastas API
+  knmi.py          KNMI forcing download (precipitation + Makkink)
+  forcing_plot.py  annual totals and the check chart
+  io.py            load_forcing / read_head_csv
+  naming.py        sanitize_name
+  paths.py         repo_root, forcing_path, and the Databricks write targets
 notebooks/
-  ingestion/knmi_forcing.py          KNMI -> Delta, incremental
-  ingestion/find_trainable_series.py how many series are fit to model
-  ingestion/build_manifest.py        task 1: the 20 longest + duplicate check
-  transformation/fit_pastas_models.py task 2: fit -> .pas + pastas_fit_metrics
-  transformation/train_tarso.py      CSV-on-a-Volume variant (not the meting path)
+  exploration/explore_meting.py        what is in the source, how much is usable
+  ingestion/build_manifest.py          JOB TASK 1 -> pastas_series_manifest
+  transformation/fit_pastas_models.py  JOB TASK 2 -> pastas_fit_metrics + .pas
+  analysis/inspect_results.py          read the output tables after a run
 scripts/
-  check_knmi.py    run the ingestion locally, no cluster needed
-tests/             pytest suite (no Spark, no Pastas needed)
+  check_knmi.py    refresh the committed forcing (runs locally, not on a cluster)
+tests/             pytest suite (no Spark; -m "not slow" skips the real fits)
 ```
 
 ## Training
@@ -134,19 +130,31 @@ Source files are never renamed: model names are derived from file stems with
 (`/Volumes/<catalog>/<schema>/<volume>/...`).
 
 
-## The Databricks pipeline (meting)
+## The Databricks pipeline
 
-Two tasks, run in order. Permission facts are in `src/tarso_pipeline/paths.py`;
-`gold_prd` is **read-only**, everything is written to
-`waterkeringbeheer_prd.jvanruitenbeek`.
+Each notebook has one job. Only two are job tasks; the other two are run by hand.
 
-| # | Notebook | Writes |
-|---|---|---|
-| 1 | `ingestion/build_manifest.py` | `pastas_series_manifest` (20 longest series) |
-| 2 | `transformation/fit_pastas_models.py` | `pastas_fit_metrics` + `.pas` files |
+| Notebook | Purpose | Job task? | Writes |
+|---|---|---|---|
+| `exploration/explore_meting.py` | what is in the source, how many series are fit to model | no | nothing |
+| `ingestion/build_manifest.py` | pick the 20 longest series; quantify duplicate timestamps | **task 1** | `pastas_series_manifest` |
+| `transformation/fit_pastas_models.py` | clean, fit, save `.pas`, record metrics | **task 2** | `pastas_fit_metrics`, `.pas` files |
+| `analysis/inspect_results.py` | did it work, are the fits any good, Tarso vs baseline | no | nothing |
 
-Run task 2 with `limit_series=1` first: the `WRITE VOLUME` grant on `misc_files` is
-separate from the table write and is checked with a throwaway file before any fit.
+Task 2 depends on task 1: it reads the manifest table task 1 writes.
+
+Permission facts live in `src/tarso_pipeline/paths.py`. `gold_prd` is **read-only**;
+all output goes to `waterkeringbeheer_prd.jvanruitenbeek`, and `.pas` files to the
+`misc_files` volume.
+
+Run task 2 with `limit_series=1` first. The `WRITE VOLUME` grant on `misc_files` is
+separate from the table write, and the notebook probes it with a throwaway file
+before fitting anything.
 
 The stress series are **not** fetched at run time — they ship in `data/forcing/`
-because the cluster has no outbound internet.
+because the cluster has no outbound internet. Refresh them locally:
+
+```bash
+python scripts/check_knmi.py
+git add data/forcing && git commit -m "Refresh KNMI forcing" && git push
+```
