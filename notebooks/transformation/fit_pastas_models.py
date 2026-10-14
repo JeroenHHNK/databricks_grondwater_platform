@@ -231,6 +231,15 @@ print(f"mean precipitation {precipitation.mean():.5f} {FORCING_UNITS}/day, "
 
 # COMMAND ----------
 
+if not spark.catalog.tableExists(MANIFEST):
+    raise RuntimeError(
+        f"No manifest at {MANIFEST}. "
+        "Run task 1 first: notebooks/ingestion/build_manifest.py with "
+        "write_manifest=true -- it selects the series to fit and writes this "
+        "table. Note pastas_series_verdict is a different table (the full "
+        "census, written by explore_meting.py) and is not the work list."
+    )
+
 work = (
     spark.table(MANIFEST)
     .orderBy(F.col("span_days").desc(), F.col("n_values").desc())
