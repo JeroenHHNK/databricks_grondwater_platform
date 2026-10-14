@@ -1,4 +1,8 @@
 # Databricks notebook source
+# /// script
+# [tool.databricks.environment]
+# environment_version = "6"
+# ///
 # MAGIC %md
 # MAGIC # Explore the `meting` source table
 # MAGIC
@@ -180,3 +184,26 @@ display(
     .orderBy("verdict", F.col("span_days").desc())
     .limit(500)
 )
+
+# COMMAND ----------
+
+VERDICT_TABLE = "waterkeringbeheer_prd.jvanruitenbeek.pastas_series_verdict"
+
+from pyspark.sql import functions as F
+from datetime import datetime, timezone
+
+run_id = datetime.now(timezone.utc).strftime("%Y%m%dT%H%M%SZ")
+
+verdict = (
+    spark.sql(series_verdict_sql(SOURCE, MIN_DAYS, MIN_OBS))
+    .withColumn("run_id", F.lit(run_id))
+    .withColumn("source_table", F.lit(SOURCE))
+    .withColumn("min_days", F.lit(MIN_DAYS))
+    .withColumn("min_obs", F.lit(MIN_OBS))
+    .withColumn("evaluated_at", F.current_timestamp())
+)
+
+verdict.write.format("delta").mode("overwrite").saveAsTable(VERDICT_TABLE)
+
+print(f"run_id {run_id}")
+print(f"wrote {spark.table(VERDICT_TABLE).count()} rows to {VERDICT_TABLE}")
