@@ -66,6 +66,7 @@ from pyspark.sql import functions as F
 
 from tarso_pipeline.fit_metrics import make_run_id
 from tarso_pipeline.meting import (
+    check_columns,
     duplicate_timestamps_sql,
     manifest_sql,
     verdict_summary_sql,
@@ -99,6 +100,13 @@ display(spark.sql(f"DESCRIBE {SOURCE}"))
 # COMMAND ----------
 
 display(spark.sql(f"SELECT * FROM {SOURCE} LIMIT 5"))
+
+# COMMAND ----------
+
+# Fail here, naming the column, rather than inside a generated query where the
+# AnalysisException says nothing useful.
+check_columns(spark.table(SOURCE).columns)
+print("required columns present:", ", ".join(spark.table(SOURCE).columns))
 
 # COMMAND ----------
 

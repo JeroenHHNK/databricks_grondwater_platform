@@ -49,8 +49,11 @@ SRC = os.path.join(_repo_root(), "src")
 if SRC not in sys.path:
     sys.path.insert(0, SRC)
 
+from pyspark.sql import functions as F
+
 from tarso_pipeline.meting import (
     TRAINABLE,
+    check_columns,
     overview_sql,
     series_verdict_sql,
     span_buckets_sql,
@@ -80,6 +83,11 @@ display(spark.sql(f"DESCRIBE {SOURCE}"))
 # COMMAND ----------
 
 display(spark.sql(f"SELECT * FROM {SOURCE} LIMIT 5"))
+
+# COMMAND ----------
+
+check_columns(spark.table(SOURCE).columns)
+print("required columns present:", ", ".join(spark.table(SOURCE).columns))
 
 # COMMAND ----------
 
@@ -165,11 +173,10 @@ display(spark.sql(status_sql(SOURCE)))
 
 # COMMAND ----------
 
+# series_verdict_sql is a complete statement; Databricks rejects a WITH nested
+# inside a CTE body, so it is run as-is rather than wrapped in another WITH.
 display(
-    spark.sql(
-        f"""
-        WITH scored AS ({series_verdict_sql(SOURCE, MIN_DAYS, MIN_OBS)})
-        SELECT * FROM scored ORDER BY verdict, span_days DESC
-        """
-    ).limit(500)
+    spark.sql(series_verdict_sql(SOURCE, MIN_DAYS, MIN_OBS))
+    .orderBy("verdict", F.col("span_days").desc())
+    .limit(500)
 )

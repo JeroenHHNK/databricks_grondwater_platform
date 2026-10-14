@@ -222,3 +222,69 @@ def test_series_rows_rejects_anything_that_is_not_a_hash(bad):
 
     with pytest.raises(ValueError, match="plain hash"):
         series_rows_sql(TABLE, bad)
+
+
+# --- flatness --------------------------------------------------------------
+#
+# Databricks raises AnalysisException on a WITH nested inside a CTE body, so no
+# statement this module builds may contain more than one WITH.
+
+
+def _all_statements():
+    from tarso_pipeline import meting as m
+
+    return {
+        "overview": m.overview_sql(TABLE),
+        "per_series": m.per_series_sql(TABLE),
+        "span_summary": m.span_summary_sql(TABLE),
+        "span_buckets": m.span_buckets_sql(TABLE),
+        "series_verdict": m.series_verdict_sql(TABLE),
+        "verdict_summary": m.verdict_summary_sql(TABLE),
+        "trainable": m.trainable_series_sql(TABLE),
+        "manifest": m.manifest_sql(TABLE),
+        "status": m.status_sql(TABLE),
+        "duplicates": m.duplicate_timestamps_sql(TABLE, "mani"),
+        "series_rows": m.series_rows_sql(TABLE, "a" * 64),
+    }
+
+
+@pytest.mark.parametrize("name", list(_all_statements()))
+def test_no_statement_nests_a_cte(name):
+    import re
+
+    sql = _all_statements()[name]
+    assert len(re.findall(r"\bWITH\b", sql, re.IGNORECASE)) <= 1, (
+        f"{name} nests a CTE; Databricks rejects WITH inside a CTE body"
+    )
+
+
+def test_composed_statements_use_sibling_ctes():
+    from tarso_pipeline.meting import manifest_sql
+
+    sql = manifest_sql(TABLE)
+    assert "WITH per_series AS (" in sql
+    assert "scored AS (" in sql
+    assert sql.index("per_series AS (") < sql.index("scored AS (")
+
+
+# --- column preflight ------------------------------------------------------
+
+
+def test_check_columns_passes_on_the_expected_shape():
+    from tarso_pipeline.meting import REQUIRED_COLUMNS, check_columns
+
+    check_columns(["id", *REQUIRED_COLUMNS, "validatie_status", "tijdstempel_utc"])
+
+
+def test_check_columns_names_what_is_missing():
+    from tarso_pipeline.meting import check_columns
+
+    with pytest.raises(ValueError, match="waarde"):
+        check_columns(["id", "meetreeks_id", "tijdstempel"])
+
+
+def test_check_columns_shows_what_the_table_actually_has():
+    from tarso_pipeline.meting import check_columns
+
+    with pytest.raises(ValueError, match="value_column"):
+        check_columns(["series", "value_column", "ts"])
