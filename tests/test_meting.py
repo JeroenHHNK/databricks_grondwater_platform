@@ -158,3 +158,67 @@ def test_verdict_builders_reject_negative_thresholds():
         series_verdict_sql(TABLE, min_obs=-1)
     with pytest.raises(ValueError, match="min_days"):
         series_verdict_sql(TABLE, min_days=-1)
+
+
+# --- manifest and duplicate check ------------------------------------------
+
+
+def test_manifest_is_capped():
+    from tarso_pipeline.meting import manifest_sql
+
+    assert "LIMIT 20" in manifest_sql(TABLE, limit=20)
+    assert "LIMIT 5" in manifest_sql(TABLE, limit=5)
+
+
+def test_manifest_orders_longest_first():
+    from tarso_pipeline.meting import manifest_sql
+
+    assert "ORDER BY span_days DESC, n_values DESC" in manifest_sql(TABLE)
+
+
+def test_manifest_takes_only_trainable_series():
+    from tarso_pipeline.meting import TRAINABLE, manifest_sql
+
+    assert f"WHERE verdict = '{TRAINABLE}'" in manifest_sql(TABLE)
+
+
+def test_manifest_rejects_a_silly_limit():
+    from tarso_pipeline.meting import manifest_sql
+
+    with pytest.raises(ValueError, match="limit"):
+        manifest_sql(TABLE, limit=0)
+
+
+def test_duplicate_check_separates_duplicates_from_dense_sampling():
+    # n_duplicate_ts tells them apart; distinct_ts_per_day shows real density.
+    from tarso_pipeline.meting import duplicate_timestamps_sql
+
+    sql = duplicate_timestamps_sql(TABLE, "w.manifest")
+    assert "n_duplicate_ts" in sql
+    assert "distinct_ts_per_day" in sql
+    assert "rows_per_day" in sql
+
+
+def test_duplicate_check_ignores_rows_without_a_value():
+    from tarso_pipeline.meting import duplicate_timestamps_sql
+
+    assert f"m.{VALUE_COLUMN} IS NOT NULL" in duplicate_timestamps_sql(TABLE, "mani")
+
+
+def test_series_rows_filters_to_one_series_and_drops_nulls():
+    from tarso_pipeline.meting import series_rows_sql
+
+    sql = series_rows_sql(TABLE, "a" * 64)
+    assert f"= '{'a' * 64}'" in sql
+    assert f"{VALUE_COLUMN} IS NOT NULL" in sql
+
+
+@pytest.mark.parametrize(
+    "bad",
+    ["x' OR '1'='1", "a; DROP TABLE t", "", "a" * 200, "has space"],
+)
+def test_series_rows_rejects_anything_that_is_not_a_hash(bad):
+    from tarso_pipeline.meting import series_rows_sql
+
+    with pytest.raises(ValueError, match="plain hash"):
+        series_rows_sql(TABLE, bad)

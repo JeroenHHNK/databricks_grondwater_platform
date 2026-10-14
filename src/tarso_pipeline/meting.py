@@ -213,3 +213,72 @@ def status_sql(table: str) -> str:
         GROUP BY {STATUS_COLUMN}
         ORDER BY rows DESC
     """
+
+
+def manifest_sql(
+    table: str,
+    min_days: int = 365,
+    min_obs: int = 100,
+    limit: int = 20,
+) -> str:
+    """The work list: the longest trainable series, longest first.
+
+    Deliberately capped (handover section 3): the first increment is 20 series,
+    not the whole table.
+    """
+    if limit < 1:
+        raise ValueError(f"limit must be >= 1, got {limit}")
+    return f"""
+        WITH scored AS ({series_verdict_sql(table, min_days, min_obs)})
+        SELECT series_id, n_rows, n_values, first_value_at, last_value_at, span_days
+        FROM scored
+        WHERE verdict = '{TRAINABLE}'
+        ORDER BY span_days DESC, n_values DESC
+        LIMIT {limit}
+    """
+
+
+def duplicate_timestamps_sql(table: str, manifest_table: str) -> str:
+    """How many timestamps repeat, per manifest series (handover section 4).
+
+    ~55 values a day is either duplicates or sub-hourly sampling, and the two
+    need different cleaning rules. ``values_per_day`` separates them: duplicates
+    push ``n_duplicate_ts`` up, genuine dense sampling leaves it at zero.
+    """
+    return f"""
+        SELECT
+            m.{SERIES_COLUMN}                                          AS series_id,
+            count(*)                                                   AS n_rows,
+            count(DISTINCT m.{TIME_COLUMN})                            AS n_distinct_ts,
+            count(*) - count(DISTINCT m.{TIME_COLUMN})                 AS n_duplicate_ts,
+            round(100.0 * (count(*) - count(DISTINCT m.{TIME_COLUMN}))
+                  / count(*), 2)                                       AS pct_duplicate,
+            round(count(*) / nullif(
+                datediff(max(m.{TIME_COLUMN}), min(m.{TIME_COLUMN})), 0), 1)
+                                                                       AS rows_per_day,
+            round(count(DISTINCT m.{TIME_COLUMN}) / nullif(
+                datediff(max(m.{TIME_COLUMN}), min(m.{TIME_COLUMN})), 0), 1)
+                                                                       AS distinct_ts_per_day
+        FROM {table} m
+        JOIN {manifest_table} w ON w.series_id = m.{SERIES_COLUMN}
+        WHERE m.{VALUE_COLUMN} IS NOT NULL
+        GROUP BY m.{SERIES_COLUMN}
+        ORDER BY n_duplicate_ts DESC
+    """
+
+
+def series_rows_sql(table: str, series_id: str) -> str:
+    """Every valued row of one series, for loading into pandas.
+
+    ``series_id`` is a 64-character hash from the manifest; it is validated
+    rather than trusted, because it is interpolated into SQL.
+    """
+    if not re.fullmatch(r"[A-Za-z0-9_-]{1,128}", series_id or ""):
+        raise ValueError(f"series_id must be a plain hash/identifier, got {series_id!r}")
+    return f"""
+        SELECT {TIME_COLUMN} AS tijdstempel, {VALUE_COLUMN} AS waarde
+        FROM {table}
+        WHERE {SERIES_COLUMN} = '{series_id}'
+          AND {VALUE_COLUMN} IS NOT NULL
+        ORDER BY {TIME_COLUMN}
+    """

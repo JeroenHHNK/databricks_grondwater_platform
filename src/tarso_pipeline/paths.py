@@ -58,3 +58,35 @@ def forcing_path(station: int, root: str | Path | None = None) -> Path:
     column, so precipitation and evaporation do not need separate files.
     """
     return forcing_dir(root) / f"knmi_forcing_{station}.csv"
+
+
+# --- Databricks write targets (handover 2026-10-14, established empirically) ---
+#
+# The source catalog gold_prd is READ-ONLY: SELECT/EXECUTE/READ VOLUME only, no
+# CREATE TABLE, no CREATE SCHEMA, no WRITE VOLUME. Never write there.
+#
+# Tables and model files go to different schemas of the same catalog, and that
+# split is deliberate -- do not consolidate them.
+
+SOURCE_TABLE = "gold_prd.hl_grondwaterpeilmeting.meting"
+
+OUTPUT_CATALOG = "waterkeringbeheer_prd"
+OUTPUT_SCHEMA = "jvanruitenbeek"
+MANIFEST_TABLE = f"{OUTPUT_CATALOG}.{OUTPUT_SCHEMA}.pastas_series_manifest"
+METRICS_TABLE = f"{OUTPUT_CATALOG}.{OUTPUT_SCHEMA}.pastas_fit_metrics"
+
+# WRITE VOLUME here is a separate grant from the table write that was tested;
+# confirm it once with a throwaway file before a batch run.
+MODEL_VOLUME_BASE = (
+    f"/Volumes/{OUTPUT_CATALOG}/misc_files/misc_files/pastas_pipeline"
+)
+
+
+def model_dir_for(series_name: str, base: str | None = None) -> str:
+    """One folder per series under the models volume."""
+    from tarso_pipeline.naming import sanitize_name
+
+    safe = sanitize_name(series_name)
+    if not safe:
+        raise ValueError(f"series_name sanitises to nothing: {series_name!r}")
+    return f"{base or MODEL_VOLUME_BASE}/{safe}"

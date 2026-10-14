@@ -16,9 +16,16 @@ src/tarso_pipeline/
   paths.py         repo_root / forcing_path
   discover.py      list head CSVs -> (survey, file_path, series_name)
   train.py         train_tarso (the fit) + train_one (never raises)
+  meting.py        SQL over gold_prd...meting: verdicts, manifest, duplicates
+  clean.py         dedup duplicate timestamps + resample, counts recorded
+  fit.py           fit_series: load -> clean -> fit -> save -> metrics row
+  fit_metrics.py   the pastas_fit_metrics row, read from the API
 notebooks/
-  ingestion/knmi_forcing.py      KNMI -> Delta, incremental
-  transformation/train_tarso.py  one Tarso model per series -> tarso_runs
+  ingestion/knmi_forcing.py          KNMI -> Delta, incremental
+  ingestion/find_trainable_series.py how many series are fit to model
+  ingestion/build_manifest.py        task 1: the 20 longest + duplicate check
+  transformation/fit_pastas_models.py task 2: fit -> .pas + pastas_fit_metrics
+  transformation/train_tarso.py      CSV-on-a-Volume variant (not the meting path)
 scripts/
   check_knmi.py    run the ingestion locally, no cluster needed
 tests/             pytest suite (no Spark, no Pastas needed)
@@ -125,3 +132,21 @@ job task:
 Source files are never renamed: model names are derived from file stems with
 `sanitize_name`. Head files are read from Unity Catalog Volume paths
 (`/Volumes/<catalog>/<schema>/<volume>/...`).
+
+
+## The Databricks pipeline (meting)
+
+Two tasks, run in order. Permission facts are in `src/tarso_pipeline/paths.py`;
+`gold_prd` is **read-only**, everything is written to
+`waterkeringbeheer_prd.jvanruitenbeek`.
+
+| # | Notebook | Writes |
+|---|---|---|
+| 1 | `ingestion/build_manifest.py` | `pastas_series_manifest` (20 longest series) |
+| 2 | `transformation/fit_pastas_models.py` | `pastas_fit_metrics` + `.pas` files |
+
+Run task 2 with `limit_series=1` first: the `WRITE VOLUME` grant on `misc_files` is
+separate from the table write and is checked with a throwaway file before any fit.
+
+The stress series are **not** fetched at run time — they ship in `data/forcing/`
+because the cluster has no outbound internet.

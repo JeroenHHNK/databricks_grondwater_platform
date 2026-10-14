@@ -1,0 +1,168 @@
+"""Fit one series from the `meting` table end to end (handover sections 3-5).
+
+``fit_series`` is the unit of work: load rows -> clean -> fit -> save -> one
+metrics row. It **never raises**. A failure becomes a row with ``success=False``
+and the message, because one malformed series must not abort a run over twenty.
+
+Two model types:
+
+``tarso``     ``ps.TarsoModel`` -- the target, with per-series drainage levels.
+``recharge``  ``ps.RechargeModel`` with an Exponential response -- the plain
+              Pastas baseline the handover asks for as a comparison. Cheap, and
+              it tells you whether a poor Tarso fit is the model or the data.
+"""
+
+from __future__ import annotations
+
+from pathlib import Path
+
+import pandas as pd
+
+from tarso_pipeline.clean import CleanedSeries, clean_head
+from tarso_pipeline.fit_metrics import (
+    empty_row,
+    error_row,
+    extract_metrics,
+    observed_fields,
+)
+
+MODEL_TYPES = ("tarso", "recharge")
+STRESSMODEL_NAME = "Tarso"
+RECHARGE_NAME = "Recharge"
+
+
+def build_model(
+    model_type: str,
+    series_name: str,
+    head: pd.Series,
+    precipitation: pd.Series,
+    evaporation: pd.Series,
+):
+    """Construct an unsolved model of the requested type."""
+    import pastas as ps
+
+    if model_type == "tarso":
+        # constant=False: TarsoModel brings its own drainage levels, so a Pastas
+        # constant would be redundant and unidentifiable. dmin/dmax are this
+        # series' own observed range, not global constants.
+        model = ps.Model(head, name=series_name, constant=False)
+        model.add_stressmodel(
+            ps.TarsoModel(
+                precipitation, evaporation,
+                dmin=head.min(), dmax=head.max(), name=STRESSMODEL_NAME,
+            )
+        )
+        # Drainage resistances in days; without bounds the solver wanders
+        # somewhere physically meaningless.
+        model.set_parameter("Tarso_a0", pmin=0.0, pmax=200.0)
+        model.set_parameter("Tarso_a1", pmin=10.0, pmax=200.0)
+        return model
+
+    if model_type == "recharge":
+        model = ps.Model(head, name=series_name)
+        model.add_stressmodel(
+            ps.RechargeModel(
+                precipitation, evaporation,
+                rfunc=ps.Exponential(), name=RECHARGE_NAME,
+            )
+        )
+        return model
+
+    raise ValueError(f"Unknown model_type {model_type!r}; use one of {MODEL_TYPES}")
+
+
+def fit_series(
+    series_id: str,
+    series_name: str,
+    raw: pd.DataFrame,
+    precipitation: pd.Series,
+    evaporation: pd.Series,
+    run_id: str,
+    model_type: str = "tarso",
+    model_dir: str | None = None,
+    time_column: str = "tijdstempel",
+    value_column: str = "waarde",
+    dedup_method: str = "mean",
+    resample_rule: str = "D",
+    resample_method: str = "mean",
+    min_obs: int = 100,
+    min_days: int = 365,
+) -> dict:
+    """Clean, fit, save and report one series. Never raises."""
+    row = empty_row()
+    row.update(
+        {
+            "run_id": run_id,
+            "series_id": series_id,
+            "series_name": series_name,
+            "model_type": model_type,
+        }
+    )
+
+    try:
+        cleaned: CleanedSeries = clean_head(
+            raw,
+            time_column=time_column,
+            value_column=value_column,
+            dedup_method=dedup_method,
+            resample_rule=resample_rule,
+            resample_method=resample_method,
+        )
+        row.update(cleaned.as_row())
+        row.update(observed_fields(cleaned.series))
+
+        # Guard before handing Pastas something it cannot fit, so the reason is
+        # recorded rather than surfacing as an opaque solver error.
+        if cleaned.n_final < min_obs:
+            raise ValueError(
+                f"only {cleaned.n_final} observations after cleaning (min_obs={min_obs})"
+            )
+        if cleaned.span_days < min_days:
+            raise ValueError(
+                f"cleaned series spans {cleaned.span_days} days (min_days={min_days})"
+            )
+
+        head = cleaned.series
+        model = build_model(model_type, series_name, head, precipitation, evaporation)
+        model.solve(
+            tmin=head.index.min().strftime("%Y-%m-%d"),
+            tmax=head.index.max().strftime("%Y-%m-%d"),
+            report=False,
+        )
+
+        metrics = extract_metrics(model, model_type=model_type)
+        row.update(metrics)
+        row.update(
+            {
+                "run_id": run_id,
+                "series_id": series_id,
+                "series_name": series_name,
+            }
+        )
+        row.update(cleaned.as_row())
+        row.update(observed_fields(head))
+
+        if model_dir:
+            target = Path(model_dir)
+            target.mkdir(parents=True, exist_ok=True)
+            path = target / f"{series_name}_{model_type}_model.pas"
+            model.to_file(str(path))
+            row["model_path"] = str(path)
+
+        row["success"] = True
+        row["error_message"] = None
+        return row
+
+    except Exception as exc:  # noqa: BLE001 - a failed series is data, not a crash
+        failure = error_row(
+            run_id=run_id,
+            series_id=series_id,
+            series_name=series_name,
+            model_type=model_type,
+            message=f"{type(exc).__name__}: {exc}",
+        )
+        # Keep whatever cleaning facts were established before the failure.
+        for key, value in row.items():
+            if value is not None and failure.get(key) is None:
+                failure[key] = value
+        return failure
