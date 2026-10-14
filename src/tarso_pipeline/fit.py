@@ -19,6 +19,7 @@ from pathlib import Path
 import pandas as pd
 
 from tarso_pipeline.clean import CleanedSeries, clean_head
+from tarso_pipeline.forcing import check_coverage
 from tarso_pipeline.fit_metrics import (
     empty_row,
     error_row,
@@ -116,6 +117,7 @@ def fit_series(
     resample_method: str = "mean",
     min_obs: int = 100,
     min_days: int = 365,
+    warmup_days: int = 3650,
     forcing_station: str | None = None,
     forcing_units: str = "m",
     save_plot: bool = True,
@@ -157,10 +159,25 @@ def fit_series(
             )
 
         head = cleaned.series
+
+        # Calibrate only where forcing exists. KNMI publishes 1-2 days behind, so
+        # a series running to today always overshoots it; trimming here is
+        # deliberate and recorded, rather than left for Pastas to resolve.
+        coverage = check_coverage(precipitation, head, warmup_days=warmup_days)
+        if not coverage.usable:
+            raise ValueError(
+                f"forcing {coverage.forcing_start.date()}..{coverage.forcing_end.date()} "
+                f"does not overlap head {coverage.head_start.date()}.."
+                f"{coverage.head_end.date()}"
+            )
+        row["calibration_trimmed"] = bool(coverage.trimmed)
+        row["days_trimmed_from_end"] = int(coverage.days_trimmed_from_end)
+        row["warmup_available_days"] = int(coverage.available_warmup_days)
+
         model = build_model(model_type, series_name, head, precipitation, evaporation)
         model.solve(
-            tmin=head.index.min().strftime("%Y-%m-%d"),
-            tmax=head.index.max().strftime("%Y-%m-%d"),
+            tmin=coverage.tmin.strftime("%Y-%m-%d"),
+            tmax=coverage.tmax.strftime("%Y-%m-%d"),
             report=False,
         )
 

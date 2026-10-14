@@ -169,8 +169,20 @@ Then upload the CSV to the volume the fit notebook reads:
 
 | station | range | full 3650-day warmup needs head starting |
 |---|---|---|
-| 249 Berkhout | 1999-03-23 onwards | 2009 or later |
+| **249 Berkhout** (in use) | 1999-03-23 onwards | 2009 or later |
 | 235 De Kooy | 1970-01-01 onwards | 1980 or later |
+
+The head series run from **2022**, so 249 gives ~8300 days before them and the full
+3650-day warmup fits. 235 is only needed if series older than 2009 appear; regenerate
+it with `python scripts/check_knmi.py --station 235 --backlog-start 1970-01-01`.
+
+At the other end, KNMI publishes 1-2 days behind, so a series running to today always
+overshoots the forcing. `tmax` is trimmed back to the last forcing day; the drop is
+reported and recorded (`calibration_trimmed`, `days_trimmed_from_end`). No station
+avoids this - refreshing the forcing recovers those days.
+
+**`validatie_status` is ignored.** By decision: every row with a `waarde` is used,
+whatever its review status. Revisit once the status values are understood.
 
 **Forcing units.** The fit notebook converts mm to **metres per day** by default
 (`forcing_units=m`), matching the head in metres NAP. The original repo passed

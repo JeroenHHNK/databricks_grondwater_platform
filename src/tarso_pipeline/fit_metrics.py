@@ -35,6 +35,9 @@ FIT_METRICS_SCHEMA: dict[str, str] = {
     "freq": "string",
     "freq_obs": "string",
     "warmup_days": "int",
+    "warmup_available_days": "int",
+    "calibration_trimmed": "boolean",
+    "days_trimmed_from_end": "int",
     # fit statistics
     "evp": "double",
     "r2": "double",

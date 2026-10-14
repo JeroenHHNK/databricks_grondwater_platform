@@ -104,6 +104,7 @@ def test_ample_forcing_reports_warmup_ok():
                          series("2015-01-01", "2020-01-01"), warmup_days=3650)
     assert cov.warmup_ok
     assert cov.usable_warmup_days == 3650
+    assert cov.covers_calibration
     assert "warmup OK" in cov.describe()
 
 
@@ -116,17 +117,59 @@ def test_short_forcing_shortens_the_warmup_and_says_so():
     assert "WARMUP SHORTENED" in cov.describe()
 
 
-def test_forcing_starting_after_the_head_does_not_cover_it():
+def test_forcing_starting_after_the_head_moves_tmin():
     cov = check_coverage(series("2015-01-01", "2026-01-01"),
                          series("2010-01-01", "2020-01-01"))
-    assert not cov.covers_calibration
-    assert "DOES NOT COVER" in cov.describe()
+    assert not cov.covers_start
+    assert cov.tmin == pd.Timestamp("2015-01-01")
+    assert cov.trimmed
 
 
-def test_forcing_ending_before_the_head_does_not_cover_it():
+def test_forcing_ending_before_the_head_trims_tmax():
     cov = check_coverage(series("2000-01-01", "2018-01-01"),
                          series("2010-01-01", "2020-01-01"))
-    assert not cov.covers_calibration
+    assert not cov.covers_end
+    assert cov.tmax == pd.Timestamp("2018-01-01")
+    assert cov.days_trimmed_from_end == 730  # 2018 + 2019, neither a leap year
+
+
+def test_the_two_ends_fail_independently():
+    # The start governs the warmup and a deeper station fixes it; the end is
+    # KNMI's publication lag and no station fixes it. Conflating them gave the
+    # wrong advice.
+    lag = check_coverage(series("1999-03-23", "2026-10-12"),
+                         series("2022-01-01", "2026-10-14"), warmup_days=3650)
+    assert lag.covers_start and not lag.covers_end
+    assert lag.warmup_ok
+    assert lag.days_trimmed_from_end == 2
+    assert "warmup OK" in lag.describe()
+    assert "calibration trimmed" in lag.describe()
+    assert "deeper history" not in lag.describe()
+
+
+def test_the_real_case_2022_series_against_station_249():
+    cov = check_coverage(series("1999-03-23", "2026-10-12"),
+                         series("2022-01-01", "2026-10-14"), warmup_days=3650)
+    assert cov.available_warmup_days == 8320
+    assert cov.warmup_ok
+    assert cov.tmin == pd.Timestamp("2022-01-01")
+    assert cov.tmax == pd.Timestamp("2026-10-12")
+    assert cov.usable
+
+
+def test_no_overlap_is_reported_as_such():
+    cov = check_coverage(series("2000-01-01", "2005-01-01"),
+                         series("2010-01-01", "2020-01-01"))
+    assert not cov.usable
+    assert "NO OVERLAP" in cov.describe()
+
+
+def test_an_untrimmed_window_says_so():
+    cov = check_coverage(series("2000-01-01", "2026-01-01"),
+                         series("2015-01-01", "2020-01-01"), warmup_days=3650)
+    assert not cov.trimmed
+    assert cov.days_trimmed_from_end == 0
+    assert "trimmed" not in cov.describe()
 
 
 def test_usable_warmup_is_never_negative():

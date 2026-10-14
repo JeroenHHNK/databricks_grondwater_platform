@@ -85,7 +85,20 @@ def load_forcing_pair(
 
 @dataclass(frozen=True)
 class Coverage:
-    """Whether the forcing reaches far enough back for the requested warmup."""
+    """How the forcing extent lines up with a head series and its warmup.
+
+    The two ends fail for different reasons and need different answers, so they
+    are reported separately:
+
+    **The start** governs the warmup. Forcing that begins after
+    ``head_start - warmup`` means a shorter warmup; a different station with
+    deeper history can fix it.
+
+    **The end** governs the calibration window. KNMI publishes one to two days
+    behind, so a series running to today *always* ends after the forcing. That is
+    normal and the fix is to trim ``tmax`` by a couple of days -- not to go
+    looking for another station, since every station lags.
+    """
 
     forcing_start: pd.Timestamp
     forcing_end: pd.Timestamp
@@ -93,7 +106,18 @@ class Coverage:
     head_end: pd.Timestamp
     requested_warmup_days: int
     available_warmup_days: int
-    covers_calibration: bool
+
+    @property
+    def covers_start(self) -> bool:
+        return self.forcing_start <= self.head_start
+
+    @property
+    def covers_end(self) -> bool:
+        return self.forcing_end >= self.head_end
+
+    @property
+    def covers_calibration(self) -> bool:
+        return self.covers_start and self.covers_end
 
     @property
     def warmup_ok(self) -> bool:
@@ -104,25 +128,64 @@ class Coverage:
         """The warmup to actually ask for: the requested one, or all there is."""
         return min(self.requested_warmup_days, max(self.available_warmup_days, 0))
 
+    @property
+    def tmin(self) -> pd.Timestamp:
+        """Calibration start: the head's, pushed later only if forcing demands."""
+        return max(self.head_start, self.forcing_start)
+
+    @property
+    def tmax(self) -> pd.Timestamp:
+        """Calibration end: the head's, trimmed back to where the forcing ends."""
+        return min(self.head_end, self.forcing_end)
+
+    @property
+    def days_trimmed_from_end(self) -> int:
+        """Head days dropped because the forcing stops earlier. Usually 1-2."""
+        return max((self.head_end - self.forcing_end).days, 0)
+
+    @property
+    def trimmed(self) -> bool:
+        return self.tmin != self.head_start or self.tmax != self.head_end
+
+    @property
+    def usable(self) -> bool:
+        """Is there any overlap left to calibrate on at all?"""
+        return self.tmin < self.tmax
+
     def describe(self) -> str:
-        """A sentence saying what will happen, rather than leaving it implicit."""
-        if not self.covers_calibration:
+        """A sentence per decision, so nothing is resolved silently."""
+        parts: list[str] = []
+
+        if not self.usable:
             return (
-                f"FORCING DOES NOT COVER THE HEAD: forcing runs "
-                f"{self.forcing_start.date()} to {self.forcing_end.date()}, head runs "
-                f"{self.head_start.date()} to {self.head_end.date()}. Trim the "
-                f"calibration window or use a station with longer history."
+                f"NO OVERLAP: forcing {self.forcing_start.date()}.."
+                f"{self.forcing_end.date()} and head {self.head_start.date()}.."
+                f"{self.head_end.date()} do not overlap. Nothing can be calibrated."
             )
+
         if self.warmup_ok:
-            return (
-                f"warmup OK: {self.available_warmup_days} days of forcing before the "
-                f"head starts, {self.requested_warmup_days} requested"
+            parts.append(
+                f"warmup OK ({self.available_warmup_days} days available, "
+                f"{self.requested_warmup_days} requested)"
             )
-        return (
-            f"WARMUP SHORTENED to {self.usable_warmup_days} days "
-            f"({self.requested_warmup_days} requested): forcing starts "
-            f"{self.forcing_start.date()}, head starts {self.head_start.date()}"
-        )
+        else:
+            parts.append(
+                f"WARMUP SHORTENED to {self.usable_warmup_days} days "
+                f"({self.requested_warmup_days} requested; forcing starts "
+                f"{self.forcing_start.date()}, head starts {self.head_start.date()}) "
+                f"- a station with deeper history would fix this"
+            )
+
+        if self.days_trimmed_from_end:
+            parts.append(
+                f"calibration trimmed to {self.tmax.date()}, dropping "
+                f"{self.days_trimmed_from_end} head day(s) past the forcing "
+                f"(KNMI publishes 1-2 days behind; refresh the forcing to recover them)"
+            )
+        if not self.covers_start:
+            parts.append(f"calibration starts at {self.tmin.date()}, not the head's start")
+
+        return "; ".join(parts)
 
 
 def check_coverage(
@@ -142,15 +205,11 @@ def check_coverage(
     head_start = pd.Timestamp(head.index.min())
     head_end = pd.Timestamp(head.index.max())
 
-    available = (head_start - forcing_start).days
-    covers = forcing_start <= head_start and forcing_end >= head_end
-
     return Coverage(
         forcing_start=forcing_start,
         forcing_end=forcing_end,
         head_start=head_start,
         head_end=head_end,
         requested_warmup_days=warmup_days,
-        available_warmup_days=available,
-        covers_calibration=covers,
+        available_warmup_days=(head_start - forcing_start).days,
     )

@@ -37,9 +37,19 @@
 # MAGIC Coverage is checked per series and the outcome stated - the warmup is shortened
 # MAGIC deliberately and reported, never left for Pastas to resolve silently.
 # MAGIC
-# MAGIC Station 249 Berkhout starts **1999-03-23**, so a full 3650-day warmup needs a
-# MAGIC head starting 2009 or later. Station 235 De Kooy goes back to **1970-01-01** if
-# MAGIC the series are older.
+# MAGIC Station 249 Berkhout starts **1999-03-23**. The series here run from 2022, so
+# MAGIC there are ~8300 days of forcing before them and the full 3650-day warmup fits
+# MAGIC comfortably.
+# MAGIC
+# MAGIC The other end is routine: KNMI publishes 1-2 days behind, so a series running
+# MAGIC to today always overshoots the forcing. `tmax` is trimmed back to the last
+# MAGIC forcing day and the drop is reported and recorded (`calibration_trimmed`,
+# MAGIC `days_trimmed_from_end`). Refreshing the forcing recovers those days.
+# MAGIC
+# MAGIC ### `validatie_status` is ignored
+# MAGIC
+# MAGIC By decision, not oversight: every row with a `waarde` is used, whatever its
+# MAGIC review status. Revisit once the status values are understood.
 # MAGIC
 # MAGIC ### Failures are rows
 # MAGIC
@@ -272,6 +282,7 @@ for item in work.itertuples():
             resample_method=RESAMPLE_METHOD,
             min_obs=MIN_OBS,
             min_days=MIN_DAYS,
+            warmup_days=WARMUP_DAYS,
             forcing_station=STATION,
             forcing_units=FORCING_UNITS,
             save_plot=SAVE_PLOTS,
@@ -281,6 +292,10 @@ for item in work.itertuples():
             print(f"   {model_type:9} OK   EVP={row['evp']:.1f}%  R2={row['r2']:.3f}  "
                   f"RMSE={row['rmse']:.3f}  nobs={row['nobs']}  "
                   f"(dedup removed {row['n_duplicate_timestamps']:,})")
+            if row["calibration_trimmed"]:
+                print(f"   {'':9} calibration trimmed: "
+                      f"{row['tmin']} .. {row['tmax']} "
+                      f"({row['days_trimmed_from_end']} day(s) past the forcing)")
             if SAVE_PLOTS and not row["plot_path"]:
                 print(f"   {'':9} note: fit succeeded but the plot could not be saved")
         else:

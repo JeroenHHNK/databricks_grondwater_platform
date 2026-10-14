@@ -129,6 +129,13 @@ evaporation   = load_forcing(forcing_path(249), "makkink_mm")
 `MERGE` is one code path for all three `source` modes (`repo` / `api` / `file`) and
 re-merging stored rows is a no-op.
 
+**Decisions recorded 2026-10-14.** Head series run from 2022 onwards, so KNMI station
+249 (from 1999-03-23) provides ~8300 days before them and the full 3650-day warmup fits.
+`validatie_status` is **not** used as a filter: every row with a `waarde` is fitted,
+whatever its review status. Series folders are named `series_<first 16 hex of
+meetreeks_id>`; the full id stays on every metrics row, so a downstream join on the
+prefix recovers the rest.
+
 > **Hourly is not an option for evaporation.** KNMI's `uurgegevens` product has no
 > Makkink: its `PRCP` set is `DR:RH` (duration + hourly sum). `EV24` is daily-only.
 
