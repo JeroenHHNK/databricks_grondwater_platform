@@ -13,6 +13,7 @@ src/tarso_pipeline/
   fit.py           fit_series: load -> clean -> fit -> save -> metrics row
   fit_metrics.py   the pastas_fit_metrics row, read from the Pastas API
   knmi.py          KNMI forcing download (precipitation + Makkink)
+  forcing.py       load the forcing CSV (units, station) + warmup coverage
   forcing_plot.py  annual totals and the check chart
   io.py            load_forcing / read_head_csv
   naming.py        sanitize_name
@@ -155,6 +156,23 @@ The stress series are **not** fetched at run time — they ship in `data/forcing
 because the cluster has no outbound internet. Refresh them locally:
 
 ```bash
-python scripts/check_knmi.py
+# full history for a station (one API call); 249 starts 1999, 235 starts 1970
+python scripts/check_knmi.py --station 249 --backlog-start 1970-01-01
 git add data/forcing && git commit -m "Refresh KNMI forcing" && git push
 ```
+
+Then upload the CSV to the volume the fit notebook reads:
+
+```
+/Volumes/waterkeringbeheer_prd/misc_files/misc_files/pastas_pipeline/knmi_forcing/
+```
+
+| station | range | full 3650-day warmup needs head starting |
+|---|---|---|
+| 249 Berkhout | 1999-03-23 onwards | 2009 or later |
+| 235 De Kooy | 1970-01-01 onwards | 1980 or later |
+
+**Forcing units.** The fit notebook converts mm to **metres per day** by default
+(`forcing_units=m`), matching the head in metres NAP. The original repo passed
+millimetres straight through; the choice only rescales the gain parameters, but it
+makes the two conventions incomparable, so it is recorded on every metrics row.

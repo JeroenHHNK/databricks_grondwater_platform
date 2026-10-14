@@ -1,36 +1,54 @@
 # Databricks notebook source
+# /// script
+# [tool.databricks.environment]
+# environment_version = "6"
+# ///
 # MAGIC %md
-# MAGIC # Fit Pastas models for the manifest series
+# MAGIC # Fit Tarso models for the manifest series
 # MAGIC
-# MAGIC Task 2 of the pipeline. Reads the manifest, fits one model per series, writes each
-# MAGIC `.pas` to the models volume, and appends one row per fit to
-# MAGIC `waterkeringbeheer_prd.jvanruitenbeek.pastas_fit_metrics`.
+# MAGIC Reads the manifest, fits one model per series, and produces three outputs under
+# MAGIC the same volume prefix, plus one Delta row per fit.
 # MAGIC
-# MAGIC ### Run it on one series first
+# MAGIC | output | where |
+# MAGIC |---|---|
+# MAGIC | `.pas` model | `<volume>/<series_name>/<series>_<type>_model.pas` |
+# MAGIC | results plot | `<volume>/<series_name>/<series>_<type>_results.png` |
+# MAGIC | metrics row | `waterkeringbeheer_prd.jvanruitenbeek.pastas_fit_metrics` |
 # MAGIC
-# MAGIC Set `limit_series` to 1. Build order step 3 is "fit **one** series end to end"
-# MAGIC before scaling to 20 — the volume write in particular is an untested grant.
+# MAGIC Both paths are recorded as columns (`model_path`, `plot_path`), so nothing
+# MAGIC downstream has to reconstruct them.
 # MAGIC
-# MAGIC ### Metrics come from the API, not `fit_report()`
+# MAGIC ### Fit one series first
 # MAGIC
-# MAGIC `ml.fit_report()` is a human-formatted string whose layout is not a stable API.
-# MAGIC Every value here is read through `ml.stats.*`, `ml.solver.*`, `ml.settings` and
-# MAGIC `ml.parameters`, each guarded individually so a field a given Pastas release does
-# MAGIC not expose lands as `NULL` instead of losing the row.
+# MAGIC `limit_series` defaults to **1**. Validate the whole chain - load, clean,
+# MAGIC resample, fit, save `.pas`, save plot, write one row - before scaling to 20.
+# MAGIC
+# MAGIC ### Forcing units
+# MAGIC
+# MAGIC KNMI publishes millimetres; Pastas is given **metres per day**
+# MAGIC (`forcing_units=m`, mm / 1000), matching the head in metres NAP. The original
+# MAGIC repo passed millimetres straight through - the choice only rescales the gain
+# MAGIC parameters, but it makes the two conventions incomparable, so it is recorded on
+# MAGIC every row. Set `forcing_units=mm` to reproduce the old behaviour.
+# MAGIC
+# MAGIC ### Warmup
+# MAGIC
+# MAGIC Pastas needs forcing over the calibration window **and** the warmup before it.
+# MAGIC Coverage is checked per series and the outcome stated - the warmup is shortened
+# MAGIC deliberately and reported, never left for Pastas to resolve silently.
+# MAGIC
+# MAGIC Station 249 Berkhout starts **1999-03-23**, so a full 3650-day warmup needs a
+# MAGIC head starting 2009 or later. Station 235 De Kooy goes back to **1970-01-01** if
+# MAGIC the series are older.
 # MAGIC
 # MAGIC ### Failures are rows
 # MAGIC
-# MAGIC `fit_series` never raises. A series that fails gets `success=false` and the
-# MAGIC message, so one malformed series cannot abort a run over twenty.
-# MAGIC
-# MAGIC ### Forcing
-# MAGIC
-# MAGIC Open question 2 from the handover is already answered: the stress series ship
-# MAGIC with this repo at `data/forcing/knmi_forcing_249.csv` (KNMI 249 Berkhout, 2020
-# MAGIC onwards), because the cluster has no outbound internet. Refresh with
-# MAGIC `python scripts/check_knmi.py` locally, then commit, push and pull.
+# MAGIC `fit_series` never raises: a failed series gets `success=false` and the message.
+# MAGIC A run where 18 of 20 succeed is a useful result; one that dies on series 3 is not.
 
 # COMMAND ----------
+
+dbutils.widgets.text("source_root", "", "Source root (blank = find pyproject.toml)")
 
 dbutils.widgets.text("source_table", "gold_prd.hl_grondwaterpeilmeting.meting", "Source")
 dbutils.widgets.text("manifest_table",
@@ -39,21 +57,26 @@ dbutils.widgets.text("manifest_table",
 dbutils.widgets.text("metrics_table",
                      "waterkeringbeheer_prd.jvanruitenbeek.pastas_fit_metrics",
                      "Metrics table")
-dbutils.widgets.text("model_volume",
+dbutils.widgets.text("volume_base",
                      "/Volumes/waterkeringbeheer_prd/misc_files/misc_files/pastas_pipeline",
-                     "Models volume")
+                     "Volume prefix")
+dbutils.widgets.text("forcing_dir", "", "Forcing dir (blank = <volume>/knmi_forcing)")
+
+dbutils.widgets.text("station", "249", "KNMI station")
+dbutils.widgets.dropdown("forcing_units", "m", ["m", "mm"], "Forcing units")
+dbutils.widgets.text("warmup_days", "3650", "Warmup in days")
 
 dbutils.widgets.multiselect("model_types", "tarso", ["tarso", "recharge"], "Model types")
 dbutils.widgets.text("limit_series", "1", "How many series (start with 1)")
-dbutils.widgets.text("station", "249", "KNMI station (forcing)")
 
 dbutils.widgets.text("dedup_method", "mean", "Collapse duplicate timestamps with")
 dbutils.widgets.text("resample_rule", "D", "Resample rule")
 dbutils.widgets.text("resample_method", "mean", "Resample method")
 dbutils.widgets.text("min_obs", "100", "Minimum observations after cleaning")
 dbutils.widgets.text("min_days", "365", "Minimum span after cleaning")
-dbutils.widgets.text("run_id", "", "Run id (blank = timestamp)")
+dbutils.widgets.text("run_id", "", "Run id (blank = UTC timestamp)")
 dbutils.widgets.dropdown("write_metrics", "true", ["true", "false"], "Write metrics?")
+dbutils.widgets.dropdown("save_plots", "true", ["true", "false"], "Save result plots?")
 
 # COMMAND ----------
 
@@ -64,61 +87,84 @@ dbutils.widgets.dropdown("write_metrics", "true", ["true", "false"], "Write metr
 
 import os
 import sys
+from datetime import datetime, timezone
 
 
-def _repo_root() -> str:
+def _resolve_source_root(given: str) -> str:
+    """The repo's ``src``: an explicit parameter wins, discovery is the fallback.
+
+    Walking up for pyproject.toml works in a Git folder but not when a Job task
+    runs from another working directory, so the widget is the reliable route and
+    the walk is only a convenience for interactive runs.
+    """
+    if given:
+        root = given.rstrip("/")
+        return root if root.endswith("/src") else f"{root}/src"
     current = os.getcwd()
     while True:
         if os.path.isfile(os.path.join(current, "pyproject.toml")):
-            return current
+            return os.path.join(current, "src")
         parent = os.path.dirname(current)
         if parent == current:
             raise RuntimeError(
-                f"No pyproject.toml above {os.getcwd()}. Is this notebook running "
-                "inside the Git folder for this repo?"
+                f"No pyproject.toml above {os.getcwd()} and source_root was not set. "
+                "Set the source_root widget to the repo path, e.g. "
+                "/Workspace/Shared/Projecten/databricks_pastas_pipeline"
             )
         current = parent
 
 
-SRC = os.path.join(_repo_root(), "src")
+SRC = _resolve_source_root(dbutils.widgets.get("source_root").strip())
 if SRC not in sys.path:
     sys.path.insert(0, SRC)
+print(f"importing tarso_pipeline from {SRC}")
 
 import matplotlib
 
-matplotlib.use("Agg")
+matplotlib.use("Agg")  # no display on a cluster; must precede pyplot
 
 import pandas as pd
 import pastas as ps
 from pyspark.sql import functions as F
 
 from tarso_pipeline.fit import fit_series
-from tarso_pipeline.fit_metrics import make_run_id, rows_to_frame, spark_schema
-from tarso_pipeline.io import load_forcing
+from tarso_pipeline.fit_metrics import rows_to_frame, spark_schema
+from tarso_pipeline.forcing import check_coverage, forcing_file, load_forcing_pair
 from tarso_pipeline.meting import series_rows_sql
-from tarso_pipeline.paths import forcing_path, model_dir_for
+from tarso_pipeline.paths import model_dir_for
 
 SOURCE = dbutils.widgets.get("source_table").strip()
 MANIFEST = dbutils.widgets.get("manifest_table").strip()
 METRICS = dbutils.widgets.get("metrics_table").strip()
-MODEL_VOLUME = dbutils.widgets.get("model_volume").strip() or None
+VOLUME_BASE = dbutils.widgets.get("volume_base").strip().rstrip("/")
+FORCING_DIR = dbutils.widgets.get("forcing_dir").strip() or f"{VOLUME_BASE}/knmi_forcing"
+
+STATION = dbutils.widgets.get("station").strip()
+FORCING_UNITS = dbutils.widgets.get("forcing_units")
+WARMUP_DAYS = int(dbutils.widgets.get("warmup_days"))
+
 MODEL_TYPES = [m for m in dbutils.widgets.get("model_types").split(",") if m.strip()]
 LIMIT_SERIES = int(dbutils.widgets.get("limit_series"))
-STATION = int(dbutils.widgets.get("station"))
 DEDUP_METHOD = dbutils.widgets.get("dedup_method")
 RESAMPLE_RULE = dbutils.widgets.get("resample_rule")
 RESAMPLE_METHOD = dbutils.widgets.get("resample_method")
 MIN_OBS = int(dbutils.widgets.get("min_obs"))
 MIN_DAYS = int(dbutils.widgets.get("min_days"))
-RUN_ID = dbutils.widgets.get("run_id").strip() or make_run_id()
 WRITE_METRICS = dbutils.widgets.get("write_metrics") == "true"
+SAVE_PLOTS = dbutils.widgets.get("save_plots") == "true"
+RUN_ID = (
+    dbutils.widgets.get("run_id").strip()
+    or datetime.now(timezone.utc).strftime("%Y%m%dT%H%M%SZ")
+)
+
+FORCING_FILE = forcing_file(FORCING_DIR, STATION)
 
 print(f"run_id       {RUN_ID}")
 print(f"manifest     {MANIFEST}")
 print(f"metrics      {METRICS}")
-print(f"models       {MODEL_VOLUME or '(not written)'}")
-print(f"model types  {MODEL_TYPES}")
-print(f"series       {LIMIT_SERIES}")
+print(f"volume       {VOLUME_BASE}")
+print(f"forcing      {FORCING_FILE}  ({FORCING_UNITS})")
+print(f"model types  {MODEL_TYPES}   series: {LIMIT_SERIES}")
 print(f"cleaning     dedup={DEDUP_METHOD}, resample={RESAMPLE_RULE}/{RESAMPLE_METHOD}")
 print(f"pastas       {ps.__version__}")
 
@@ -127,41 +173,46 @@ print(f"pastas       {ps.__version__}")
 # MAGIC %md
 # MAGIC ## Confirm the volume is writable
 # MAGIC
-# MAGIC `WRITE VOLUME` on `misc_files` is a **separate grant** from the table write that
-# MAGIC was tested. Better to fail here on a throwaway file than twenty fits in.
+# MAGIC `WRITE VOLUME` is a separate grant from the table write. Better to fail here on
+# MAGIC a throwaway file than twenty fits in.
 
 # COMMAND ----------
 
-if MODEL_VOLUME:
-    probe = os.path.join(MODEL_VOLUME, "__write_test.txt")
-    try:
-        os.makedirs(MODEL_VOLUME, exist_ok=True)
-        with open(probe, "w") as handle:
-            handle.write("ok")
-        os.remove(probe)
-        print(f"writable: {MODEL_VOLUME}")
-    except Exception as exc:
-        raise RuntimeError(
-            f"Cannot write to {MODEL_VOLUME}: {type(exc).__name__}: {exc}\n"
-            "Either request WRITE VOLUME on misc_files, or blank the model_volume "
-            "widget to run without saving .pas files."
-        ) from exc
-else:
-    print("model_volume blank; .pas files will not be written")
+probe = os.path.join(VOLUME_BASE, "__write_test.txt")
+try:
+    os.makedirs(VOLUME_BASE, exist_ok=True)
+    with open(probe, "w") as handle:
+        handle.write("ok")
+    os.remove(probe)
+    print(f"writable: {VOLUME_BASE}")
+except Exception as exc:
+    raise RuntimeError(
+        f"Cannot write to {VOLUME_BASE}: {type(exc).__name__}: {exc}\n"
+        "Request WRITE VOLUME on misc_files, or point volume_base somewhere writable."
+    ) from exc
 
 # COMMAND ----------
 
 # MAGIC %md
 # MAGIC ## Forcing
+# MAGIC
+# MAGIC One CSV per station, filename derived from the station. Read with pandas: it is
+# MAGIC small and feeds Pastas directly.
 
 # COMMAND ----------
 
-FORCING_FILE = str(forcing_path(STATION))
-precipitation = load_forcing(FORCING_FILE, "precipitation_mm")
-evaporation = load_forcing(FORCING_FILE, "makkink_mm")
-print(f"{FORCING_FILE}")
-print(f"{len(precipitation)} days, {precipitation.index.min().date()} -> "
+if not os.path.isfile(FORCING_FILE):
+    raise FileNotFoundError(
+        f"No forcing at {FORCING_FILE}. Upload knmi_forcing_{STATION}.csv there "
+        f"(generate it with: python scripts/check_knmi.py --station {STATION} "
+        "--backlog-start 1970-01-01), or point the forcing_dir widget elsewhere."
+    )
+
+precipitation, evaporation = load_forcing_pair(FORCING_FILE, units=FORCING_UNITS)
+print(f"{len(precipitation):,} days, {precipitation.index.min().date()} -> "
       f"{precipitation.index.max().date()}")
+print(f"mean precipitation {precipitation.mean():.5f} {FORCING_UNITS}/day, "
+      f"mean Makkink {evaporation.mean():.5f} {FORCING_UNITS}/day")
 
 # COMMAND ----------
 
@@ -172,12 +223,12 @@ print(f"{len(precipitation)} days, {precipitation.index.min().date()} -> "
 
 work = (
     spark.table(MANIFEST)
-    .orderBy("span_days", ascending=False)
+    .orderBy(F.col("span_days").desc(), F.col("n_values").desc())
     .limit(LIMIT_SERIES)
     .toPandas()
 )
-print(f"{len(work)} series to fit x {len(MODEL_TYPES)} model type(s) "
-      f"= {len(work) * len(MODEL_TYPES)} fits")
+print(f"{len(work)} series x {len(MODEL_TYPES)} model type(s) = "
+      f"{len(work) * len(MODEL_TYPES)} fits")
 display(work)
 
 # COMMAND ----------
@@ -185,20 +236,26 @@ display(work)
 # MAGIC %md
 # MAGIC ## Fit
 # MAGIC
-# MAGIC Series are loaded one at a time on the driver: each is a few tens of thousands of
-# MAGIC rows, and the forcing is shared. Scale out with a Job "For each" task over
-# MAGIC `series_id` once one series is known good — that gives per-series retries without
-# MAGIC restructuring any of this.
+# MAGIC Scale out with a Job "For each" task over `series_id` once one series is known
+# MAGIC good - that gives per-series retries without restructuring any of this.
 
 # COMMAND ----------
 
 rows = []
 for item in work.itertuples():
     raw = spark.sql(series_rows_sql(SOURCE, item.series_id)).toPandas()
-    # The hash is the only name available (handover open question 3); shorten it
-    # for folder and log readability while keeping the full id on the row.
+    # The hash is the only name available; shortened for readable folders, with
+    # the full series_id kept on the row.
     series_name = f"series_{item.series_id[:16]}"
-    print(f"\n{series_name}  ({len(raw):,} raw rows, span {item.span_days}d)")
+    print(f"\n{series_name}  ({len(raw):,} raw rows, manifest span {item.span_days}d)")
+
+    if not raw.empty:
+        stamps = pd.DatetimeIndex(
+            pd.to_datetime(raw["tijdstempel"], errors="coerce", utc=True)
+        ).tz_convert(None)
+        head_probe = pd.Series(1.0, index=stamps).dropna()
+        coverage = check_coverage(precipitation, head_probe, warmup_days=WARMUP_DAYS)
+        print(f"   {coverage.describe()}")
 
     for model_type in MODEL_TYPES:
         row = fit_series(
@@ -209,18 +266,23 @@ for item in work.itertuples():
             evaporation=evaporation,
             run_id=RUN_ID,
             model_type=model_type,
-            model_dir=model_dir_for(series_name, MODEL_VOLUME) if MODEL_VOLUME else None,
+            model_dir=model_dir_for(series_name, VOLUME_BASE),
             dedup_method=DEDUP_METHOD,
             resample_rule=RESAMPLE_RULE,
             resample_method=RESAMPLE_METHOD,
             min_obs=MIN_OBS,
             min_days=MIN_DAYS,
+            forcing_station=STATION,
+            forcing_units=FORCING_UNITS,
+            save_plot=SAVE_PLOTS,
         )
         rows.append(row)
         if row["success"]:
             print(f"   {model_type:9} OK   EVP={row['evp']:.1f}%  R2={row['r2']:.3f}  "
                   f"RMSE={row['rmse']:.3f}  nobs={row['nobs']}  "
                   f"(dedup removed {row['n_duplicate_timestamps']:,})")
+            if SAVE_PLOTS and not row["plot_path"]:
+                print(f"   {'':9} note: fit succeeded but the plot could not be saved")
         else:
             print(f"   {model_type:9} FAIL {row['error_message']}")
 
@@ -231,8 +293,9 @@ print(f"\n{int(results['success'].sum())} of {len(results)} fits succeeded")
 
 display(
     results[["series_name", "model_type", "success", "nobs", "span_days",
-             "evp", "r2", "rmse", "aicc", "bic", "obj",
-             "n_raw_rows", "n_duplicate_timestamps", "model_path", "error_message"]]
+             "evp", "r2", "rmse", "aicc", "bic", "obj", "nfev",
+             "n_raw_rows", "n_duplicate_timestamps",
+             "model_path", "plot_path", "error_message"]]
 )
 
 # COMMAND ----------
@@ -240,7 +303,7 @@ display(
 # MAGIC %md
 # MAGIC ## Persist
 # MAGIC
-# MAGIC Append with a distinct `run_id`, so history accumulates and runs stay comparable.
+# MAGIC Append with a distinct `run_id`, so fits accumulate and runs stay comparable.
 
 # COMMAND ----------
 
@@ -256,7 +319,8 @@ else:
 
     display(
         spark.table(METRICS)
-        .select("run_id", "series_name", "model_type", "success", "evp", "r2", "rmse")
+        .select("run_id", "series_name", "model_type", "success",
+                "evp", "r2", "rmse", "forcing_station", "forcing_units")
         .orderBy(F.col("fitted_at").desc())
         .limit(20)
     )

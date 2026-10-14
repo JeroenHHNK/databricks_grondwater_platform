@@ -33,6 +33,7 @@ FIT_METRICS_SCHEMA: dict[str, str] = {
     "tmin": "timestamp",
     "tmax": "timestamp",
     "freq": "string",
+    "freq_obs": "string",
     "warmup_days": "int",
     # fit statistics
     "evp": "double",
@@ -59,6 +60,9 @@ FIT_METRICS_SCHEMA: dict[str, str] = {
     # provenance
     "parameters": "string",
     "model_path": "string",
+    "plot_path": "string",
+    "forcing_station": "string",
+    "forcing_units": "string",
     "pastas_version": "string",
     "fitted_at": "timestamp",
 }
@@ -113,6 +117,9 @@ def extract_metrics(model, model_type: str = "tarso") -> dict:
         "tmin": _safe(lambda: pd.Timestamp(settings["tmin"])),
         "tmax": _safe(lambda: pd.Timestamp(settings["tmax"])),
         "freq": _safe(lambda: str(settings["freq"])),
+        "freq_obs": _safe(
+            lambda: None if settings.get("freq_obs") is None else str(settings["freq_obs"])
+        ),
         "warmup_days": _safe(lambda: settings["warmup"], _timedelta_days),
         "evp": _safe(model.stats.evp, float),
         "r2": _safe(model.stats.rsq, float),

@@ -71,6 +71,35 @@ def build_model(
     raise ValueError(f"Unknown model_type {model_type!r}; use one of {MODEL_TYPES}")
 
 
+def _save_results_plot(model, path: Path) -> str | None:
+    """Save ``ml.plots.results()`` as a PNG. Returns the path, or None on failure.
+
+    A plot is a nice-to-have: a model that fitted but could not be drawn is still
+    a fitted model, so this never propagates. The figure is closed explicitly --
+    pyplot keeps every figure alive otherwise, and a 20-series loop would exhaust
+    memory.
+    """
+    import matplotlib
+
+    matplotlib.use("Agg")  # no display on a cluster
+    import matplotlib.pyplot as plt
+
+    figure = None
+    try:
+        axes = model.plots.results(figsize=(10, 6))
+        # results() returns axes (or a list of them); the figure is what we save.
+        first = axes[0] if isinstance(axes, (list, tuple)) else axes
+        figure = first.get_figure()
+        figure.savefig(str(path), dpi=150, bbox_inches="tight")
+        return str(path)
+    except Exception:
+        return None
+    finally:
+        if figure is not None:
+            plt.close(figure)
+        plt.close("all")
+
+
 def fit_series(
     series_id: str,
     series_name: str,
@@ -87,6 +116,9 @@ def fit_series(
     resample_method: str = "mean",
     min_obs: int = 100,
     min_days: int = 365,
+    forcing_station: str | None = None,
+    forcing_units: str = "m",
+    save_plot: bool = True,
 ) -> dict:
     """Clean, fit, save and report one series. Never raises."""
     row = empty_row()
@@ -96,6 +128,8 @@ def fit_series(
             "series_id": series_id,
             "series_name": series_name,
             "model_type": model_type,
+            "forcing_station": None if forcing_station is None else str(forcing_station),
+            "forcing_units": forcing_units,
         }
     )
 
@@ -148,6 +182,11 @@ def fit_series(
             path = target / f"{series_name}_{model_type}_model.pas"
             model.to_file(str(path))
             row["model_path"] = str(path)
+
+            if save_plot:
+                row["plot_path"] = _save_results_plot(
+                    model, target / f"{series_name}_{model_type}_results.png"
+                )
 
         row["success"] = True
         row["error_message"] = None

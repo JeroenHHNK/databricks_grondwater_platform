@@ -52,12 +52,14 @@ def forcing_dir(root: str | Path | None = None) -> Path:
 
 
 def forcing_path(station: int, root: str | Path | None = None) -> Path:
-    """Path of the committed forcing file for one KNMI station.
+    """Path of the committed forcing file for one KNMI station, inside the repo.
 
-    One file per station, both variables in it: ``load_forcing()`` selects the
-    column, so precipitation and evaporation do not need separate files.
+    One file per station, both variables in it: the column selects the variable,
+    so precipitation and evaporation do not need separate files.
     """
-    return forcing_dir(root) / f"knmi_forcing_{station}.csv"
+    from tarso_pipeline.forcing import forcing_filename
+
+    return forcing_dir(root) / forcing_filename(station)
 
 
 # --- Databricks write targets (handover 2026-10-14, established empirically) ---
@@ -80,6 +82,18 @@ METRICS_TABLE = f"{OUTPUT_CATALOG}.{OUTPUT_SCHEMA}.pastas_fit_metrics"
 MODEL_VOLUME_BASE = (
     f"/Volumes/{OUTPUT_CATALOG}/misc_files/misc_files/pastas_pipeline"
 )
+
+# The forcing CSV lives beside the models on the same volume. One file per
+# station; the filename is derived from the station, never hardcoded, so
+# per-series stations later are a change of argument.
+FORCING_VOLUME_DIR = f"{MODEL_VOLUME_BASE}/knmi_forcing"
+
+
+def forcing_volume_path(station: int | str, base: str | None = None) -> str:
+    """Path of one station's forcing CSV on the volume."""
+    from tarso_pipeline.forcing import forcing_file
+
+    return forcing_file(base or FORCING_VOLUME_DIR, station)
 
 
 def model_dir_for(series_name: str, base: str | None = None) -> str:
