@@ -211,3 +211,8 @@ def extremes_summary_file(run_directory: str) -> str:
     run_directory = str(run_directory).rstrip("/")
     run_name = run_directory.rsplit("/", 1)[-1]
     return f"{run_directory}/{run_name}_extremes_summary.csv"
+
+# Provenance for the bias correction applied to the IMPREX forcing. It lives
+# beside the member files and is copied into each run folder, so the numbers
+# never travel without the record of how the forcing was corrected.
+BIAS_LOG_FILE = "bias_correction_run_log.json"

@@ -65,6 +65,9 @@ dbutils.widgets.dropdown("make_plots", "true", ["true", "false"], "Make plots?")
 dbutils.widgets.dropdown("write_tables", "true", ["true", "false"], "Write Delta tables?")
 dbutils.widgets.text("output_catalog", "waterkeringbeheer_prd", "Output catalog")
 dbutils.widgets.text("output_schema", "jvanruitenbeek", "Output schema")
+dbutils.widgets.text("metrics_table",
+                     "waterkeringbeheer_prd.jvanruitenbeek.pastas_fit_metrics",
+                     "Stage-2 metrics (to recover the full series_id)")
 dbutils.widgets.text("run_id", "", "Run id (blank = UTC timestamp)")
 
 # COMMAND ----------
@@ -111,6 +114,7 @@ from tarso_pipeline.evt_report import TAILS
 from tarso_pipeline.extremes_run import discover_models, run_model
 from tarso_pipeline.imprex import discover_members
 from tarso_pipeline.paths import (
+    BIAS_LOG_FILE,
     EVT_SELECTION_FILE,
     EXTREMES_DIRS,
     TAIL_PARAMETERS_FILE,
@@ -141,6 +145,7 @@ RUN_ID = (
     or datetime.now(timezone.utc).strftime("%Y%m%dT%H%M%SZ")
 )
 
+METRICS_TABLE = dbutils.widgets.get("metrics_table").strip()
 SELECTION_TABLE = f"{CATALOG}.{SCHEMA}.pastas_evt_selection"
 SUMMARY_TABLE = f"{CATALOG}.{SCHEMA}.pastas_extremes_summary"
 
@@ -162,6 +167,26 @@ models = discover_models(RUN_DIR)
 if LIMIT_MODELS:
     models = models.head(LIMIT_MODELS)
 print(f"{len(models)} model(s) in {RUN_DIR}/pas_files")
+
+# The .pas filename only carries the truncated name, so the full 64-character
+# meetreeks_id is recovered from the stage-2 metrics table. Anything unmatched
+# falls back to the truncated name rather than dropping the model.
+if spark.catalog.tableExists(METRICS_TABLE):
+    lookup = (
+        spark.table(METRICS_TABLE)
+        .select("series_name", "series_id")
+        .distinct()
+        .toPandas()
+    )
+    models = models.merge(lookup, on="series_name", how="left")
+else:
+    print(f"NOTE: {METRICS_TABLE} not found; series_id falls back to series_name")
+    models["series_id"] = None
+
+unmatched = int(models["series_id"].isna().sum())
+models["series_id"] = models["series_id"].fillna(models["series_name"])
+print(f"full series_id recovered for {len(models) - unmatched}/{len(models)} model(s)"
+      + (f"; {unmatched} fell back to the truncated name" if unmatched else ""))
 display(models)
 
 members = discover_members(IMPREX_DIR, LOCATION)
@@ -194,7 +219,7 @@ for item in models.itertuples():
     print(f"\n{item.series_name}")
     result = run_model(
         model_path=item.model_path,
-        series_id=item.series_name,  # replaced with the full id below if available
+        series_id=item.series_id,
         series_name=item.series_name,
         members=members,
         run_directory=RUN_DIR,

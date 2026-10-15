@@ -297,3 +297,56 @@ From `ml.stats.summary()`, a DataFrame indexed by metric name with a single colu
 | Solve window | `tmin`/`tmax` as `YYYY-MM-DD` strings, clipped to the head extent |
 | `report` | `False` |
 | `matplotlib` backend | `Agg` if imported at all |
+
+
+## 10. Stage 3: extremes and return periods (**proposed**)
+
+Drives each calibrated `.pas` with the 16 IMPREX ensemble members and reports return
+levels. Written by `notebooks/transformation/run_extremes.py`, into the **same dated
+run folder** as the models it read.
+
+### Identity
+
+`series_name` is the truncated name the `.pas` filename carries; `series_id` is the
+**full 64-character `meetreeks_id`**, recovered by joining `pastas_fit_metrics` on
+`series_name`. A model with no metrics row falls back to the truncated name rather
+than being dropped, and the summary says how many fell back.
+
+### The pooled sample
+
+16 members x 44 hydrological years (April-March, 1956-1999) = **704 blocks per tail**.
+800 means the partial-block filter is not running; 16 440 means the members were
+concatenated in time instead of pooled at the extremes.
+
+### Trimming
+
+`exclude_first` defaults to **450**, leaving 254 of 704 (`lam = 0.361`). A T-year
+event is then the `1 / (lam * T)` quantile, not `1 / T`. **The smallest computable
+return period is `1 / lam = 2.77`, so T=2 is reported as null** rather than invented.
+
+### Artefacts, inside `run_yy_mm_dd/`
+
+| Path | Contents |
+|---|---|
+| `csv/<series>_return_periods.csv` | T x {`dr_`,`wet_`} x {`exp`,`gpd`,`gev`,`emp`}, metres NAP |
+| `pooled_extremes/<series>_{dry,wet}.csv` | every pooled extreme with `member`, `year`, date |
+| `used_extremes/used_extremes_<series>.csv` | each extreme with rank and a `used` flag |
+| `return_plots_fitted/`, `qq_plots/`, `confidence_plots/` | one PNG per model |
+| `evt_selection.csv` | chosen family per tail, with shape, SE, verdict, review flag |
+| `tail_parameters.csv` | shape/loc/scale per family per tail |
+| `<run>_extremes_summary.csv` | one row per model: the run's report card |
+| `bias_correction_run_log.json` | copied from the IMPREX folder: how the forcing was corrected |
+
+Roll-ups also append to `waterkeringbeheer_prd.jvanruitenbeek.pastas_evt_selection`
+and `.pastas_extremes_summary`.
+
+### Reading the result
+
+`gpd` is fitted and reported but **never recommended**: a generalised Pareto belongs
+on threshold exceedances, not block maxima. Quote **T=10** (stable to centimetres) and
+**T=100** (to ~0.1 m). **T=1000 is extrapolation**: 704 blocks reach an empirical
+return period of ~705 years, so the families disagree there by 0.3 m and sometimes
+much more.
+
+A `degenerate` verdict on a wet tail means the model's `dmax` ceiling is capping the
+head, not that the fit failed.
