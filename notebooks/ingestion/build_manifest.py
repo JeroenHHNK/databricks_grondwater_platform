@@ -1,4 +1,8 @@
 # Databricks notebook source
+# /// script
+# [tool.databricks.environment]
+# environment_version = "6"
+# ///
 # MAGIC %md
 # MAGIC # Build the series manifest
 # MAGIC
@@ -132,9 +136,9 @@ manifest = (
     .withColumn("source_table", F.lit(SOURCE))
     .withColumn("manifest_created_at", F.current_timestamp())
 )
-manifest.cache()
-print(f"{manifest.count()} series selected")
-display(manifest)
+manifest.createOrReplaceTempView("manifest_temp_view")
+print(f"{spark.sql('SELECT * FROM manifest_temp_view').count()} series selected")
+display(spark.sql('SELECT * FROM manifest_temp_view'))
 
 # COMMAND ----------
 
