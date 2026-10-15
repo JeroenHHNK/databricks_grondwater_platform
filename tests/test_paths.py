@@ -52,3 +52,73 @@ def test_committed_forcing_file_is_readable_by_load_forcing(tmp_path):
     assert evaporation.tolist() == [0.1, 1.2]
     assert precipitation.index.tolist() == evaporation.index.tolist()
     assert str(precipitation.index[0].date()) == "2020-01-01"
+
+
+# --- run folder layout -----------------------------------------------------
+
+import datetime as dt
+
+from tarso_pipeline.paths import (
+    ARTEFACT_DIRS,
+    DIAGNOSTICS_DIR,
+    PAS_DIR,
+    RESULTS_DIR,
+    SERIES_ID_CHARS,
+    artefact_dir,
+    run_dir,
+    run_folder_name,
+    series_name_from_id,
+)
+
+HASH = "a1b2c3d4e5f60718293a4b5c6d7e8f90" + "0" * 32  # a 64-char meetreeks_id
+
+
+def test_series_name_keeps_24_hex_by_default():
+    assert SERIES_ID_CHARS == 24
+    name = series_name_from_id(HASH)
+    assert name == "series_a1b2c3d4e5f60718293a4b5c"
+    assert len(name) == len("series_") + 24
+
+
+def test_series_name_length_is_configurable():
+    assert series_name_from_id(HASH, chars=16) == "series_a1b2c3d4e5f60718"
+
+
+def test_24_chars_distinguishes_ids_that_16_would_not():
+    a = "f" * 16 + "aaaa" + "1" * 44
+    b = "f" * 16 + "bbbb" + "1" * 44
+    assert series_name_from_id(a, chars=16) == series_name_from_id(b, chars=16)
+    assert series_name_from_id(a) != series_name_from_id(b)
+
+
+def test_empty_series_id_is_rejected():
+    with pytest.raises(ValueError, match="empty"):
+        series_name_from_id("")
+
+
+def test_run_folder_is_dated():
+    assert run_folder_name(dt.date(2026, 10, 15)) == "run_26_10_15"
+    assert run_folder_name(dt.date(2027, 1, 3)) == "run_27_01_03"
+
+
+def test_run_dir_sits_under_the_volume_base():
+    assert run_dir("/Volumes/a/b", dt.date(2026, 10, 15)) == "/Volumes/a/b/run_26_10_15"
+    assert run_dir("/Volumes/a/b/", dt.date(2026, 10, 15)) == "/Volumes/a/b/run_26_10_15"
+
+
+def test_an_explicit_name_overrides_the_date():
+    # Two runs in one day would otherwise share a folder and overwrite artefacts.
+    assert run_dir("/Volumes/a", name="run_26_10_15_b") == "/Volumes/a/run_26_10_15_b"
+
+
+def test_the_three_artefact_folders():
+    base = run_dir("/Volumes/a", dt.date(2026, 10, 15))
+    assert artefact_dir(base, PAS_DIR).endswith("/run_26_10_15/pas_files")
+    assert artefact_dir(base, RESULTS_DIR).endswith("/run_26_10_15/results_files")
+    assert artefact_dir(base, DIAGNOSTICS_DIR).endswith("/run_26_10_15/diagnostics_files")
+    assert set(ARTEFACT_DIRS) == {PAS_DIR, RESULTS_DIR, DIAGNOSTICS_DIR}
+
+
+def test_an_unknown_artefact_kind_is_rejected():
+    with pytest.raises(ValueError, match="Unknown artefact kind"):
+        artefact_dir("/Volumes/a/run_26_10_15", "random_files")

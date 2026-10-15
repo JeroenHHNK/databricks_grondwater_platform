@@ -72,12 +72,12 @@ def build_model(
     raise ValueError(f"Unknown model_type {model_type!r}; use one of {MODEL_TYPES}")
 
 
-def _save_results_plot(model, path: Path) -> str | None:
-    """Save ``ml.plots.results()`` as a PNG. Returns the path, or None on failure.
+def _save_plot(model, kind: str, path: Path) -> str | None:
+    """Save ``ml.plots.<kind>()`` as a PNG. Returns the path, or None on failure.
 
     A plot is a nice-to-have: a model that fitted but could not be drawn is still
-    a fitted model, so this never propagates. The figure is closed explicitly --
-    pyplot keeps every figure alive otherwise, and a 20-series loop would exhaust
+    a fitted model, so this never propagates. Figures are closed explicitly --
+    pyplot keeps every one alive otherwise, and 20 series x 2 plots would exhaust
     memory.
     """
     import matplotlib
@@ -87,10 +87,14 @@ def _save_results_plot(model, path: Path) -> str | None:
 
     figure = None
     try:
-        axes = model.plots.results(figsize=(10, 6))
-        # results() returns axes (or a list of them); the figure is what we save.
-        first = axes[0] if isinstance(axes, (list, tuple)) else axes
-        figure = first.get_figure()
+        axes = getattr(model.plots, kind)(figsize=(10, 6))
+        # These return axes, a list of them, or occasionally a figure.
+        if hasattr(axes, "savefig"):
+            figure = axes
+        else:
+            first = axes[0] if isinstance(axes, (list, tuple)) else axes
+            figure = first.get_figure()
+        path.parent.mkdir(parents=True, exist_ok=True)
         figure.savefig(str(path), dpi=150, bbox_inches="tight")
         return str(path)
     except Exception:
@@ -109,7 +113,7 @@ def fit_series(
     evaporation: pd.Series,
     run_id: str,
     model_type: str = "tarso",
-    model_dir: str | None = None,
+    run_directory: str | None = None,
     time_column: str = "tijdstempel",
     value_column: str = "waarde",
     dedup_method: str = "mean",
@@ -193,16 +197,35 @@ def fit_series(
         row.update(cleaned.as_row())
         row.update(observed_fields(head))
 
-        if model_dir:
-            target = Path(model_dir)
-            target.mkdir(parents=True, exist_ok=True)
-            path = target / f"{series_name}_{model_type}_model.pas"
-            model.to_file(str(path))
-            row["model_path"] = str(path)
+        if run_directory:
+            from tarso_pipeline.paths import (
+                DIAGNOSTICS_DIR,
+                PAS_DIR,
+                RESULTS_DIR,
+                artefact_dir,
+            )
+
+            # The model type is in the filename because one series can be fitted
+            # with more than one, and the three folders are shared across series:
+            # without it, a recharge run would silently overwrite the tarso one.
+            stem = f"{series_name}_{model_type}"
+
+            pas_path = Path(artefact_dir(run_directory, PAS_DIR)) / f"{stem}.pas"
+            pas_path.parent.mkdir(parents=True, exist_ok=True)
+            model.to_file(str(pas_path))
+            row["model_path"] = str(pas_path)
 
             if save_plot:
-                row["plot_path"] = _save_results_plot(
-                    model, target / f"{series_name}_{model_type}_results.png"
+                row["plot_path"] = _save_plot(
+                    model,
+                    "results",
+                    Path(artefact_dir(run_directory, RESULTS_DIR)) / f"{stem}_results.png",
+                )
+                row["diagnostics_path"] = _save_plot(
+                    model,
+                    "diagnostics",
+                    Path(artefact_dir(run_directory, DIAGNOSTICS_DIR))
+                    / f"{stem}_diagnostics.png",
                 )
 
         row["success"] = True

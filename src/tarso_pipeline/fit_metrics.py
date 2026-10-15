@@ -64,6 +64,7 @@ FIT_METRICS_SCHEMA: dict[str, str] = {
     "parameters": "string",
     "model_path": "string",
     "plot_path": "string",
+    "diagnostics_path": "string",
     "forcing_station": "string",
     "forcing_units": "string",
     "pastas_version": "string",

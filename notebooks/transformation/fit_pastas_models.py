@@ -9,19 +9,33 @@
 # MAGIC Reads the manifest, fits one model per series, and produces three outputs under
 # MAGIC the same volume prefix, plus one Delta row per fit.
 # MAGIC
-# MAGIC | output | where |
-# MAGIC |---|---|
-# MAGIC | `.pas` model | `<volume>/<series_name>/<series>_<type>_model.pas` |
-# MAGIC | results plot | `<volume>/<series_name>/<series>_<type>_results.png` |
-# MAGIC | metrics row | `waterkeringbeheer_prd.jvanruitenbeek.pastas_fit_metrics` |
+# MAGIC ```
+# MAGIC <volume>/run_yy_mm_dd/
+# MAGIC     pas_files/          series_<hash24>_<model>.pas
+# MAGIC     results_files/      series_<hash24>_<model>_results.png
+# MAGIC     diagnostics_files/  series_<hash24>_<model>_diagnostics.png
+# MAGIC ```
+# MAGIC
+# MAGIC Plus one row per fit in
+# MAGIC `waterkeringbeheer_prd.jvanruitenbeek.pastas_fit_metrics`.
+# MAGIC
+# MAGIC Artefacts are grouped by **kind**, not by series, so all 20 `.pas` files sit
+# MAGIC together and all 20 plots sit together. The model type is in the filename
+# MAGIC because one series can be fitted with more than one, and the folders are shared
+# MAGIC across series - without it a `recharge` run would overwrite the `tarso` one.
+# MAGIC
+# MAGIC > Two runs on the **same day** share a run folder and overwrite each other's
+# MAGIC > artefacts, while `pastas_fit_metrics` keeps both rows. Set the `run_folder`
+# MAGIC > widget (e.g. `run_26_10_15_b`) to keep them apart.
 # MAGIC
 # MAGIC Both paths are recorded as columns (`model_path`, `plot_path`), so nothing
 # MAGIC downstream has to reconstruct them.
 # MAGIC
-# MAGIC ### Fit one series first
+# MAGIC ### Scale
 # MAGIC
-# MAGIC `limit_series` defaults to **1**. Validate the whole chain - load, clean,
-# MAGIC resample, fit, save `.pas`, save plot, write one row - before scaling to 20.
+# MAGIC `limit_series` defaults to **20**. Drop it to 1 to validate the chain after any
+# MAGIC change - the volume write is probed first either way, so a missing grant fails
+# MAGIC in seconds rather than after a long fit.
 # MAGIC
 # MAGIC ### Forcing units
 # MAGIC
@@ -77,7 +91,8 @@ dbutils.widgets.dropdown("forcing_units", "m", ["m", "mm"], "Forcing units")
 dbutils.widgets.text("warmup_days", "3650", "Warmup in days")
 
 dbutils.widgets.multiselect("model_types", "tarso", ["tarso", "recharge"], "Model types")
-dbutils.widgets.text("limit_series", "1", "How many series (start with 1)")
+dbutils.widgets.text("limit_series", "20", "How many series")
+dbutils.widgets.text("run_folder", "", "Run folder (blank = run_yy_mm_dd)")
 
 dbutils.widgets.text("dedup_method", "mean", "Collapse duplicate timestamps with")
 dbutils.widgets.text("resample_rule", "D", "Resample rule")
@@ -141,7 +156,7 @@ from tarso_pipeline.fit import fit_series
 from tarso_pipeline.fit_metrics import rows_to_frame, spark_schema
 from tarso_pipeline.forcing import check_coverage, forcing_file, load_forcing_pair
 from tarso_pipeline.meting import series_rows_sql
-from tarso_pipeline.paths import model_dir_for
+from tarso_pipeline.paths import ARTEFACT_DIRS, artefact_dir, run_dir, series_name_from_id
 
 SOURCE = dbutils.widgets.get("source_table").strip()
 MANIFEST = dbutils.widgets.get("manifest_table").strip()
@@ -168,11 +183,13 @@ RUN_ID = (
 )
 
 FORCING_FILE = forcing_file(FORCING_DIR, STATION)
+RUN_DIR = run_dir(VOLUME_BASE, name=dbutils.widgets.get("run_folder").strip() or None)
 
 print(f"run_id       {RUN_ID}")
 print(f"manifest     {MANIFEST}")
 print(f"metrics      {METRICS}")
 print(f"volume       {VOLUME_BASE}")
+print(f"run folder   {RUN_DIR}")
 print(f"forcing      {FORCING_FILE}  ({FORCING_UNITS})")
 print(f"model types  {MODEL_TYPES}   series: {LIMIT_SERIES}")
 print(f"cleaning     dedup={DEDUP_METHOD}, resample={RESAMPLE_RULE}/{RESAMPLE_METHOD}")
@@ -194,7 +211,12 @@ try:
     with open(probe, "w") as handle:
         handle.write("ok")
     os.remove(probe)
+    for kind in ARTEFACT_DIRS:
+        os.makedirs(artefact_dir(RUN_DIR, kind), exist_ok=True)
     print(f"writable: {VOLUME_BASE}")
+    print(f"run folder ready: {RUN_DIR}")
+    for kind in ARTEFACT_DIRS:
+        print(f"   {kind}")
 except Exception as exc:
     raise RuntimeError(
         f"Cannot write to {VOLUME_BASE}: {type(exc).__name__}: {exc}\n"
@@ -265,7 +287,7 @@ for item in work.itertuples():
     raw = spark.sql(series_rows_sql(SOURCE, item.series_id)).toPandas()
     # The hash is the only name available; shortened for readable folders, with
     # the full series_id kept on the row.
-    series_name = f"series_{item.series_id[:16]}"
+    series_name = series_name_from_id(item.series_id)
     print(f"\n{series_name}  ({len(raw):,} raw rows, manifest span {item.span_days}d)")
 
     if not raw.empty:
@@ -285,7 +307,7 @@ for item in work.itertuples():
             evaporation=evaporation,
             run_id=RUN_ID,
             model_type=model_type,
-            model_dir=model_dir_for(series_name, VOLUME_BASE),
+            run_directory=RUN_DIR,
             dedup_method=DEDUP_METHOD,
             resample_rule=RESAMPLE_RULE,
             resample_method=RESAMPLE_METHOD,
@@ -319,7 +341,7 @@ display(
     results[["series_name", "model_type", "success", "nobs", "span_days",
              "evp", "r2", "rmse", "aicc", "bic", "obj", "nfev",
              "n_raw_rows", "n_duplicate_timestamps",
-             "model_path", "plot_path", "error_message"]]
+             "model_path", "plot_path", "diagnostics_path", "error_message"]]
 )
 
 # COMMAND ----------

@@ -1,4 +1,5 @@
 import json
+import os
 
 import numpy as np
 import pandas as pd
@@ -127,7 +128,7 @@ def test_a_real_fit_populates_the_metrics(tmp_path, model_type):
     # Duplicated timestamps on purpose: the fit must survive the dedup path.
     row = fit_series(
         "a" * 64, "well", raw("2020-01-01", 1200, per_day=3), p, e, "run",
-        model_type=model_type, model_dir=str(tmp_path),
+        model_type=model_type, run_directory=str(tmp_path),
     )
 
     assert row["success"] is True, row["error_message"]
@@ -137,7 +138,16 @@ def test_a_real_fit_populates_the_metrics(tmp_path, model_type):
         assert row[field] is not None, field
     assert row["freq"] == "D"
     assert json.loads(row["parameters"])  # parameters are JSON, not a repr
-    assert row["model_path"].endswith(f"well_{model_type}_model.pas")
+    # Artefacts land in the three folders of the run directory, by kind.
+    assert row["model_path"].endswith(f"pas_files{os.sep}well_{model_type}.pas")
+    assert row["plot_path"].endswith(
+        f"results_files{os.sep}well_{model_type}_results.png"
+    )
+    assert row["diagnostics_path"].endswith(
+        f"diagnostics_files{os.sep}well_{model_type}_diagnostics.png"
+    )
+    for key in ("model_path", "plot_path", "diagnostics_path"):
+        assert os.path.isfile(row[key]), key
 
     import pastas as ps
 

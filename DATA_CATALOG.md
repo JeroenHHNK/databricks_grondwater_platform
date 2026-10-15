@@ -132,9 +132,24 @@ re-merging stored rows is a no-op.
 **Decisions recorded 2026-10-14.** Head series run from 2022 onwards, so KNMI station
 249 (from 1999-03-23) provides ~8300 days before them and the full 3650-day warmup fits.
 `validatie_status` is **not** used as a filter: every row with a `waarde` is fitted,
-whatever its review status. Series folders are named `series_<first 16 hex of
-meetreeks_id>`; the full id stays on every metrics row, so a downstream join on the
-prefix recovers the rest.
+whatever its review status. Series are named `series_<first 24 hex of meetreeks_id>`; the full id stays on every
+metrics row, so a downstream join on the prefix recovers the rest.
+
+Artefacts are written per run, grouped by kind rather than by series:
+
+```
+/Volumes/waterkeringbeheer_prd/misc_files/misc_files/pastas_pipeline/
+    run_yy_mm_dd/
+        pas_files/          series_<hash24>_<model>.pas
+        results_files/      series_<hash24>_<model>_results.png
+        diagnostics_files/  series_<hash24>_<model>_diagnostics.png
+```
+
+The model type is in each filename because the folders are shared across series, so
+without it a `recharge` run would overwrite the `tarso` one. All three paths are
+recorded on the metrics row (`model_path`, `plot_path`, `diagnostics_path`).
+Two runs on the same day share a folder and overwrite each other's artefacts while
+keeping both metrics rows; the `run_folder` widget overrides the name to avoid that.
 
 > **Hourly is not an option for evaporation.** KNMI's `uurgegevens` product has no
 > Makkink: its `PRCP` set is `DR:RH` (duration + hourly sum). `EV24` is daily-only.

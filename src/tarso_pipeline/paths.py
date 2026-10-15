@@ -12,6 +12,7 @@ anything that depends on it breaks the moment it is opened in the workspace.
 
 from __future__ import annotations
 
+import datetime as dt
 from pathlib import Path
 
 FORCING_DIRNAME = "data/forcing"
@@ -104,3 +105,55 @@ def model_dir_for(series_name: str, base: str | None = None) -> str:
     if not safe:
         raise ValueError(f"series_name sanitises to nothing: {series_name!r}")
     return f"{base or MODEL_VOLUME_BASE}/{safe}"
+
+
+# --- run folder layout ------------------------------------------------------
+#
+# One dated folder per run, with artefacts grouped by kind rather than by
+# series, so all 20 .pas files sit together and all 20 plots sit together:
+#
+#   <volume>/run_26_10_15/
+#       pas_files/          series_<hash>_<model>.pas
+#       results_files/      series_<hash>_<model>_results.png
+#       diagnostics_files/  series_<hash>_<model>_diagnostics.png
+
+PAS_DIR = "pas_files"
+RESULTS_DIR = "results_files"
+DIAGNOSTICS_DIR = "diagnostics_files"
+ARTEFACT_DIRS = (PAS_DIR, RESULTS_DIR, DIAGNOSTICS_DIR)
+
+# Characters of the meetreeks_id hash kept in a series name. 16 is already
+# collision-safe for this many series; 24 costs nothing and leaves more margin.
+SERIES_ID_CHARS = 24
+
+
+def series_name_from_id(series_id: str, chars: int = SERIES_ID_CHARS) -> str:
+    """``series_<first N hex of meetreeks_id>``.
+
+    The full id stays on every metrics row, so a downstream join on this prefix
+    recovers it.
+    """
+    if not series_id:
+        raise ValueError("series_id is empty")
+    return f"series_{series_id[:chars]}"
+
+
+def run_folder_name(when: dt.date | None = None) -> str:
+    """``run_yy_mm_dd`` for the given day (today by default)."""
+    return f"run_{(when or dt.date.today()):%y_%m_%d}"
+
+
+def run_dir(base: str, when: dt.date | None = None, name: str | None = None) -> str:
+    """The dated run folder under the volume base.
+
+    ``name`` overrides the date entirely -- useful when two runs in one day must
+    not share a folder, since artefact filenames would otherwise collide.
+    """
+    return f"{str(base).rstrip('/')}/{name or run_folder_name(when)}"
+
+
+def artefact_dir(run_directory: str, kind: str) -> str:
+    """One of the three artefact folders inside a run folder."""
+    if kind not in ARTEFACT_DIRS:
+        raise ValueError(f"Unknown artefact kind {kind!r}; use one of {ARTEFACT_DIRS}")
+    return f"{str(run_directory).rstrip('/')}/{kind}"
