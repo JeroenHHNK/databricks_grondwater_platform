@@ -157,3 +157,57 @@ def artefact_dir(run_directory: str, kind: str) -> str:
     if kind not in ARTEFACT_DIRS:
         raise ValueError(f"Unknown artefact kind {kind!r}; use one of {ARTEFACT_DIRS}")
     return f"{str(run_directory).rstrip('/')}/{kind}"
+
+
+# --- stage 2: extremes artefacts -------------------------------------------
+#
+# These live inside the same dated run folder as the models they were derived
+# from, so one folder holds a whole run:
+#
+#   <volume>/run_26_10_15/
+#       pas_files/            stage 1
+#       results_files/        stage 1
+#       diagnostics_files/    stage 1
+#       csv/                  <series>_return_periods.csv      <- the deliverable
+#       pooled_extremes/      <series>_{dry,wet}.csv
+#       used_extremes/        used_extremes_<series>.csv
+#       return_plots_fitted/  <series>_return_periods.png
+#       qq_plots/             <series>_qq_{min,max}.png
+#       confidence_plots/     <series>_return_level_{min,max}.png
+#       evt_selection.csv
+#       tail_parameters.csv
+#       <run>_extremes_summary.csv
+
+RETURN_CSV_DIR = "csv"
+POOLED_EXTREMES_DIR = "pooled_extremes"
+USED_EXTREMES_DIR = "used_extremes"
+RETURN_PLOTS_DIR = "return_plots_fitted"
+QQ_PLOTS_DIR = "qq_plots"
+CONFIDENCE_PLOTS_DIR = "confidence_plots"
+
+EXTREMES_DIRS = (
+    RETURN_CSV_DIR,
+    POOLED_EXTREMES_DIR,
+    USED_EXTREMES_DIR,
+    RETURN_PLOTS_DIR,
+    QQ_PLOTS_DIR,
+    CONFIDENCE_PLOTS_DIR,
+)
+
+# Run-level roll-ups, written at the root of the run folder.
+EVT_SELECTION_FILE = "evt_selection.csv"
+TAIL_PARAMETERS_FILE = "tail_parameters.csv"
+
+
+def extremes_dir(run_directory: str, kind: str) -> str:
+    """One of the stage-2 artefact folders inside a run folder."""
+    if kind not in EXTREMES_DIRS:
+        raise ValueError(f"Unknown extremes folder {kind!r}; use one of {EXTREMES_DIRS}")
+    return f"{str(run_directory).rstrip('/')}/{kind}"
+
+
+def extremes_summary_file(run_directory: str) -> str:
+    """``<run>_extremes_summary.csv`` at the root of the run folder."""
+    run_directory = str(run_directory).rstrip("/")
+    run_name = run_directory.rsplit("/", 1)[-1]
+    return f"{run_directory}/{run_name}_extremes_summary.csv"

@@ -12,6 +12,13 @@ src/tarso_pipeline/
   clean.py         collapse duplicate timestamps + resample; counts recorded
   fit.py           fit_series: load -> clean -> fit -> save -> metrics row
   fit_metrics.py   the pastas_fit_metrics row, read from the Pastas API
+  imprex.py        discover + load the bias-corrected IMPREX ensemble
+  simulate.py      replace a Tarso model's stresses and simulate
+  extremes.py      hydrological-year block extremes, pooled across members
+  evt.py           GEV/exp/GPD fits, return levels, family selection
+  evt_report.py    the return-period table and the run roll-ups
+  evt_plots.py     return_plots_fitted / qq_plots / confidence_plots
+  extremes_run.py  run_model: simulate -> pool -> fit -> artefacts
   knmi.py          KNMI forcing download (precipitation + Makkink)
   forcing.py       load the forcing CSV (units, station) + warmup coverage
   forcing_plot.py  annual totals and the check chart
