@@ -60,7 +60,7 @@ def _write(frame: pd.DataFrame, directory: str, filename: str, index: bool = Tru
 
 def run_model(
     model_path: str,
-    series_id: str,
+    meetreeks_id: str,
     series_name: str,
     members: list[Member],
     run_directory: str,
@@ -83,7 +83,7 @@ def run_model(
         import pastas as ps
     except Exception as exc:  # pragma: no cover - pastas is a hard dependency here
         return ModelResult(
-            summary=summary_row(series_id, series_name, run_id, {}, {}, 0,
+            summary=summary_row(meetreeks_id, series_name, run_id, {}, {}, 0,
                                 [("import", str(exc))], "error", exclude_first, t_list)
         )
 
@@ -107,7 +107,7 @@ def run_model(
 
     if n_members == 0:
         return ModelResult(
-            summary=summary_row(series_id, series_name, run_id, pooled, {}, 0,
+            summary=summary_row(meetreeks_id, series_name, run_id, pooled, {}, 0,
                                 failures, "error", exclude_first, t_list)
         )
 
@@ -127,10 +127,10 @@ def run_model(
 
     status = "ok" if not failures else ("partial" if per_tail else "error")
     result = ModelResult(
-        summary=summary_row(series_id, series_name, run_id, pooled, per_tail,
+        summary=summary_row(meetreeks_id, series_name, run_id, pooled, per_tail,
                             n_members, failures, status, exclude_first, t_list),
-        selection=selection_rows(series_id, series_name, run_id, per_tail),
-        parameters=tail_parameter_rows(series_id, series_name, run_id, per_tail),
+        selection=selection_rows(meetreeks_id, series_name, run_id, per_tail),
+        parameters=tail_parameter_rows(meetreeks_id, series_name, run_id, per_tail),
     )
 
     # --- artefacts ---------------------------------------------------------

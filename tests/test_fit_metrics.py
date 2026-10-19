@@ -111,7 +111,7 @@ def test_identity_fields_survive_a_failure():
     p, e = forcing()
     row = fit_series("abc" * 10, "my_series", pd.DataFrame({"x": [1]}), p, e, "run_42")
     assert row["run_id"] == "run_42"
-    assert row["series_id"] == "abc" * 10
+    assert row["meetreeks_id"] == "abc" * 10
     assert row["series_name"] == "my_series"
 
 

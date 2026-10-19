@@ -277,17 +277,17 @@ display(work)
 # MAGIC %md
 # MAGIC ## Fit
 # MAGIC
-# MAGIC Scale out with a Job "For each" task over `series_id` once one series is known
+# MAGIC Scale out with a Job "For each" task over `meetreeks_id` once one series is known
 # MAGIC good - that gives per-series retries without restructuring any of this.
 
 # COMMAND ----------
 
 rows = []
 for item in work.itertuples():
-    raw = spark.sql(series_rows_sql(SOURCE, item.series_id)).toPandas()
+    raw = spark.sql(series_rows_sql(SOURCE, item.meetreeks_id)).toPandas()
     # The hash is the only name available; shortened for readable folders, with
-    # the full series_id kept on the row.
-    series_name = series_name_from_id(item.series_id)
+    # the full meetreeks_id kept on the row.
+    series_name = series_name_from_id(item.meetreeks_id)
     print(f"\n{series_name}  ({len(raw):,} raw rows, manifest span {item.span_days}d)")
 
     if not raw.empty:
@@ -300,7 +300,7 @@ for item in work.itertuples():
 
     for model_type in MODEL_TYPES:
         row = fit_series(
-            series_id=item.series_id,
+            meetreeks_id=item.meetreeks_id,
             series_name=series_name,
             raw=raw,
             precipitation=precipitation,

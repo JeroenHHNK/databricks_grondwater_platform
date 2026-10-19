@@ -1,3 +1,5 @@
+import re
+
 import pytest
 
 from tarso_pipeline.meting import (
@@ -288,3 +290,63 @@ def test_check_columns_shows_what_the_table_actually_has():
 
     with pytest.raises(ValueError, match="value_column"):
         check_columns(["series", "value_column", "ts"])
+
+
+# --- source columns keep their Unity Catalog names -------------------------
+#
+# A second name for a column that already had one is the defect this guards
+# against: you query `meetreeks_id` upstream, and the same value has to still be
+# called `meetreeks_id` in the manifest, the metrics table and the CSVs, or the
+# key cannot be traced across the pipeline by reading it.
+
+SOURCE_COLUMNS = ("meetreeks_id", "id", "waarde", "tijdstempel", "validatie_status")
+
+
+def _every_statement():
+    """Every SQL builder in the module, with arguments that exercise it."""
+    from tarso_pipeline import meting as m
+
+    table = "cat.sch.meting"
+    return {
+        "overview_sql": m.overview_sql(table),
+        "per_series_sql": m.per_series_sql(table),
+        "span_summary_sql": m.span_summary_sql(table),
+        "span_buckets_sql": m.span_buckets_sql(table),
+        "series_verdict_sql": m.series_verdict_sql(table),
+        "verdict_summary_sql": m.verdict_summary_sql(table),
+        "trainable_series_sql": m.trainable_series_sql(table),
+        "manifest_sql": m.manifest_sql(table),
+        "status_sql": m.status_sql(table),
+        "duplicate_timestamps_sql": m.duplicate_timestamps_sql(table, "cat.sch.manifest"),
+        "series_rows_sql": m.series_rows_sql(table, "a" * 64),
+    }
+
+
+@pytest.mark.parametrize("column", SOURCE_COLUMNS)
+def test_no_statement_aliases_a_source_column_to_another_name(column):
+    # Only a bare column reference can be a rename. `count(waarde) AS n_values`
+    # does not match, because the character before the whitespace is ")" -- that
+    # names a derived value, which is exactly what an alias is for.
+    pattern = re.compile(rf"\b(?:\w+\.)?{column}\s+AS\s+(\w+)", re.IGNORECASE)
+    for name, sql in _every_statement().items():
+        for alias in pattern.findall(sql):
+            assert alias.lower() == column, (
+                f"{name} renames the source column {column!r} to {alias!r}. "
+                "Source columns keep their Unity Catalog names; alias only values "
+                "the source does not have."
+            )
+
+
+def test_the_key_is_called_meetreeks_id_everywhere_it_is_selected():
+    statements = _every_statement()
+    for name in ("per_series_sql", "trainable_series_sql", "manifest_sql",
+                 "series_verdict_sql", "duplicate_timestamps_sql"):
+        assert "meetreeks_id" in statements[name]
+    # The old pipeline-local name must not come back.
+    for name, sql in statements.items():
+        assert "series_id" not in sql, f"{name} still uses the renamed key"
+
+
+def test_the_manifest_join_matches_on_the_source_name():
+    sql = _every_statement()["duplicate_timestamps_sql"]
+    assert "w.meetreeks_id = m.meetreeks_id" in sql

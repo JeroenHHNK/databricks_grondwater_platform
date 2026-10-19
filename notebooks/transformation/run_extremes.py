@@ -67,7 +67,7 @@ dbutils.widgets.text("output_catalog", "waterkeringbeheer_prd", "Output catalog"
 dbutils.widgets.text("output_schema", "jvanruitenbeek", "Output schema")
 dbutils.widgets.text("metrics_table",
                      "waterkeringbeheer_prd.jvanruitenbeek.pastas_fit_metrics",
-                     "Stage-2 metrics (to recover the full series_id)")
+                     "Stage-2 metrics (to recover the full meetreeks_id)")
 dbutils.widgets.text("run_id", "", "Run id (blank = UTC timestamp)")
 
 # COMMAND ----------
@@ -174,18 +174,18 @@ print(f"{len(models)} model(s) in {RUN_DIR}/pas_files")
 if spark.catalog.tableExists(METRICS_TABLE):
     lookup = (
         spark.table(METRICS_TABLE)
-        .select("series_name", "series_id")
+        .select("series_name", "meetreeks_id")
         .distinct()
         .toPandas()
     )
     models = models.merge(lookup, on="series_name", how="left")
 else:
-    print(f"NOTE: {METRICS_TABLE} not found; series_id falls back to series_name")
-    models["series_id"] = None
+    print(f"NOTE: {METRICS_TABLE} not found; meetreeks_id falls back to series_name")
+    models["meetreeks_id"] = None
 
-unmatched = int(models["series_id"].isna().sum())
-models["series_id"] = models["series_id"].fillna(models["series_name"])
-print(f"full series_id recovered for {len(models) - unmatched}/{len(models)} model(s)"
+unmatched = int(models["meetreeks_id"].isna().sum())
+models["meetreeks_id"] = models["meetreeks_id"].fillna(models["series_name"])
+print(f"full meetreeks_id recovered for {len(models) - unmatched}/{len(models)} model(s)"
       + (f"; {unmatched} fell back to the truncated name" if unmatched else ""))
 display(models)
 
@@ -219,7 +219,7 @@ for item in models.itertuples():
     print(f"\n{item.series_name}")
     result = run_model(
         model_path=item.model_path,
-        series_id=item.series_id,
+        meetreeks_id=item.meetreeks_id,
         series_name=item.series_name,
         members=members,
         run_directory=RUN_DIR,

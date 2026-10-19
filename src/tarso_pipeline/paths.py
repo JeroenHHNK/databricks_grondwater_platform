@@ -127,15 +127,15 @@ ARTEFACT_DIRS = (PAS_DIR, RESULTS_DIR, DIAGNOSTICS_DIR)
 SERIES_ID_CHARS = 24
 
 
-def series_name_from_id(series_id: str, chars: int = SERIES_ID_CHARS) -> str:
+def series_name_from_id(meetreeks_id: str, chars: int = SERIES_ID_CHARS) -> str:
     """``series_<first N hex of meetreeks_id>``.
 
     The full id stays on every metrics row, so a downstream join on this prefix
     recovers it.
     """
-    if not series_id:
-        raise ValueError("series_id is empty")
-    return f"series_{series_id[:chars]}"
+    if not meetreeks_id:
+        raise ValueError("meetreeks_id is empty")
+    return f"series_{meetreeks_id[:chars]}"
 
 
 def run_folder_name(when: dt.date | None = None) -> str:

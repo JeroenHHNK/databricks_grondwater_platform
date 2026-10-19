@@ -180,7 +180,7 @@ else:
         worst = duplicates.iloc[0]
         total_dup = int(duplicates["n_duplicate_ts"].sum())
         print(f"duplicate timestamps across the manifest: {total_dup:,}")
-        print(f"worst series {worst['series_id'][:12]}...: "
+        print(f"worst series {worst['meetreeks_id'][:12]}...: "
               f"{worst['n_duplicate_ts']:,} duplicates "
               f"({worst['pct_duplicate']}% of its rows), "
               f"{worst['rows_per_day']} rows/day vs "

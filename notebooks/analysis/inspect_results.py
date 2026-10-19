@@ -237,9 +237,9 @@ else:
 
 # COMMAND ----------
 
-attempted = metrics.select("series_id").distinct()
-missing = spark.table(MANIFEST).select("series_id", "span_days", "n_values").join(
-    attempted, on="series_id", how="left_anti"
+attempted = metrics.select("meetreeks_id").distinct()
+missing = spark.table(MANIFEST).select("meetreeks_id", "span_days", "n_values").join(
+    attempted, on="meetreeks_id", how="left_anti"
 )
 if missing.count() == 0:
     print("every manifest series was attempted")

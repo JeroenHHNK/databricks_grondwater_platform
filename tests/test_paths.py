@@ -91,7 +91,7 @@ def test_24_chars_distinguishes_ids_that_16_would_not():
     assert series_name_from_id(a) != series_name_from_id(b)
 
 
-def test_empty_series_id_is_rejected():
+def test_empty_meetreeks_id_is_rejected():
     with pytest.raises(ValueError, match="empty"):
         series_name_from_id("")
 

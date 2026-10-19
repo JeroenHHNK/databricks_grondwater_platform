@@ -307,8 +307,8 @@ run folder** as the models it read.
 
 ### Identity
 
-`series_name` is the truncated name the `.pas` filename carries; `series_id` is the
-**full 64-character `meetreeks_id`**, recovered by joining `pastas_fit_metrics` on
+`series_name` is the truncated name the `.pas` filename carries; `meetreeks_id` is the
+**full 64-character source key**, recovered by joining `pastas_fit_metrics` on
 `series_name`. A model with no metrics row falls back to the truncated name rather
 than being dropped, and the summary says how many fell back.
 

@@ -97,7 +97,7 @@ def return_period_table(per_tail: dict, t_list=DEFAULT_T_LIST) -> pd.DataFrame:
     return out
 
 
-def selection_rows(series_id: str, series_name: str, run_id: str, per_tail: dict) -> list[dict]:
+def selection_rows(meetreeks_id: str, series_name: str, run_id: str, per_tail: dict) -> list[dict]:
     """One row per tail for ``evt_selection.csv``."""
     rows = []
     for tail in TAILS:
@@ -105,7 +105,7 @@ def selection_rows(series_id: str, series_name: str, run_id: str, per_tail: dict
             continue
         row = {
             "run_id": run_id,
-            "series_id": series_id,
+            "meetreeks_id": meetreeks_id,
             "series_name": series_name,
             "model_type": "tarso",
             "tail": tail,
@@ -116,7 +116,7 @@ def selection_rows(series_id: str, series_name: str, run_id: str, per_tail: dict
 
 
 def tail_parameter_rows(
-    series_id: str, series_name: str, run_id: str, per_tail: dict
+    meetreeks_id: str, series_name: str, run_id: str, per_tail: dict
 ) -> list[dict]:
     """Three rows per tail: the fitted parameters the level table throws away."""
     rows = []
@@ -126,7 +126,7 @@ def tail_parameter_rows(
         for family, info in per_tail[tail]["parameters"].items():
             base = {
                 "run_id": run_id,
-                "series_id": series_id,
+                "meetreeks_id": meetreeks_id,
                 "series_name": series_name,
                 "tail": tail,
                 "family": family,
@@ -182,7 +182,7 @@ def used_extremes_table(pooled: dict, exclude_first: int = 0) -> pd.DataFrame:
 
 
 def summary_row(
-    series_id: str,
+    meetreeks_id: str,
     series_name: str,
     run_id: str,
     pooled: dict,
@@ -196,7 +196,7 @@ def summary_row(
     """The run's report card: one row per model, the only place a partial shows."""
     row = {
         "run_id": run_id,
-        "series_id": series_id,
+        "meetreeks_id": meetreeks_id,
         "series_name": series_name,
         "model_type": "tarso",
         "status": status,

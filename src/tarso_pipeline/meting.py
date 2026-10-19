@@ -17,6 +17,13 @@ Column meanings, from the source table:
 CTE body with ``AnalysisException``, so the shared pieces are assembled as
 sibling CTEs (``WITH a AS (...), b AS (...) SELECT ...``) rather than by
 embedding one finished statement inside another.
+
+**Source columns are never renamed.** ``meetreeks_id``, ``waarde``,
+``tijdstempel`` and ``validatie_status`` keep the names Unity Catalog gives them,
+all the way through to the output tables and the CSV artefacts. An alias here is
+only ever for a value the source does not have -- a count, a span, a verdict --
+so any name the pipeline invents is visibly a derived quantity rather than a
+second name for something that already had one. ``test_meting.py`` enforces this.
 """
 
 from __future__ import annotations
@@ -102,7 +109,7 @@ def _per_series_cte(
     )
     return f"""per_series AS (
             SELECT
-                {SERIES_COLUMN}                             AS series_id,
+                {SERIES_COLUMN},
                 count(*)                                    AS n_rows,
                 count({VALUE_COLUMN})                       AS n_values,
                 min({moment})                               AS first_value_at,
@@ -118,7 +125,7 @@ def _scored_cte(min_days: int, min_obs: int) -> str:
     """Adds the verdict to ``per_series``. Verdicts are ordered and exclusive."""
     return f"""scored AS (
             SELECT
-                series_id, n_rows, n_values, first_value_at, last_value_at, span_days,
+                meetreeks_id, n_rows, n_values, first_value_at, last_value_at, span_days,
                 CASE
                     WHEN n_values = 0          THEN 'no values'
                     WHEN n_values < {min_obs}  THEN 'too few values'
@@ -174,7 +181,7 @@ def per_series_sql(table: str, values_only: bool = False) -> str:
     valued_time = f"CASE WHEN {VALUE_COLUMN} IS NOT NULL THEN {TIME_COLUMN} END"
     return f"""
         SELECT
-            {SERIES_COLUMN}                                 AS series_id,
+            {SERIES_COLUMN},
             count(*)                                        AS n_rows,
             count({VALUE_COLUMN})                           AS n_values,
             min({valued_time})                              AS first_value_at,
@@ -253,7 +260,7 @@ def trainable_series_sql(table: str, min_days: int = 365, min_obs: int = 100) ->
     """Just the series that can be modelled, longest first."""
     return f"""
         {_scored_prefix(table, min_days, min_obs)}
-        SELECT series_id, n_values, first_value_at, last_value_at, span_days
+        SELECT meetreeks_id, n_values, first_value_at, last_value_at, span_days
         FROM scored
         WHERE verdict = '{TRAINABLE}'
         ORDER BY span_days DESC, n_values DESC
@@ -275,7 +282,7 @@ def manifest_sql(
         raise ValueError(f"limit must be >= 1, got {limit}")
     return f"""
         {_scored_prefix(table, min_days, min_obs)}
-        SELECT series_id, n_rows, n_values, first_value_at, last_value_at, span_days
+        SELECT meetreeks_id, n_rows, n_values, first_value_at, last_value_at, span_days
         FROM scored
         WHERE verdict = '{TRAINABLE}'
         ORDER BY span_days DESC, n_values DESC
@@ -287,7 +294,7 @@ def status_sql(table: str) -> str:
     """Distribution of the reviewer verdict, and how it relates to missing values."""
     return f"""
         SELECT
-            {STATUS_COLUMN}                                   AS validatie_status,
+            {STATUS_COLUMN},
             count(*)                                          AS rows,
             count({VALUE_COLUMN})                             AS rows_with_value,
             count(DISTINCT {SERIES_COLUMN})                   AS series
@@ -307,7 +314,7 @@ def duplicate_timestamps_sql(table: str, manifest_table: str) -> str:
     """
     return f"""
         SELECT
-            m.{SERIES_COLUMN}                                          AS series_id,
+            m.{SERIES_COLUMN},
             count(*)                                                   AS n_rows,
             count(DISTINCT m.{TIME_COLUMN})                            AS n_distinct_ts,
             count(*) - count(DISTINCT m.{TIME_COLUMN})                 AS n_duplicate_ts,
@@ -320,25 +327,25 @@ def duplicate_timestamps_sql(table: str, manifest_table: str) -> str:
                 datediff(max(m.{TIME_COLUMN}), min(m.{TIME_COLUMN})), 0), 1)
                                                                        AS distinct_ts_per_day
         FROM {table} m
-        JOIN {manifest_table} w ON w.series_id = m.{SERIES_COLUMN}
+        JOIN {manifest_table} w ON w.meetreeks_id = m.{SERIES_COLUMN}
         WHERE m.{VALUE_COLUMN} IS NOT NULL
         GROUP BY m.{SERIES_COLUMN}
         ORDER BY n_duplicate_ts DESC
     """
 
 
-def series_rows_sql(table: str, series_id: str) -> str:
+def series_rows_sql(table: str, meetreeks_id: str) -> str:
     """Every valued row of one series, for loading into pandas.
 
-    ``series_id`` is a 64-character hash from the manifest; it is validated
+    ``meetreeks_id`` is a 64-character hash from the manifest; it is validated
     rather than trusted, because it is interpolated into SQL.
     """
-    if not re.fullmatch(r"[A-Za-z0-9_-]{1,128}", series_id or ""):
-        raise ValueError(f"series_id must be a plain hash/identifier, got {series_id!r}")
+    if not re.fullmatch(r"[A-Za-z0-9_-]{1,128}", meetreeks_id or ""):
+        raise ValueError(f"meetreeks_id must be a plain hash/identifier, got {meetreeks_id!r}")
     return f"""
-        SELECT {TIME_COLUMN} AS tijdstempel, {VALUE_COLUMN} AS waarde
+        SELECT {TIME_COLUMN}, {VALUE_COLUMN}
         FROM {table}
-        WHERE {SERIES_COLUMN} = '{series_id}'
+        WHERE {SERIES_COLUMN} = '{meetreeks_id}'
           AND {VALUE_COLUMN} IS NOT NULL
         ORDER BY {TIME_COLUMN}
     """

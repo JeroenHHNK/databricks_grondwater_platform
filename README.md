@@ -188,6 +188,32 @@ overshoots the forcing. `tmax` is trimmed back to the last forcing day; the drop
 reported and recorded (`calibration_trimmed`, `days_trimmed_from_end`). No station
 avoids this - refreshing the forcing recovers those days.
 
+## Naming: source columns are never renamed
+
+A column that exists in Unity Catalog keeps its Unity Catalog name everywhere —
+in the SQL, the output tables, the CSV artefacts and the Python signatures:
+
+| Source column | Meaning | Pipeline name |
+|---|---|---|
+| `meetreeks_id` | series key (64-char hash) — **the primary key** | `meetreeks_id` |
+| `waarde` | measured head | `waarde` |
+| `tijdstempel` | observation timestamp | `tijdstempel` |
+| `validatie_status` | reviewer verdict | `validatie_status` |
+| `id` | per-measurement row key (unused) | `id` |
+
+An alias is only ever used for a value the source does **not** have — `n_values`,
+`span_days`, `verdict`, `series_name`. So any name the pipeline invents is visibly
+a derived quantity, never a second name for something that already had one, and
+the key can be traced from `gold_prd` to the return-period CSV by reading it.
+
+`tests/test_meting.py` enforces this: it parses every generated statement and
+fails if a bare source column is aliased to anything but itself.
+
+`series_name` (`series_<first 24 hex of meetreeks_id>`) is the one invented
+identifier, because filenames and folder names need something shorter than 64
+characters. It is a label, not a key — the full `meetreeks_id` is on every output
+row, so a join always recovers it.
+
 **`validatie_status` is ignored.** By decision: every row with a `waarde` is used,
 whatever its review status. Revisit once the status values are understood.
 

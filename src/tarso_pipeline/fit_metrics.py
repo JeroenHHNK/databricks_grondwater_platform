@@ -21,7 +21,7 @@ import pandas as pd
 # the table schema and the row cannot drift apart.
 FIT_METRICS_SCHEMA: dict[str, str] = {
     "run_id": "string",
-    "series_id": "string",
+    "meetreeks_id": "string",
     "series_name": "string",
     "model_type": "string",
     "success": "boolean",
@@ -169,7 +169,7 @@ def observed_fields(series: pd.Series) -> dict:
 
 def error_row(
     run_id: str,
-    series_id: str,
+    meetreeks_id: str,
     series_name: str,
     model_type: str,
     message: str,
@@ -181,7 +181,7 @@ def error_row(
     row.update(
         {
             "run_id": run_id,
-            "series_id": series_id,
+            "meetreeks_id": meetreeks_id,
             "series_name": series_name,
             "model_type": model_type,
             "success": False,

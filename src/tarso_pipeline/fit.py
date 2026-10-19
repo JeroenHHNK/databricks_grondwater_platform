@@ -106,7 +106,7 @@ def _save_plot(model, kind: str, path: Path) -> str | None:
 
 
 def fit_series(
-    series_id: str,
+    meetreeks_id: str,
     series_name: str,
     raw: pd.DataFrame,
     precipitation: pd.Series,
@@ -131,7 +131,7 @@ def fit_series(
     row.update(
         {
             "run_id": run_id,
-            "series_id": series_id,
+            "meetreeks_id": meetreeks_id,
             "series_name": series_name,
             "model_type": model_type,
             "forcing_station": None if forcing_station is None else str(forcing_station),
@@ -190,7 +190,7 @@ def fit_series(
         row.update(
             {
                 "run_id": run_id,
-                "series_id": series_id,
+                "meetreeks_id": meetreeks_id,
                 "series_name": series_name,
             }
         )
@@ -235,7 +235,7 @@ def fit_series(
     except Exception as exc:  # noqa: BLE001 - a failed series is data, not a crash
         failure = error_row(
             run_id=run_id,
-            series_id=series_id,
+            meetreeks_id=meetreeks_id,
             series_name=series_name,
             model_type=model_type,
             message=f"{type(exc).__name__}: {exc}",
