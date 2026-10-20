@@ -4,7 +4,6 @@ import numpy as np
 import pandas as pd
 from pandas import DataFrame
 import pyproj
-import re
 from pathlib import Path
 
 
@@ -29,11 +28,7 @@ def verzamel_profiel_locaties(
     link_prefix: str = "",
 ) -> list[dict]:
     """Bepaalt per profiel de kaartlocatie (lat/lon) en de bestandsnaam van de bijbehorende plot."""
-    stix_bestanden_map: dict = {}
-    for f in stix_bestanden:
-        overeenkomst = re.search(r"DWP(\d+)", f.stem)
-        if overeenkomst:
-            stix_bestanden_map[f"Profiel {int(overeenkomst.group(1))}"] = f
+    beschikbare_stix: set[str] = {f.name for f in stix_bestanden}
 
     transformator = pyproj.Transformer.from_crs(
         "EPSG:28992", "EPSG:4326", always_xy=True
@@ -45,16 +40,15 @@ def verzamel_profiel_locaties(
 
         # Sub-profielen (A/B) krijgen geen eigen plotbestand: die worden in main.py
         # verwerkt onder het hoofdprofiel. Sla ze hier ook over.
-        if profiel_naam.endswith("A") or profiel_naam.endswith("B"):
+        if str(profiel_rij.get("diepte_niveau", "hoofd")) != "hoofd":
             continue
 
-        stix_bestand_voor_profiel = stix_bestanden_map.get(profiel_naam)
-
-        # Bestandsnaamlogica moet gelijk zijn aan die in main.py: gebruik de stix-stem
-        # als er een stix-bestand gevonden is, anders de profielnaam met underscores.
+        # Bestandsnaamlogica moet gelijk zijn aan die in main.py: gebruik de stem van
+        # het stix-bestand uit het werkboek, anders de profielnaam met underscores.
+        stix_bestand: str = str(profiel_rij.get("stix_bestand") or "")
         uitvoer_stam = profiel_naam.replace(" ", "_")
-        if stix_bestand_voor_profiel:
-            uitvoer_stam = stix_bestand_voor_profiel.stem
+        if stix_bestand and stix_bestand in beschikbare_stix:
+            uitvoer_stam = Path(stix_bestand).stem
 
         if pd.notna(profiel_rij.get("x")) and pd.notna(profiel_rij.get("y")):
             x_rd, y_rd = profiel_rij["x"], profiel_rij["y"]
@@ -78,8 +72,6 @@ def maak_folium_kaart(
     profielen_df: DataFrame,
     stix_bestanden: list[Path],
     opslag_map: Path,
-    config_bestand: str,
-    config_bladen: list[str],
     project_map_naam: str,
 ) -> None:
     """Genereert een Folium-kaart met markers voor elk profiel die naar hun plot linken."""

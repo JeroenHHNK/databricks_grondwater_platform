@@ -1,7 +1,7 @@
 # main.py
+import argparse
 import sys
 from pathlib import Path
-import re
 import traceback
 import numpy as np
 import pandas as pd
@@ -16,41 +16,15 @@ sys.stderr.reconfigure(encoding="utf-8")
 # Importeren van de WV2030 module
 from Modules import (
     analyse,
-    config_lader,
     data_lader,
     kaart_generator,
+    paths,
     plotten,
     stix_verwerker,
+    workbook_lader,
 )
 
 pio.renderers.default = "browser"
-
-#####################################################################################################
-# PROJECT_MAP_NAAM (zie hieronder) dient aangepast te worden naar het juiste project in
-# de map 'Projecten' voor het runnen van de boxplotscripts.
-
-#####################################################################################################
-
-PROJECT_MAP_NAAM = "Schermer"
-######################################################################################################
-
-
-def parseer_robuuste_indices(waarde: any) -> list[int]:
-    """
-    Parset een waarde uit Excel die een string van komma-gescheiden integers,
-    een enkele integer, een enkele float, of een float die een punt in plaats van een komma gebruikt kan zijn.
-    """
-    if pd.isna(waarde):
-        return []
-
-    # Als het een getal is zonder decimaal deel (bijv. 51 of 51.0)
-    if isinstance(waarde, (int, float)) and waarde == int(waarde):
-        return [int(waarde)]
-
-    # Voor andere gevallen (bijv. '51,54' of '51.54' of 51.54)
-    # Behandel als een string, vervang punten door komma's en splits dan.
-    s_waarde = str(waarde).replace(".", ",")
-    return [int(i.strip()) for i in s_waarde.split(",") if i.strip()]
 
 
 def parseer_x_coordinaten(waarde: any) -> list[float]:
@@ -84,48 +58,53 @@ def parseer_x_coordinaten(waarde: any) -> list[float]:
     return coordinaten
 
 
-def main(project_map_naam):
+def main(project_map_naam: str, strict: bool = False) -> int:
     """
     Hoofdfunctie om het proces voor het genereren van plots te coördineren.
+
+    Geeft het aantal mislukte profielen terug, zodat een aanroeper (of een job)
+    kan zien of er echt iets gemaakt is.
     """
     # === Configuratie Laden ===
-    PROJECT_PAD = Path(__file__).parent / Path("Projecten") / Path(project_map_naam)
-    YAML_CONFIG: dict = config_lader.laad_yaml_config(
-        PROJECT_PAD / "config" / "config.yaml"
-    )
-    BASIS_PAD: Path = PROJECT_PAD / YAML_CONFIG["base_data_dir"]
+    # Alles komt uit het werkboek input_data/<project>/<project>.xlsx; de paden
+    # eromheen staan in Modules/paths.py.
+    invoer = workbook_lader.laad_project(project_map_naam)
+    YAML_CONFIG: dict = invoer.algemene_config
+    PLOTS_PAD: Path = paths.plots_map(project_map_naam)
 
-    CONFIG_BESTAND: str | None = YAML_CONFIG["config_file"]
-    CONFIG_BLADEN: list[str] | None = YAML_CONFIG["config_sheets"]
-    METADATA_BESTAND: str | None = YAML_CONFIG["metadata_file"]
-
-    PEILBUISDATA_BESTAND: str | None = YAML_CONFIG["peilbuisdata_file"]
-    RUWE_DATA_PAD: Path = BASIS_PAD / PEILBUISDATA_BESTAND
-
-    STIX_MAP: str | None = YAML_CONFIG.get("stix_folder", "stix_files")
-    STIX_MAP_PAD: Path = BASIS_PAD / STIX_MAP
-
-    NEERSLAGDATA_BESTAND: str | None = YAML_CONFIG["neerslagdata_file"]
-    neerslag_data = data_lader.laad_neerslag_data(BASIS_PAD / NEERSLAGDATA_BESTAND)
-
-    terugkeertijden_data = None
-    TERUGKEERTIJDEN_BESTAND: str | None = YAML_CONFIG.get("return_periods_file")
-    if TERUGKEERTIJDEN_BESTAND:
-        terugkeertijden_data = data_lader.laad_terugkeertijden_data(
-            BASIS_PAD / TERUGKEERTIJDEN_BESTAND
+    bevindingen = workbook_lader.valideer(invoer)
+    for bevinding in bevindingen:
+        print(f"{'❌' if bevinding.ernst == 'fout' else '⚠️'} {bevinding}")
+    fouten = [b for b in bevindingen if b.ernst == "fout"]
+    if fouten:
+        raise ValueError(
+            f"{len(fouten)} fout(en) in {invoer.workbook.name}; los die eerst op."
         )
 
-    algemene_config, profielen_df = config_lader.laad_excel_config(
-        BASIS_PAD, CONFIG_BESTAND, CONFIG_BLADEN
-    )
-    metadata: DataFrame = pd.read_excel(BASIS_PAD / METADATA_BESTAND)
+    RUWE_DATA_PAD: Path | None = invoer.paden["peilbuisdata"]
+    if RUWE_DATA_PAD is None:
+        raise FileNotFoundError(
+            f"Geen peilbuisdata-bestand gevonden voor {project_map_naam}. "
+            "Controleer de sleutel 'peilbuisdata_bestand' in het blad 'project'."
+        )
+
+    neerslag_data = data_lader.laad_neerslag_data(invoer.paden["neerslag"])
+
+    terugkeertijden_data = None
+    if invoer.paden["terugkeertijden"]:
+        terugkeertijden_data = data_lader.laad_terugkeertijden_data(
+            invoer.paden["terugkeertijden"]
+        )
+
+    algemene_config: dict = invoer.algemene_config
+    profielen_df: DataFrame = invoer.profielen_df
 
     # --- Buitenwaterstand laden (fluctuerend of vast) ---
-    buitenwaterstand_bestand = YAML_CONFIG.get("buitenwaterstand_file")
+    buitenwaterstand_bestand = invoer.paden["buitenwaterstand"]
     buitenwaterstand_data = None
 
     if buitenwaterstand_bestand:
-        bestand_pad = BASIS_PAD / buitenwaterstand_bestand
+        bestand_pad = buitenwaterstand_bestand
         try:
             print(f"Fluctuerende buitenwaterstand wordt ingelezen uit: {bestand_pad}")
             df_bw = pd.read_excel(bestand_pad, engine="openpyxl")
@@ -153,35 +132,35 @@ def main(project_map_naam):
         print("Vaste buitenwaterstand wordt gebruikt uit general_config.")
         buitenwaterstand_data = algemene_config["buitenwaterstand"]
 
-    # === STIX-bestanden zoeken en koppelen aan profielnamen ===
-    stix_bestanden: list[Path] = sorted(list(STIX_MAP_PAD.glob("*.stix")))
-    stix_bestanden_map: dict[str, Path] = {}
-    for bestand in stix_bestanden:
-        overeenkomst = re.search(r"DWP(\d+)", bestand.stem)
-        if overeenkomst:
-            profiel_naam = f"Profiel {int(overeenkomst.group(1))}"
-            stix_bestanden_map[profiel_naam] = bestand
-
+    # === STIX-bestanden ===
+    # Het werkboek benoemt per profiel het stix-bestand in de kolom
+    # 'stix_bestand'; er wordt niet meer op een DWP-nummer in de bestandsnaam
+    # gezocht, en de profielnaam hoeft dus niet exact 'Profiel <n>' te zijn.
+    stix_bestanden: list[Path] = sorted(paths.stix_map(project_map_naam).glob("*.stix"))
     if not stix_bestanden:
-        print(f"⚠️ Geen stix-bestanden gevonden in map: {STIX_MAP_PAD}")
+        print(f"⚠️ Geen stix-bestanden gevonden in map: {paths.stix_map(project_map_naam)}")
 
-    # Maak de 'plots' map aan als deze niet bestaat
-    Path(f"{PROJECT_PAD}/plots").mkdir(exist_ok=True)
+    gelukt: int = 0
+    mislukt: list[str] = []
+    overgeslagen: int = 0
 
     # === Verwerk elk profiel uit de configuratie ===
     for profiel_index, profiel in profielen_df.iterrows():
         profiel_naam: str = profiel["naam"]
-        if profiel_naam.endswith("A") or profiel_naam.endswith("B"):
+        profiel_id: str = profiel["profiel_id"]
+        if profiel["diepte_niveau"] != "hoofd":
             print(
                 f"--- Overslaan sub-profiel: {profiel_naam} (wordt verwerkt onder hoofdprofiel) ---"
             )
             continue
+        if not profiel.get("actief", True):
+            print(f"--- Overslaan profiel: {profiel_naam} (actief = FALSE) ---")
+            overgeslagen += 1
+            continue
         print(f"--- Verwerk profiel: {profiel_naam} ---")
 
-        # --- Data Laden (Excel profiel) ---
-        _, coords_df = data_lader.laad_profiel_data(
-            BASIS_PAD, CONFIG_BESTAND, profielen_df, profiel_index
-        )
+        # --- Data Laden (dwarsprofielgeometrie uit het werkboek) ---
+        coords_df = workbook_lader.laad_coords(invoer, profiel_id)
         dijkprofiel = coords_df[["x", "y"]].to_numpy()
 
         # --- Zoek STIX-bestand en bepaal eventuele horizontale correctie ---
@@ -189,7 +168,7 @@ def main(project_map_naam):
         # verplaatst. Het Excel-dijkprofiel (en alles wat daaruit wordt afgeleid, zoals
         # peilbuisposities en de freatische lijn) wordt zo nodig horizontaal verschoven
         # zodat het aansluit op de STIX-geometrie.
-        stix_bestand = stix_bestanden_map.get(profiel_naam)
+        stix_bestand = workbook_lader.stix_pad(invoer, profiel_id)
         ruwe_geometrie_per_grondsoort = {}
         offset_x = 0.0
 
@@ -242,11 +221,8 @@ def main(project_map_naam):
             print(f"✅ Diep profiel gevonden: {profiel_naam_A}")
             profiel_A = profiel_rij_A.iloc[0]
             try:
-                metadata_pb_idx_A = parseer_robuuste_indices(
-                    profiel_A["metadata_pb_indices"]
-                )
-                metadata_pb_A = data_lader.bereid_metadata_peilbuis_voor(
-                    metadata, metadata_pb_idx_A
+                metadata_pb_A = workbook_lader.metadata_voor_profiel(
+                    invoer, profiel_A["profiel_id"]
                 )
 
                 x_peilbuis_A = [
@@ -283,11 +259,8 @@ def main(project_map_naam):
             print(f"✅ Nog dieper profiel gevonden: {profiel_naam_B}")
             profiel_B = profiel_rij_B.iloc[0]
             try:
-                metadata_pb_idx_B = parseer_robuuste_indices(
-                    profiel_B["metadata_pb_indices"]
-                )
-                metadata_pb_B = data_lader.bereid_metadata_peilbuis_voor(
-                    metadata, metadata_pb_idx_B
+                metadata_pb_B = workbook_lader.metadata_voor_profiel(
+                    invoer, profiel_B["profiel_id"]
                 )
 
                 x_peilbuis_B = [
@@ -321,12 +294,7 @@ def main(project_map_naam):
                 for grondsoort, waarde in ruwe_geometrie_per_grondsoort.items()
             }
 
-            metadata_pb_idx: list[int] = parseer_robuuste_indices(
-                profiel["metadata_pb_indices"]
-            )
-            metadata_pb = data_lader.bereid_metadata_peilbuis_voor(
-                metadata, metadata_pb_idx
-            )
+            metadata_pb = workbook_lader.metadata_voor_profiel(invoer, profiel_id)
 
             x_peilbuis = [
                 x + offset_x
@@ -466,7 +434,7 @@ def main(project_map_naam):
             )
 
             uitvoer_bestandsnaam = (
-                PROJECT_PAD / "plots" / f"plot_{project_map_naam}_{uitvoer_stam}.html"
+                PLOTS_PAD / f"plot_{project_map_naam}_{uitvoer_stam}.html"
             )
             with open(uitvoer_bestandsnaam, "w", encoding="utf-8") as f:
                 f.write(
@@ -485,22 +453,72 @@ def main(project_map_naam):
                 )
                 f.write(plotten.SLIDER_SYNC_SCRIPT)
             print(f"✅ Plot opgeslagen als: {uitvoer_bestandsnaam}\n")
+            gelukt += 1
 
         except Exception as e:
             print(f"❌ Fout bij volledige verwerking van {profiel['naam']}: {e}")
             traceback.print_exc()
+            mislukt.append(str(profiel["naam"]))
+            if strict:
+                raise
             continue
 
     # --- Genereer Folium Kaart ---
     kaart_generator.maak_folium_kaart(
         profielen_df,
         stix_bestanden,
-        PROJECT_PAD,
-        CONFIG_BESTAND,
-        CONFIG_BLADEN,
+        paths.repo_root() / paths.UITVOER_MAP / project_map_naam,
         project_map_naam,
     )
 
+    print(
+        f"\n=== {project_map_naam}: {gelukt} plot(s) gemaakt, "
+        f"{len(mislukt)} mislukt, {overgeslagen} overgeslagen ==="
+    )
+    if mislukt:
+        print(f"    mislukt: {', '.join(mislukt)}")
+    return len(mislukt)
+
+
+def _argumenten() -> argparse.Namespace:
+    parser = argparse.ArgumentParser(
+        description="Genereert de boxplot-/dwarsprofielplots voor een project."
+    )
+    groep = parser.add_mutually_exclusive_group(required=True)
+    groep.add_argument(
+        "--project",
+        action="append",
+        choices=paths.projecten(),
+        metavar="NAAM",
+        help=f"projectnaam; mag meerdere keren. Keuze uit: {', '.join(paths.projecten())}",
+    )
+    groep.add_argument("--alle", action="store_true", help="alle projecten")
+    parser.add_argument(
+        "--strict",
+        action="store_true",
+        help="stop bij de eerste fout in plaats van doorgaan naar het volgende profiel",
+    )
+    return parser.parse_args()
+
 
 if __name__ == "__main__":
-    main(PROJECT_MAP_NAAM)
+    args = _argumenten()
+    te_doen: list[str] = paths.projecten() if args.alle else args.project
+
+    mislukt_totaal: int = 0
+    niets_gemaakt: list[str] = []
+    for naam in te_doen:
+        try:
+            mislukt_totaal += main(naam, strict=args.strict)
+        except Exception as fout:
+            print(f"❌ {naam} volledig mislukt: {fout}")
+            traceback.print_exc()
+            if args.strict:
+                raise
+            niets_gemaakt.append(naam)
+
+    # Een job die nul plots oplevert mag niet als succes eindigen.
+    if mislukt_totaal or niets_gemaakt:
+        if niets_gemaakt:
+            print(f"\n❌ Projecten zonder uitvoer: {', '.join(niets_gemaakt)}")
+        sys.exit(1)

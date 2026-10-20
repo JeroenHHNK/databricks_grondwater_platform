@@ -10,6 +10,23 @@ from . import analyse
 PROFIEL_PLOT_DIV_ID = "profiel_plot_div"
 TIJDREEKS_PLOT_DIV_ID = "tijdreeks_plot_div"
 
+# Standaardpalet. Stond eerder als een identiek `plot_colors`-blok in alle zeven
+# config.yaml-bestanden; die waarden waren exact gelijk aan de fallbacks hier, en
+# `deep_gw_line` stond in geen enkele config. Zeven kopieën van een constante die
+# nooit per project is afgeweken, is geen configuratie. Een project dat toch wil
+# afwijken kan `plot_colors` in `plot_config` meegeven.
+PLOT_KLEUREN_STANDAARD: dict[str, str] = {
+    "box_edge": "black",
+    "box_face": "lightblue",
+    "flier_edge": "#D55E00",
+    "gw_line": "#0072B2",
+    "last_point": "red",
+    "last_point_edge": "black",
+    "meanpoint": "#E69F00",
+    "median": "#CC79A7",
+    "deep_gw_line": "#8A2BE2",  # paars
+}
+
 # Koppelt de tijdslider van de profielplot (boven) aan een verticale markeringslijn in de
 # tijdreeksplot (onder): bij het verslepen van de slider wordt de bijbehorende datum uit het
 # actieve slider-label gelezen en als 'shape' in de tijdreeksplot gezet. Nodig omdat de twee
@@ -179,17 +196,20 @@ def maak_profiel_plot(plot_data: dict, plot_config: dict):
     stijghoogtes_B = plot_data.get("stijghoogtes_B")
     heeft_nog_diepere_peilbuizen = profiel_B is not None
 
-    # Plotkleuren uit configuratie
-    PLOT_KLEUREN: list[str] = plot_config.get("plot_colors", {})
-    BOX_RAND_KLEUR: str = PLOT_KLEUREN.get("box_edge", "black")
-    BOX_VUL_KLEUR: str = PLOT_KLEUREN.get("box_face", "lightblue")
-    UITBIJTER_RAND_KLEUR: str = PLOT_KLEUREN.get("flier_edge", "#D55E00")
-    GW_LIJN_KLEUR: str = PLOT_KLEUREN.get("gw_line", "#0072B2")
-    LAATSTE_PUNT_KLEUR: str = PLOT_KLEUREN.get("last_point", "red")
-    LAATSTE_PUNT_RAND: str = PLOT_KLEUREN.get("last_point_edge", "black")
-    GEMIDDELDE_PUNT_KLEUR: str = PLOT_KLEUREN.get("meanpoint", "#E69F00")
-    MEDIAAN_KLEUR: str = PLOT_KLEUREN.get("median", "#CC79A7")
-    DIEPE_GW_LIJN_KLEUR: str = PLOT_KLEUREN.get("deep_gw_line", "#8A2BE2")  # paars
+    # Plotkleuren: het standaardpalet, eventueel overschreven via plot_config.
+    PLOT_KLEUREN: dict[str, str] = {
+        **PLOT_KLEUREN_STANDAARD,
+        **(plot_config.get("plot_colors") or {}),
+    }
+    BOX_RAND_KLEUR: str = PLOT_KLEUREN["box_edge"]
+    BOX_VUL_KLEUR: str = PLOT_KLEUREN["box_face"]
+    UITBIJTER_RAND_KLEUR: str = PLOT_KLEUREN["flier_edge"]
+    GW_LIJN_KLEUR: str = PLOT_KLEUREN["gw_line"]
+    LAATSTE_PUNT_KLEUR: str = PLOT_KLEUREN["last_point"]
+    LAATSTE_PUNT_RAND: str = PLOT_KLEUREN["last_point_edge"]
+    GEMIDDELDE_PUNT_KLEUR: str = PLOT_KLEUREN["meanpoint"]
+    MEDIAAN_KLEUR: str = PLOT_KLEUREN["median"]
+    DIEPE_GW_LIJN_KLEUR: str = PLOT_KLEUREN["deep_gw_line"]
 
     # Voeg bodemlagen toe (robuuste methode: één trace per grondsoort)
     for grondsoort, kleurgon in geometrie_per_grondsoort.items():
