@@ -1,0 +1,45 @@
+# ---- Python ----
+__pycache__/
+*.py[cod]
+*.egg-info/
+.eggs/
+build/
+dist/
+
+# Virtual environments
+.venv/
+venv/
+env/
+.env
+
+# Tooling / caches
+.uv/
+.ruff_cache/
+.mypy_cache/
+.pytest_cache/
+.ipynb_checkpoints/
+
+# ---- OS ----
+Thumbs.db
+ehthumbs.db
+Desktop.ini
+.DS_Store
+
+# ---- Projectdata (niet versiebeheren) ----
+# Ruwe meet-/invoerdata en D-Stability bestanden kunnen zeer groot zijn.
+*.xlsx
+*.xls
+*.xlsm
+*.stix
+
+# ---- Gegenereerde output ----
+*.html
+*.png
+*.PNG
+*.pdf
+*.dxf
+
+# SQLite / overige databases
+*.db
+*.sqlite
+*.sqlite3
