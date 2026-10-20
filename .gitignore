@@ -25,12 +25,23 @@ ehthumbs.db
 Desktop.ini
 .DS_Store
 
-# ---- Projectdata (niet versiebeheren) ----
-# Ruwe meet-/invoerdata en D-Stability bestanden kunnen zeer groot zijn.
+# ---- Projectdata ----
+# input_data/ IS versiebeheerd (inclusief .xlsx en .stix): de Databricks Git folder
+# levert de invoer op de cluster, die geen internet en geen S-schijf heeft.
+# Buiten input_data/ blijft alle Excel/stix ongewenst.
 *.xlsx
 *.xls
 *.xlsm
 *.stix
+!input_data/**/*.xlsx
+!input_data/**/*.stix
+
+# De ruwe meetexports zijn de bulk (~95 MB) en worden vervangen door een
+# Databricks-query. Niet versiebeheren; zie notebooks/.
+input_data/*/peilbuisdata/
+
+# Excel lock-/tijdelijke bestanden
+~$*
 
 # ---- Gegenereerde output ----
 *.html
