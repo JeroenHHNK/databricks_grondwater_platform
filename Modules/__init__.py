@@ -13,6 +13,7 @@ from . import kaart_generator
 from . import paths
 from . import plotten
 from . import stix_verwerker
+from . import workbook_lader
 
 __all__ = [
     "analyse",
@@ -22,4 +23,5 @@ __all__ = [
     "paths",
     "plotten",
     "stix_verwerker",
+    "workbook_lader",
 ]
