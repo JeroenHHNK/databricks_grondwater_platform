@@ -1,24 +1,55 @@
 # -*- coding: utf-8 -*-
 """
-Created on Wed Jul 22 09:51:52 2026
+Voegt een nieuwe Geoloket-export toe aan de bestaande meetreeks-werkmap.
 
-@author: thanzen
+Oorspronkelijk geschreven op 2026-07-22 door thanzen.
+
+> **Dit is de handmatige route, en de bedoeling is hem kwijt te raken.**
+> `notebooks/30_haal_reeksen_en_coordinaten_op.py` haalt dezelfde stijghoogtes
+> rechtstreeks uit `gold_prd.hl_grondwaterpeilmeting.meting`. Zolang niet
+> vaststaat dat onze peilbuizen daar te vinden zijn (zie
+> `notebooks/20_match_peilbuizen.py`), blijft dit script de terugvaloptie.
+
+Werkt per tabblad: neemt uit de nieuwe export alleen de rijen met een
+`Timestamp` na de laatste in de moederwerkmap, en plakt die eronder. Alleen
+toevoegen dus: herziene historische waarden worden niet gecorrigeerd, en
+tabbladen die alleen in de nieuwe export zitten vallen weg.
+
+    uv run python scripts/voeg_geoloket_export_toe.py --project Belmermeer \
+        --moeder peilbuisdata_Belmermeer_alle_sensoren_09102026.xlsx \
+        --nieuw  peilbuisdata_belmermeer_17112026.xlsx \
+        --uit    peilbuisdata_Belmermeer_alle_sensoren_17112026.xlsx
 """
 
-
+import argparse
+import sys
 from pathlib import Path
 from copy import copy
 import pandas as pd
 from openpyxl import load_workbook
 
-# --------------------------------------------------
-# HARDCODED MAP MET EXCELBESTANDEN
-# --------------------------------------------------
-bestandmap = Path(r"S:/Waterveiligheid_2030/Pilaar 3 - Analyse/06 Rekenbestanden/freatische_lijn/Projecten/Belmermeer/data")
+sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
-moederbestand = bestandmap / "peilbuisdata_alle_sensoren_12082026.xlsx"
-nieuwbestand = bestandmap / "peilbuisdata_belmermeer_09102026.xlsx"
-uitvoerbestand = bestandmap / "peilbuisdata_alle_sensoren_09102026.xlsx"
+from Modules import paths  # noqa: E402
+
+_parser = argparse.ArgumentParser(description=__doc__)
+_parser.add_argument("--project", required=True, choices=paths.projecten())
+_parser.add_argument("--moeder", required=True, help="bestaande werkmap in peilbuisdata/")
+_parser.add_argument("--nieuw", required=True, help="nieuwe Geoloket-export in peilbuisdata/")
+_parser.add_argument("--uit", required=True, help="naam van de nieuwe werkmap")
+_args = _parser.parse_args()
+
+bestandmap = paths.peilbuisdata_map(_args.project)
+
+moederbestand = bestandmap / _args.moeder
+nieuwbestand = bestandmap / _args.nieuw
+uitvoerbestand = bestandmap / _args.uit
+
+for _pad in (moederbestand, nieuwbestand):
+    if not _pad.is_file():
+        raise FileNotFoundError(f"Niet gevonden: {_pad}")
+if uitvoerbestand.exists():
+    raise FileExistsError(f"Bestaat al, zou overschreven worden: {uitvoerbestand}")
 
 # ==================================================
 # ALLE TABBLADEN INLEZEN
