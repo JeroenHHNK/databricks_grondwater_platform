@@ -1,7 +1,36 @@
-# Data catalog
+# Pipeline datasets
 
-Every dataset in the Tarso pipeline: its columns, types and meaning. Written so code
-can be written from this file alone.
+Every dataset the Tarso pipeline **reads, holds in memory or writes**: its columns,
+types and meaning.
+
+> Renamed from `DATA_CATALOG.md` (2026-10-20). "Data catalog" read as if it described
+> Unity Catalog — the `gold_prd` source. It never did. The source schema is documented
+> in [`DATABRICKS_HANDOFF.md` §2.0](DATABRICKS_HANDOFF.md); this file is about **our**
+> datasets.
+
+## ⚠️ Section status
+
+This file was written against the **original CSV-file design**, before the pipeline was
+pointed at `gold_prd.hl_grondwaterpeilmeting.meting`. Roughly half of it no longer
+describes running code. Verified against the code on 2026-10-20:
+
+| § | Subject | Status |
+|---|---|---|
+| 1 | Input: head CSV, "raw" | ❌ **superseded** — heads come from the `meting` Delta table. `read_head_csv` still exists in `io.py` but **no notebook calls it**. |
+| 2 | Input: head CSV, "validated" | ❌ **superseded** — same. The `gecontroleerd`/`afgekeurd` filter was replaced by `validatie_status`, which is currently ignored. |
+| 3 | Input: forcing CSVs | ✅ **current** — `data/forcing/knmi_forcing_249.csv`. |
+| 3a | `knmi_daily_forcing` Delta table | ⚠️ **never built** — marked *proposed*, and `notebooks/ingestion/knmi_forcing.py` does not exist. The cluster has no egress, so the forcing is committed to the repo instead. The KNMI API facts and the conversion rules in this section are accurate and still used by `scripts/check_knmi.py`. |
+| 4 | `LoadedHead` / `PreparedHead` | ❌ **superseded** — `LoadedHead` is unused; **`prepare_head` and `PreparedHead` no longer exist**. Cleaning is `clean.py::clean_head` → `CleanedSeries`. |
+| 5 | Discovery DataFrame | ❌ **superseded** — replaced by `pastas_series_manifest`, keyed on `meetreeks_id`, not `(survey, file_path)`. |
+| 6 | Delta table `tarso_runs` | ❌ **superseded** — **no code writes `tarso_runs`.** The real table is `pastas_fit_metrics`; see §6a. |
+| 7 | Output: model files | ❌ **superseded** — path and filename both changed; see §3a's artefact tree. |
+| 8 | Job parameters | ❌ **superseded** — the real widgets are listed in §8a. |
+| 9 | Fixed model constants | ✅ **current** — matches `fit.py::build_model`. |
+| 10 | Stage 3: extremes | ✅ **current**. |
+
+Superseded sections are kept because they record the spec the pipeline was built from,
+and because §6 is still the only written description of several fit statistics. They are
+**not** a description of what runs today.
 
 **Legend**
 
@@ -15,6 +44,29 @@ can be written from this file alone.
 
 ## Overview of the data flow
 
+**Current (Delta source):**
+
+```
+gold_prd.hl_grondwaterpeilmeting.meting
+  --manifest_sql--> pastas_series_manifest        (task 1, 20 longest series)
+      --series_rows_sql--> pandas --clean_head--> CleanedSeries
+                                                      |
+data/forcing/knmi_forcing_249.csv --load_forcing--> 2 x pd.Series
+                                                      |
+                                                 fit_series (task 2)
+                                                      +--> run_yy_mm_dd/pas_files/*.pas
+                                                      +--> pastas_fit_metrics
+                                                              |
+                 data/forcing_imprex/ (16 members) --> run_extremes (task 3)
+                                                      +--> run_yy_mm_dd/csv/*.csv
+                                                      +--> pastas_evt_selection
+                                                      +--> pastas_extremes_summary
+```
+
+Everything joins on **`meetreeks_id`**.
+
+**Superseded (CSV source) — what §§1, 2, 4, 5, 6 describe:**
+
 ```
 head CSV (raw | validated) --read_head_csv--> LoadedHead --prepare_head--> PreparedHead
                                                                               |
@@ -25,7 +77,7 @@ discovery DataFrame (survey, file_path, series_name) drives the distribution.
 
 ---
 
-## 1. Input: head CSV, "raw" format
+## 1. Input: head CSV, "raw" format ❌ superseded
 
 One CSV per monitoring well/filter, in a folder per survey. Unvalidated logger export.
 Hourly, typically 2-5 years.
@@ -37,7 +89,7 @@ Hourly, typically 2-5 years.
 
 Raw files have no verdict columns and are **never row-filtered**.
 
-## 2. Input: head CSV, "validated" format
+## 2. Input: head CSV, "validated" format ❌ superseded
 
 Human-reviewed series. Written with a **UTF-8 BOM**, read with `encoding="utf-8-sig"`.
 A file is validated only if **all three** of `raw_data`, `gecontroleerd`, `afgekeurd`
@@ -54,7 +106,7 @@ are present (case-insensitive, whitespace stripped); a partial match falls back 
 **Row filter (default):** keep `gecontroleerd == 1 and afgekeurd != 1`. Rejected rows are
 **dropped, not NaN-filled or interpolated**.
 
-## 3. Input: forcing CSVs (two files, shared by all models)
+## 3. Input: forcing CSVs (two files, shared by all models) ✅ current
 
 Daily, millimetres, decades long (e.g. KNMI station 249 Berkhout, from 1951). Passed to
 Pastas in mm unchanged. **Column names are pipeline parameters**, not hardcoded.
@@ -69,7 +121,7 @@ Pastas in mm unchanged. **Column names are pipeline parameters**, not hardcoded.
 `load_forcing()` returns a `pd.Series`: `float64`, `DatetimeIndex` (`datetime64[us]`),
 sorted, duplicate dates removed (first kept), `name` = the column name.
 
-## 3a. Source: Delta table `knmi_daily_forcing` (**proposed**)
+## 3a. Source: Delta table `knmi_daily_forcing` ⚠️ never built
 
 The forcing CSVs of section 3 can also be produced from KNMI directly. Written by
 `notebooks/ingestion/knmi_forcing.py` via `src/tarso_pipeline/knmi.py`; column names
@@ -154,7 +206,7 @@ keeping both metrics rows; the `run_folder` widget overrides the name to avoid t
 > **Hourly is not an option for evaporation.** KNMI's `uurgegevens` product has no
 > Makkink: its `PRCP` set is `DR:RH` (duration + hourly sum). `EV24` is daily-only.
 
-## 4. In-memory objects (Python, no Spark)
+## 4. In-memory objects (Python, no Spark) ❌ superseded
 
 ### `LoadedHead` (output of `read_head_csv`)
 
@@ -173,7 +225,7 @@ keeping both metrics rows; the `run_folder` widget overrides the name to avoid t
 | `skipped` | `bool` | True when validated and fewer than `min_obs` observations. |
 | `skip_reason` | `str` | Empty when not skipped. |
 
-## 5. Discovery DataFrame (step 1 of the job)
+## 5. Discovery DataFrame (step 1 of the job) ❌ superseded
 
 One row per head CSV; `OBJECT_DATA.csv` is excluded. **Source: spec.**
 
@@ -183,7 +235,7 @@ One row per head CSV; `OBJECT_DATA.csv` is excluded. **Source: spec.**
 | `file_path` | `str` | `string` | no | `/Volumes/cat/schema/vol/input_files/83034-2/83034-2_HB017PB01_..._F-264.csv` |
 | `series_name` | `str` | `string` | no | `83034-2_HB017PB01_HH0114_34_BUKR_GMW_PB1_F-264` (= `sanitize_name(file stem)`) |
 
-## 6. Output: Delta table `tarso_runs` (one row per series per run)
+## 6. Output: Delta table `tarso_runs` ❌ superseded — never written; see §6a
 
 Append-only; never overwritten in place. Fields in the "Source: spec" rows are required
 by section 4 of the handoff; "proposed" rows are the run-identification parameters the
@@ -257,7 +309,120 @@ From `ml.stats.summary()`, a DataFrame indexed by metric name with a single colu
 | `pastas_version` | `str` | `string` | no | e.g. `1.12.0`. |
 | `model_path` | `str` | `string` | yes | Path of the `.pas` file; null when not successful. |
 
-## 7. Output: model files
+## 5a. Output: Delta table `pastas_series_manifest` ✅ current
+
+`waterkeringbeheer_prd.jvanruitenbeek.pastas_series_manifest`. Written by
+`notebooks/ingestion/build_manifest.py` (job task 1). Replaces §5.
+
+**`mode("overwrite")` + `overwriteSchema`** — it holds only the latest selection, never
+a history. Grain: **one row per selected series**, the 20 longest trainable ones.
+
+| Column | Spark | Notes |
+|---|---|---|
+| `meetreeks_id` | `string` | **The key.** 64-char hash, straight from `meting.meetreeks_id`. |
+| `n_rows` | `bigint` | Rows in the source for this series, values and nulls alike. |
+| `n_values` | `bigint` | Rows with a non-null `waarde`. |
+| `first_value_at` | `timestamp` | First timestamp **carrying a value**, not the first row. |
+| `last_value_at` | `timestamp` | Last timestamp carrying a value. |
+| `span_days` | `int` | `datediff` of the two above. What `min_days` tests. |
+| `run_id` | `string` | `make_run_id()` → `yy_mm_dd_HH_MM`. |
+| `min_days`, `min_obs` | `int` | Thresholds this selection used. |
+| `source_table` | `string` | Fully qualified source, for provenance. |
+| `manifest_created_at` | `timestamp` | `current_timestamp()`. |
+
+## 6a. Output: Delta table `pastas_fit_metrics` ✅ current
+
+`waterkeringbeheer_prd.jvanruitenbeek.pastas_fit_metrics`. Written by
+`notebooks/transformation/fit_pastas_models.py` (job task 2). **Replaces §6's
+`tarso_runs`**, which no code writes.
+
+Schema is generated from `fit_metrics.FIT_METRICS_SCHEMA`, so the table and the row
+cannot drift apart. **`mode("append")` + `mergeSchema`.**
+
+**Primary key: `(run_id, meetreeks_id, model_type)`** — logical only, Delta enforces
+nothing. `meetreeks_id` alone is not unique: each series is fitted with every type in
+`model_types` (default `tarso` **and** `recharge`), and every run appends a fresh
+generation of rows. Grain: **one row per series × model type × run**.
+
+> ⚠️ Do not join this to `pastas_series_manifest` on `run_id`. The manifest is
+> overwritten so it holds one `run_id`, and the two stages build `run_id` by different
+> means — task 1 calls `make_run_id()` (`26_10_20_14_04`), task 2 builds its own UTC
+> stamp (`20261020T140412Z`). Join on `meetreeks_id`.
+
+### 6a.1 Identity and status
+
+| Column | Spark | Notes |
+|---|---|---|
+| `run_id` | `string` | Widget, or a UTC `%Y%m%dT%H%M%SZ` stamp. |
+| `meetreeks_id` | `string` | The 64-char source key. |
+| `series_name` | `string` | `series_<first 24 hex>`. A label for filenames, **not** a key. |
+| `model_type` | `string` | `tarso` or `recharge`. |
+| `success` | `boolean` | Replaces §6's three-valued `status`; a skip is a failure with a reason. |
+| `error_message` | `string` | Exception or guard message; null on success. |
+
+### 6a.2 Solver and calibration window
+
+| Column | Spark | Notes |
+|---|---|---|
+| `nfev` | `int` | Solver function evaluations. |
+| `nobs` | `int` | Observations Pastas actually used. |
+| `noise` | `boolean` | Noise model active. |
+| `tmin`, `tmax` | `timestamp` | Calibration window used, after trimming. |
+| `freq`, `freq_obs` | `string` | Model and observation frequency. |
+| `warmup_days` | `int` | Warmup requested (default 3650). |
+| `warmup_available_days` | `int` | Warmup the forcing could actually supply. |
+| `calibration_trimmed` | `boolean` | True when `tmax` was pulled back to the last forcing day. |
+| `days_trimmed_from_end` | `int` | How many days that cost — the KNMI publication lag. |
+
+### 6a.3 Fit statistics
+
+Read field-by-field from the Pastas API, never parsed from `fit_report()`. Each read is
+guarded, so a statistic this Pastas version does not expose lands as `NULL` rather than
+losing the row.
+
+| Column | Spark | Notes |
+|---|---|---|
+| `evp` | `double` | Explained variance percentage. |
+| `r2` | `double` | `model.stats.rsq`. Healthy: ~0.7–0.95. |
+| `rmse` | `double` | Root mean squared error [m]. |
+| `aic`, `aicc`, `bic` | `double` | Information criteria. |
+| `obj` | `double` | `solver.obj_func`. |
+| `interp` | `boolean` | Simulation interpolated onto the observations. |
+
+> Narrower than §6.3, which also lists `sse`, `mae`, `nse` and `kge`. Those come from
+> `ml.stats.summary()`; this table reads individual API methods instead. Add them to
+> `FIT_METRICS_SCHEMA` and `extract_metrics` if you want them.
+
+### 6a.4 What was actually fitted — the cleaning audit
+
+Every count from `clean.py::clean_head`, so a surprising fit can be traced to the
+cleaning rather than the solver. This has no equivalent in §6.
+
+| Column | Spark | Notes |
+|---|---|---|
+| `n_raw_rows` | `int` | Rows returned by `series_rows_sql`. |
+| `n_missing_value` | `int` | Dropped for a null `waarde`. |
+| `n_duplicate_timestamps` | `int` | Rows sharing a timestamp with another. **Typically large** — ~55 rows/day collapse to 1. |
+| `n_after_dedup` | `int` | Rows left once duplicates were collapsed. |
+| `dedup_method` | `string` | How duplicates were collapsed (default `mean`). |
+| `resample_rule`, `resample_method` | `string` | Default `D` / `mean`. |
+| `span_days` | `int` | Span of the **cleaned** series. |
+| `first_entry`, `last_entry` | `timestamp` | Extent of the cleaned series. |
+| `min_value`, `max_value` | `double` | Observed head range [m NAP] — also Tarso's `dmin`/`dmax`. |
+
+### 6a.5 Provenance
+
+| Column | Spark | Notes |
+|---|---|---|
+| `parameters` | `string` | Fitted optimal parameters as sorted JSON. |
+| `model_path` | `string` | The `.pas` file. |
+| `plot_path`, `diagnostics_path` | `string` | The two PNGs; null if plotting failed, which never fails the fit. |
+| `forcing_station` | `string` | KNMI station, e.g. `249`. |
+| `forcing_units` | `string` | `m` or `mm` — **recorded because it rescales the gain parameters**, making the two conventions incomparable. |
+| `pastas_version` | `string` | e.g. `1.12.0`. |
+| `fitted_at` | `timestamp` | Wall clock at row creation. |
+
+## 7. Output: model files ❌ superseded
 
 | Item | Value |
 |---|---|
@@ -266,7 +431,7 @@ From `ml.stats.summary()`, a DataFrame indexed by metric name with a single colu
 | Location | Unity Catalog Volume: `/Volumes/<catalog>/<schema>/<volume>/models/...` (not DBFS root, not driver-local disk) |
 | Alternative | `ml.to_dict()` as JSON string in a Delta `string` column |
 
-## 8. Job parameters (all configurable)
+## 8. Job parameters (all configurable) ❌ superseded — see §8a
 
 | Parameter | Type | Default | Notes |
 |---|---|---|---|
@@ -285,7 +450,37 @@ From `ml.stats.summary()`, a DataFrame indexed by metric name with a single colu
 | `output_volume_path` | string | none | Where `.pas` files go. |
 | `output_table` | string | `tarso_runs` | Fully qualified `catalog.schema.table`. |
 
-## 9. Fixed model constants (from the spec)
+## 8a. Job parameters, as the notebooks actually declare them ✅ current
+
+Replaces §8. These are the `dbutils.widgets` of task 2
+(`notebooks/transformation/fit_pastas_models.py`); a blank text widget means "derive it".
+
+| Widget | Default | Notes |
+|---|---|---|
+| `source_root` | *(blank)* | Repo root; blank walks up for `pyproject.toml`. |
+| `source_table` | `gold_prd.hl_grondwaterpeilmeting.meting` | Read-only source. |
+| `manifest_table` | `…jvanruitenbeek.pastas_series_manifest` | Written by task 1. |
+| `metrics_table` | `…jvanruitenbeek.pastas_fit_metrics` | This task's output. |
+| `volume_base` | `/Volumes/waterkeringbeheer_prd/misc_files/misc_files/pastas_pipeline` | Where run folders go. |
+| `forcing_dir` | *(blank)* | Blank = `<volume_base>/knmi_forcing`. |
+| `station` | `249` | KNMI station (Berkhout). |
+| `forcing_units` | `m` | `m` or `mm`. **Changes the gain parameters.** |
+| `warmup_days` | `3650` | Pastas warmup. |
+| `model_types` | `tarso,recharge` | Comma-separated. Drives the row multiplier. |
+| `limit_series` | `20` | How many manifest series to fit. **Set `1` for a first run.** |
+| `run_folder` | *(blank)* | Blank = `run_yy_mm_dd`. Set it to stop two same-day runs overwriting artefacts. |
+| `dedup_method` | `mean` | How to collapse duplicate timestamps. |
+| `resample_rule` / `resample_method` | `D` / `mean` | |
+| `min_obs` | `100` | Minimum observations **after** cleaning. |
+| `min_days` | `365` | Minimum span after cleaning. |
+| `run_id` | *(blank)* | Blank = UTC `%Y%m%dT%H%M%SZ`. |
+| `write_metrics` | `true` | `false` dry-runs the fit without writing. |
+| `save_plots` | `true` | |
+
+Nothing here matches §8: there is no `input_volume_path`, no `surveys`, no `prec_file`
+or `evap_column`, and no `validation_filter`. Those belonged to the CSV design.
+
+## 9. Fixed model constants (from the spec) ✅ current
 
 | Item | Value |
 |---|---|
@@ -299,7 +494,7 @@ From `ml.stats.summary()`, a DataFrame indexed by metric name with a single colu
 | `matplotlib` backend | `Agg` if imported at all |
 
 
-## 10. Stage 3: extremes and return periods (**proposed**)
+## 10. Stage 3: extremes and return periods ✅ current
 
 Drives each calibrated `.pas` with the 16 IMPREX ensemble members and reports return
 levels. Written by `notebooks/transformation/run_extremes.py`, into the **same dated

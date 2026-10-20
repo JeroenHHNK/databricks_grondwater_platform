@@ -10,7 +10,7 @@ KNMI publishes two climatology products behind the same query interface:
 
 Both ``RH`` (daily precipitation sum) and ``EV24`` are published in **0.1 mm** and
 are converted to mm here, because forcings are passed to Pastas in mm (see
-``DATA_CATALOG.md`` section 3). ``RH == -1`` is KNMI's code for "less than
+``docs/PIPELINE_DATASETS.md`` section 3). ``RH == -1`` is KNMI's code for "less than
 0.05 mm" and is read as 0.0.
 
 No Spark and no state live here: one POST, one DataFrame. The incremental
@@ -29,7 +29,7 @@ import requests
 
 KNMI_DAILY_URL = "https://www.daggegevens.knmi.nl/klimatologie/daggegevens"
 
-# KNMI station 249 Berkhout -- the forcing station named in DATA_CATALOG.md.
+# KNMI station 249 Berkhout -- the station named in docs/PIPELINE_DATASETS.md.
 DEFAULT_STATION = 249
 
 # The two variables this pipeline needs, mapped to the column names

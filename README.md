@@ -4,6 +4,16 @@ Minimal Pastas/Tarso training pipeline for Databricks: load head (groundwater le
 CSVs plus two meteorological forcing series, train one Pastas `TarsoModel` per head
 series, persist the model and its fit statistics.
 
+## Documentation
+
+| File | Covers |
+|---|---|
+| [`docs/DATABRICKS_HANDOFF.md`](docs/DATABRICKS_HANDOFF.md) | The original spec, **plus §2.0: the Unity Catalog source schema** (`gold_prd.hl_grondwaterpeilmeting`, ten tables) |
+| [`docs/PIPELINE_DATASETS.md`](docs/PIPELINE_DATASETS.md) | What the pipeline reads, holds and writes. Each section marked current or superseded |
+
+`PIPELINE_DATASETS.md` was `DATA_CATALOG.md` until 2026-10-20; the old name read as if
+it described Unity Catalog, which it never did.
+
 ## Layout
 
 ```
