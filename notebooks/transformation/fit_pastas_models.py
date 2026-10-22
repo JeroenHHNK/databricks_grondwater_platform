@@ -33,9 +33,15 @@
 # MAGIC
 # MAGIC ### Scale
 # MAGIC
-# MAGIC `limit_series` defaults to **20**. Drop it to 1 to validate the chain after any
-# MAGIC change - the volume write is probed first either way, so a missing grant fails
-# MAGIC in seconds rather than after a long fit.
+# MAGIC `limit_series` defaults to **0 = the whole manifest**, which is every series
+# MAGIC spanning at least `min_days` (365). Set it to **1** to validate the chain after
+# MAGIC any change - the volume write is probed first either way, so a missing grant
+# MAGIC fails in seconds rather than after a long fit.
+# MAGIC
+# MAGIC Fits run **sequentially on the driver**, so wall-clock time is
+# MAGIC `series x len(model_types) x seconds-to-minutes each`. Check the count the
+# MAGIC manifest reports before launching an uncapped run, and drop `model_types` to
+# MAGIC `tarso` alone to halve it.
 # MAGIC
 # MAGIC ### Forcing units
 # MAGIC
@@ -91,7 +97,7 @@ dbutils.widgets.dropdown("forcing_units", "m", ["m", "mm"], "Forcing units")
 dbutils.widgets.text("warmup_days", "3650", "Warmup in days")
 
 dbutils.widgets.multiselect("model_types", "tarso", ["tarso", "recharge"], "Model types")
-dbutils.widgets.text("limit_series", "20", "How many series")
+dbutils.widgets.text("limit_series", "0", "Cap on series (0 = the whole manifest)")
 dbutils.widgets.text("run_folder", "", "Run folder (blank = run_yy_mm_dd)")
 
 dbutils.widgets.text("dedup_method", "mean", "Collapse duplicate timestamps with")
@@ -191,7 +197,7 @@ print(f"metrics      {METRICS}")
 print(f"volume       {VOLUME_BASE}")
 print(f"run folder   {RUN_DIR}")
 print(f"forcing      {FORCING_FILE}  ({FORCING_UNITS})")
-print(f"model types  {MODEL_TYPES}   series: {LIMIT_SERIES}")
+print(f"model types  {MODEL_TYPES}   series cap: {LIMIT_SERIES or 'none'}")
 print(f"cleaning     dedup={DEDUP_METHOD}, resample={RESAMPLE_RULE}/{RESAMPLE_METHOD}")
 print(f"pastas       {ps.__version__}")
 
@@ -262,12 +268,15 @@ if not spark.catalog.tableExists(MANIFEST):
         "census, written by explore_meting.py) and is not the work list."
     )
 
-work = (
+selected = (
     spark.table(MANIFEST)
     .orderBy(F.col("span_days").desc(), F.col("n_values").desc())
-    .limit(LIMIT_SERIES)
-    .toPandas()
 )
+# 0 means the whole manifest. Longest-first ordering is applied before the cap,
+# so a capped run is a prefix of the full one rather than an arbitrary sample.
+if LIMIT_SERIES:
+    selected = selected.limit(LIMIT_SERIES)
+work = selected.toPandas()
 print(f"{len(work)} series x {len(MODEL_TYPES)} model type(s) = "
       f"{len(work) * len(MODEL_TYPES)} fits")
 display(work)

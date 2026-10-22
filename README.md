@@ -157,7 +157,7 @@ Each notebook has one job. Only two are job tasks; the other two are run by hand
 | Notebook | Purpose | Job task? | Writes |
 |---|---|---|---|
 | `exploration/explore_meting.py` | what is in the source, how many series are fit to model | no | nothing |
-| `ingestion/build_manifest.py` | pick the 20 longest series; quantify duplicate timestamps | **task 1** | `pastas_series_manifest` |
+| `ingestion/build_manifest.py` | select every series spanning >= `min_days` (365); quantify duplicate timestamps | **task 1** | `pastas_series_manifest` |
 | `transformation/fit_pastas_models.py` | clean, fit, save `.pas`, record metrics | **task 2** | `pastas_fit_metrics`, `.pas` files |
 | `analysis/inspect_results.py` | did it work, are the fits any good, Tarso vs baseline | no | nothing |
 

@@ -271,22 +271,29 @@ def manifest_sql(
     table: str,
     min_days: int = 365,
     min_obs: int = 100,
-    limit: int = 20,
+    limit: int | None = 0,
 ) -> str:
-    """The work list: the longest trainable series, longest first.
+    """The work list: every trainable series, longest first.
 
-    Deliberately capped (handover section 3): the first increment is 20 series,
-    not the whole table.
+    ``min_days`` is the real selection rule -- a series shorter than that is
+    already ``'too short'`` and never reaches this list. ``limit`` only truncates
+    what the verdict already allowed.
+
+    **``limit=0`` (the default) or ``None`` means no cap**, so the manifest is
+    every series clearing ``min_days``. A positive value keeps the longest N,
+    which is how a smoke test runs one series without changing anything else.
+    Ordering is longest-first either way, so a capped run is a prefix of the
+    uncapped one rather than an arbitrary sample.
     """
-    if limit < 1:
-        raise ValueError(f"limit must be >= 1, got {limit}")
+    if limit is not None and limit < 0:
+        raise ValueError(f"limit must be >= 0 (0 = no cap), got {limit}")
+    cap = f"\n        LIMIT {limit}" if limit else ""
     return f"""
         {_scored_prefix(table, min_days, min_obs)}
         SELECT meetreeks_id, n_rows, n_values, first_value_at, last_value_at, span_days
         FROM scored
         WHERE verdict = '{TRAINABLE}'
-        ORDER BY span_days DESC, n_values DESC
-        LIMIT {limit}
+        ORDER BY span_days DESC, n_values DESC{cap}
     """
 
 

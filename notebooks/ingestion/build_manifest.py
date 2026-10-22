@@ -6,7 +6,8 @@
 # MAGIC %md
 # MAGIC # Build the series manifest
 # MAGIC
-# MAGIC Task 1 of the pipeline. Picks the **20 longest trainable series** from
+# MAGIC Task 1 of the pipeline. Selects **every trainable series** -- at least
+# MAGIC `min_obs` values spanning at least `min_days` days -- from
 # MAGIC `gold_prd.hl_grondwaterpeilmeting.meting` and writes them to
 # MAGIC `waterkeringbeheer_prd.jvanruitenbeek.pastas_series_manifest`, then quantifies the
 # MAGIC duplicate-timestamp problem before anything is fitted.
@@ -36,7 +37,7 @@ dbutils.widgets.text("source_table", "gold_prd.hl_grondwaterpeilmeting.meting", 
 dbutils.widgets.text("manifest_table",
                      "waterkeringbeheer_prd.jvanruitenbeek.pastas_series_manifest",
                      "Manifest table")
-dbutils.widgets.text("limit", "20", "How many series")
+dbutils.widgets.text("limit", "0", "Cap on series (0 = every one over min_days)")
 dbutils.widgets.text("min_days", "365", "Minimum span in days")
 dbutils.widgets.text("min_obs", "100", "Minimum measurements")
 dbutils.widgets.text("run_id", "", "Run id (blank = timestamp)")
@@ -87,7 +88,8 @@ WRITE_MANIFEST = dbutils.widgets.get("write_manifest") == "true"
 print(f"source    {SOURCE}")
 print(f"manifest  {MANIFEST}")
 print(f"run_id    {RUN_ID}")
-print(f"selecting the {LIMIT} longest series with >= {MIN_OBS} values over >= {MIN_DAYS} days")
+print(f"selecting series with >= {MIN_OBS} values over >= {MIN_DAYS} days"
+      + (f", capped at the {LIMIT} longest" if LIMIT else " (no cap)"))
 
 # COMMAND ----------
 
@@ -137,7 +139,20 @@ manifest = (
     .withColumn("manifest_created_at", F.current_timestamp())
 )
 manifest.createOrReplaceTempView("manifest_temp_view")
-print(f"{spark.sql('SELECT * FROM manifest_temp_view').count()} series selected")
+n_selected = spark.sql("SELECT * FROM manifest_temp_view").count()
+print(f"{n_selected} series selected")
+
+# Task 2 fits these sequentially on the driver, once per model type, so the row
+# count here is the only advance warning of how long that run takes. Said in
+# minutes because "1400 fits" does not read as "most of a day".
+for n_types, label in ((1, "tarso only"), (2, "tarso + recharge")):
+    fits = n_selected * n_types
+    print(f"   {label:18} {fits:5,} fits  ~{fits * 20 / 60:,.0f}-{fits * 90 / 60:,.0f} min"
+          f"  ({fits * 20 / 3600:,.1f}-{fits * 90 / 3600:,.1f} h)")
+if n_selected > 200:
+    print(f"\n-> {n_selected} series is a long sequential run. Options: set limit_series "
+          f"on task 2 to fit in batches, drop model_types to 'tarso', or raise min_days.")
+
 display(spark.sql('SELECT * FROM manifest_temp_view'))
 
 # COMMAND ----------

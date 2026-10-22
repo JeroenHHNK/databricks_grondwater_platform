@@ -165,11 +165,46 @@ def test_verdict_builders_reject_negative_thresholds():
 # --- manifest and duplicate check ------------------------------------------
 
 
-def test_manifest_is_capped():
+def test_manifest_caps_when_asked():
     from tarso_pipeline.meting import manifest_sql
 
     assert "LIMIT 20" in manifest_sql(TABLE, limit=20)
     assert "LIMIT 5" in manifest_sql(TABLE, limit=5)
+
+
+def test_manifest_is_uncapped_by_default():
+    # The whole point of the change: every series clearing min_days, not 20.
+    from tarso_pipeline.meting import manifest_sql
+
+    assert "LIMIT" not in manifest_sql(TABLE)
+
+
+@pytest.mark.parametrize("limit", [0, None])
+def test_zero_and_none_both_mean_no_cap(limit):
+    from tarso_pipeline.meting import manifest_sql
+
+    assert "LIMIT" not in manifest_sql(TABLE, limit=limit)
+
+
+def test_min_days_is_what_actually_selects_series():
+    # Removing the cap must not weaken the length rule -- min_days is the filter,
+    # and a series below it is excluded by verdict, never by the LIMIT.
+    from tarso_pipeline.meting import manifest_sql
+
+    sql = manifest_sql(TABLE, min_days=365)
+    assert "span_days < 365 THEN 'too short'" in sql
+    assert "WHERE verdict = 'trainable'" in sql
+    assert "LIMIT" not in sql
+
+
+def test_an_uncapped_manifest_is_the_capped_one_without_the_tail():
+    # Ordering is applied before any cap, so a capped run is a prefix of the full
+    # run. That is what makes limit_series=1 a valid smoke test.
+    from tarso_pipeline.meting import manifest_sql
+
+    full = manifest_sql(TABLE)
+    capped = manifest_sql(TABLE, limit=1)
+    assert capped.replace("\n        LIMIT 1", "") == full
 
 
 def test_manifest_orders_longest_first():
@@ -184,11 +219,11 @@ def test_manifest_takes_only_trainable_series():
     assert f"WHERE verdict = '{TRAINABLE}'" in manifest_sql(TABLE)
 
 
-def test_manifest_rejects_a_silly_limit():
+def test_manifest_rejects_a_negative_limit():
     from tarso_pipeline.meting import manifest_sql
 
     with pytest.raises(ValueError, match="limit"):
-        manifest_sql(TABLE, limit=0)
+        manifest_sql(TABLE, limit=-1)
 
 
 def test_duplicate_check_separates_duplicates_from_dense_sampling():
