@@ -1,5 +1,6 @@
-# Wat de Streamlit-app (app.py) nodig heeft; Databricks Apps installeert dit bij het deployen.
-# De volledige ontwikkelomgeving (ook main.py en de scripts) staat in pyproject.toml.
+# Wat de Streamlit-app (app.py) nodig heeft, voor een installatie met pip.
+# Databricks Apps gebruikt dit bestand niet: zolang pyproject.toml en uv.lock er
+# zijn, installeert het met uv daaruit. Houd de twee wel gelijk.
 streamlit>=1.66        # st.iframe
 pandas>=2.2
 pyarrow>=15

@@ -219,9 +219,13 @@ Excel-export. Zie [`notebooks/README.md`](notebooks/README.md).
 
 ### De app als Databricks App
 
-`app.yaml` zegt hoe de app start (`streamlit run app.py`); `requirements.txt`
-bevat de pakketten die Databricks Apps bij het deployen installeert. Getest op
-Python 3.11 en 3.13. De app leest de stijghoogtes uit
+`app.yaml` zegt hoe de app start (`streamlit run app.py`). Databricks Apps
+installeert de pakketten met `uv` uit `pyproject.toml` en `uv.lock`
+(`requirements.txt` wordt dan niet gebruikt). De runtime heeft Python 3.11 en
+geen internet buiten de pakketbron, dus `requires-python` moet 3.11 toelaten:
+anders probeert `uv` een nieuwere Python van GitHub te downloaden en mislukt de
+build. Na een wijziging in `pyproject.toml` altijd `uv lock` draaien en
+`uv.lock` meecommitten. Getest op Python 3.11 en 3.13. De app leest de stijghoogtes uit
 `input_data/databricks_export/`, dat met de broncode meekomt: er is geen SQL
 warehouse of extra recht voor nodig.
 

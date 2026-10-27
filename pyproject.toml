@@ -3,7 +3,7 @@ name = "wv2030-boxplots"
 version = "0.1.0"
 description = "Generates boxplots for monitoring wells."
 readme = "README.md"
-requires-python = ">=3.12, <4.0"
+requires-python = ">=3.11, <4.0"
 dependencies = [
     "d-geolib >=2.7.0, <3.0.0",
     "openpyxl >=3.1.5, <4.0.0",
