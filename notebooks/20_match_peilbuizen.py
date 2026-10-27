@@ -543,10 +543,10 @@ else:
 # MAGIC %md
 # MAGIC ### Export voor de terugkoppeling
 # MAGIC
-# MAGIC Een xlsx per project op het volume. Werkwijze: downloaden, de kolom
-# MAGIC `meetreeks_id` in het blad `peilbuizen` van het werkboek plakken,
-# MAGIC `handmatig_vastgezet` op TRUE zetten waar je zelf hebt beslist, committen,
-# MAGIC pushen, de Git folder pullen en notebook 10 opnieuw draaien.
+# MAGIC Een csv per project op het volume. Werkwijze: downloaden, de geaccepteerde
+# MAGIC meetlocatie als `meetlocatie_id` in `input_data/config.csv` zetten,
+# MAGIC committen, pushen, de Git folder pullen en notebook 10 opnieuw draaien.
+# MAGIC Lokaal doet `scripts/bouw_koppeltabel_ld_dd.py --vul-config` hetzelfde.
 # MAGIC
 # MAGIC Lukt dit niet, dan ontbreekt `WRITE VOLUME` (zie notebook 00) -- de tabel
 # MAGIC `boxplots_peilbuis_meetreeks` hierboven bevat dezelfde gegevens.
@@ -563,8 +563,8 @@ try:
     map_pad: str = paths.volume_pad(f"match_{run_id}")
     os.makedirs(map_pad, exist_ok=True)
     for project, groep in pandas_eind.groupby("project"):
-        doel: str = f"{map_pad}/{project}_match.xlsx"
-        groep.to_excel(doel, index=False, sheet_name="peilbuizen")
+        doel: str = f"{map_pad}/{project}_match.csv"
+        groep.to_csv(doel, index=False)
         print(f"  {doel}  ({len(groep)} rijen)")
 except Exception as fout:  # noqa: BLE001
     print(f"  export mislukt: {type(fout).__name__}: {fout}")

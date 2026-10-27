@@ -104,3 +104,74 @@ def sensor_sleutel_delen(sleutel: str | None) -> tuple[str, str, str]:
 def afstand_rd(x1: float, y1: float, x2: float, y2: float) -> float:
     """Afstand in meters tussen twee punten in RD New (EPSG:28992)."""
     return ((x1 - x2) ** 2 + (y1 - y2) ** 2) ** 0.5
+
+
+# --- put + filter als één sleutel -------------------------------------------
+# Werkt op alle vormen die in de werkboeken en in `meetreeks` voorkomen:
+#   werkboek      HB002PB01, HB017-APB01
+#   sensorsleutel HB002_GMW_PB1, 507080_HB28_GMW_PB1, 11653#_HB15_GMW_PB1, HB017-A_GMW_PB1
+#   meetreekscode HB20-PB1, B09-PB2
+# en levert telkens 'HB2|1', 'HB17A|1', 'B9|2'. Voorloopnullen tellen niet:
+# Wiertsema schrijft HB002, Fugro HB02.
+
+_PUT = r"([A-Z]+)(\d+)(?:-?([A-Z]))?"
+_WERKBOEK_NAAM = re.compile(rf"^{_PUT}PB(\d+)$")
+_MEETREEKS_CODE = re.compile(rf"^{_PUT}-PB(\d+)$")
+_PUT_ALLEEN = re.compile(rf"^{_PUT}$")
+_PB = re.compile(r"^PB(\d+)$")
+
+
+def _sleutel(letters: str, nummer: str, achtervoegsel: str | None, filter_nr: str) -> str:
+    return f"{letters}{int(nummer)}{achtervoegsel or ''}|{int(filter_nr)}"
+
+
+def sleutel_uit_werkboek(peilbuis_naam: str | None) -> str | None:
+    """'HB002PB01' -> 'HB2|1'; 'HB017-APB01' -> 'HB17A|1'."""
+    m = _WERKBOEK_NAAM.match(str(peilbuis_naam or "").strip().upper())
+    return _sleutel(*m.groups()) if m else None
+
+
+def sleutel_uit_sensor(sensor_sleutel: str | None) -> str | None:
+    """'507080_HB28_GMW_PB1' -> 'HB28|1': het deel vóór en ná 'GMW'."""
+    delen: list[str] = str(sensor_sleutel or "").strip().upper().split("_")
+    if "GMW" not in delen:
+        return None
+    i: int = delen.index("GMW")
+    if i == 0 or i + 1 >= len(delen):
+        return None
+    put, pb = _PUT_ALLEEN.match(delen[i - 1]), _PB.match(delen[i + 1])
+    return _sleutel(*put.groups(), pb.group(1)) if put and pb else None
+
+
+def sleutel_uit_meetreeks_code(code: str | None) -> str | None:
+    """'HB20-PB1 ' -> 'HB20|1'. Fugro-codes; 'MSLV8_o54154' levert None."""
+    m = _MEETREEKS_CODE.match(str(code or "").strip().upper())
+    return _sleutel(*m.groups()) if m else None
+
+
+# --- dwarsprofielsleutel uit de peilbuiscode --------------------------------
+# De code van een peilbuis noemt de dijkpaal waar het dwarsprofiel ligt:
+#   B_BE0072+3_BUKR_GMW_PB1_F-385   -> BE, paal 72, +3 m
+#   BE115+00_BIKR_GMW_PB1_F-334     -> BE, paal 115
+#   HB_BLM0020+100_BUKR_GMW_PB1     -> BLM, paal 20, +100 m
+#   B_D11-DP_70+6_BUKR_GMW_PB1      -> D11-DP, paal 70, +6 m
+#   PB_MB_DP 179+65 m_KR_1          -> DP, paal 179, +65 m   (Schellingwoude)
+#   PB_HB_DP 176_KR                 -> DP, paal 176          (zonder offset)
+
+_DIJKPAAL = re.compile(r"(?:^|_)([A-Z]+\d*[A-Z]?-DP|[A-Z]{2,3})_?(\d+)\+(\d+)")
+_DIJKPAAL_DP = re.compile(r"(?:^|_)(DP) (\d+)(?:\+(\d+))?")
+
+
+def dijkpaal_uit_code(code_peilbuis: str | None) -> tuple[str, int, int] | None:
+    """'B_BE0072+3_BUKR_GMW_PB1_F-385' -> ('BE', 72, 3); None zonder dijkpaal."""
+    tekst: str = str(code_peilbuis or "").strip().upper()
+    m = _DIJKPAAL.search(tekst) or _DIJKPAAL_DP.search(tekst)
+    if not m:
+        return None
+    return m[1], int(m[2]), int(m[3] or 0)
+
+
+def dwarsprofiel_sleutel(prefix: str, paal: int, offset: int | None = None) -> str:
+    """('BE', 72) -> 'BE_0072'; met offset 'BE_0072+3', voor als twee profielen een paal delen."""
+    sleutel: str = f"{prefix}_{paal:04d}"
+    return sleutel if offset is None else f"{sleutel}+{offset}"

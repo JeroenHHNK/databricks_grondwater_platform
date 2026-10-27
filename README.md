@@ -9,24 +9,31 @@ project binnen Waterveiligheid 2030 (Pilaar 3 – Analyse).
 ## Structuur
 
 ```
-input_data/<project>/                 handmatig onderhouden invoer (versiebeheerd)
-    <project>.xlsx                      het werkboek: bron van waarheid
-    neerslagdata_berkhout_*.xlsx
-    D-Stability/*.stix
-    extra/                              terugkeertijden, buitenwaterstanden, werkbestanden
-    peilbuisdata/                       ruwe meetexports (NIET versiebeheerd)
-input_data/_bron/<project>/           de oude config.yaml en werkboeken, als herkomst
+input_data/                           handmatig onderhouden invoer (versiebeheerd), alles csv
+    config.csv                          één rij per peilbuis per dwarsprofiel, alle projecten
+    projecten.csv                       één rij per project: buitenwaterstand, bestandsnamen
+    D-Stability/<sleutel>.stix          één per dwarsprofiel (BE_0072.stix)
+    dwarsprofielen/<sleutel>.csv        de dwarsprofielgeometrie (x, y)
+    koppeltabel_LD_DD.csv               onze peilbuizen naast de meetreeksen op Databricks
+    object_data_databricks_dwarsprofielen.csv   export van meetreeks + meetlocatie
+    <project>/                          wat niet per dwarsprofiel is:
+        neerslagdata_berkhout_*.csv
+        extra/                            terugkeertijden, buitenwaterstanden (csv)
+        peilbuisdata/                     meetreeksen (NIET versiebeheerd):
+            <export>.xlsx                   de ruwe export
+            <peilbuis_naam>.csv             één reeks per peilbuis, uit die export
 Projecten/<project>/plots/            gegenereerde uitvoer (NIET versiebeheerd)
 notebooks/                            Databricks, zie notebooks/README.md
 Modules/                              de pipeline zelf
-scripts/                              eenmalige migratie en controles
+scripts/                              koppeltabel, export omzetten, geoloket-export aanvullen
 ```
 
-- `main.py` — entrypoint.
+- `main.py` — entrypoint; schrijft de plots als HTML.
+- `app.py` — Streamlit-app; toont dezelfde plots zonder HTML-bestanden.
+- `Modules/profiel.py` — de verwerking van één profiel tot figuren, gedeeld door
+  `main.py` en `app.py`. De stijghoogtebron is een parameter.
 - `Modules/paths.py` — alle paden en Unity Catalog-namen op één plek.
-- `Modules/workbook_lader.py` — leest het werkboek.
-- `Modules/config_lader.py` — de oude YAML/Excel-lader; alleen nog in gebruik door
-  `scripts/vergelijk_invoer.py` om de migratie te controleren.
+- `Modules/workbook_lader.py` — leest de centrale invoer en controleert die.
 - `Modules/data_lader.py` — meetreeksen, neerslag, terugkeertijden.
 - `Modules/stix_verwerker.py` — D-Stability `.stix` (grondopbouw).
 - `Modules/analyse.py` — freatische lijn en dijkzones.
@@ -51,46 +58,137 @@ uv run python main.py --alle --strict         # stop bij de eerste fout
 uv run python genereer_overzichtskaart_alle_projecten.py   # kaart over alle projecten
 ```
 
+### Streamlit-app
+
+```bash
+uv run streamlit run app.py
+```
+
+Kies een project en profiel in de zijbalk. De profielplot en de tijdreeks staan
+samen in één iframe, zodat de tijdslider gekoppeld blijft aan de markering in de
+tijdreeks; "Download als HTML" levert hetzelfde bestand op als `main.py`. Er
+wordt niets naar schijf geschreven.
+
+De stijghoogtes komen uit `input_data/<project>/peilbuisdata/<peilbuis_naam>.csv`,
+anders uit de export (xlsx) in diezelfde map. Is er geen van beide, dan vraagt de
+app om een upload van de export, die alleen in het geheugen blijft.
+
+**De meetreeksen staan niet in Git** (`peilbuisdata/` is uitgesloten). Zet een
+export in `input_data/<project>/peilbuisdata/` onder de naam uit
+`peilbuisdata_bestand` in `projecten.csv` en maak er csv's per peilbuis van:
+
+```bash
+uv run python scripts/zet_export_om.py --project Beemster
+```
+
 Het project wordt met `--project` gekozen; dat was eerder een constante die je in
 `main.py` moest aanpassen. Een run die nul plots oplevert eindigt met exitcode 1,
 zodat een geplande job niet stil slaagt zonder iets te maken.
 
-## Het werkboek per project
+## De invoer
 
-`input_data/<project>/<project>.xlsx` is de invoer en wordt met de hand
-onderhouden. Vier soorten bladen:
+Alle invoer staat centraal in `input_data/` en wordt met de hand onderhouden.
 
-| Blad | Inhoud |
+| Bestand | Inhoud |
 |---|---|
-| `project` | sleutel/waarde: projectnummer, buitenwaterstand, bestandsnamen |
-| `profielen` | één rij per profiel, met `stix_bestand` expliciet erin |
-| `peilbuizen` | **één rij per peilbuis per profiel** |
-| `coords_<profiel_id>` | de dwarsprofielgeometrie (`x`, `y`) |
+| `config.csv` | **één rij per peilbuis per dwarsprofiel**, voor alle projecten |
+| `projecten.csv` | één rij per project: buitenwaterstand, boezempeiloffset, bestandsnamen |
+| `D-Stability/<sleutel>.stix` | de grondopbouw van een dwarsprofiel |
+| `dwarsprofielen/<sleutel>.csv` | de geometrie van een dwarsprofiel (`x`, `y`) |
+| `<project>/` | alleen wat niet per dwarsprofiel is: neerslag, `extra/`, `peilbuisdata/` |
 
-Het blad `peilbuizen` vervangt drie komma-/schuine-streep-gescheiden lijsten die
-alleen op positie aan elkaar gekoppeld waren (`stijghoogte_namen`,
-`Code_peilbuis`, `x_coordinaten_dwarsprofiel`) plus `metadata_pb_indices`: een
-lijstje rij-indexen in een tweede werkboek. Eén ingevoegde rij daar verschoof
-stil elk profiel. De metadatawaarden staan nu als waarde in het werkboek.
+### config.csv
 
-Verder heeft het blad een expliciete `zone`-kolom (`kruin`/`berm`/`teen`), die
-eerder met een regex uit de vrije-tekst peilbuiscode werd geraden, en lege
-`meetreeks_id`-kolommen die de Databricks-notebooks vullen.
+Alleen wat Databricks niet levert. De stijghoogtes en de meetreeksen staan op
+het platform en zijn te vinden via `meetlocatie_id` (`cs_meetlocatie_id`): één
+filter van één put, ook als de logger is vervangen en er een nieuwe meetreeks bij
+kwam.
 
-### Werkboeken opnieuw bouwen
+| kolom | betekent |
+|---|---|
+| `project` | moet in `projecten.csv` staan |
+| `cross_section_key` | de sleutel van het dwarsprofiel (`BE_0072`); uniek over alle projecten |
+| `diepte_niveau` | `hoofd`, of `A`/`B` voor diepere peilbuizen in hetzelfde dwarsprofiel |
+| `peilbuis` | put + filter (`MB001PB01`); ook de naam van de lokale reeks-csv |
+| `projectnummer` | het onderzoeksproject van de peilbuis (`VN-86349-1`); nodig om te koppelen |
+| `meetlocatie_id` | de sleutel naar Databricks; leeg = (nog) niet gekoppeld |
+| `koppeling` | de status uit de koppeltabel, zodat zichtbaar is waarom een id ontbreekt |
+| `x_profiel` | ligging in het dwarsprofiel (m); bepaalt ook de volgorde van de peilbuizen |
+| `x_rd`, `y_rd` | RD-coördinaten van de put |
+| `bk_peilbuis`, `bk_filter`, `ok_filter` | bovenkant peilbuis en filter (m NAP), uit de inmeting |
+| `code` | volledige peilbuiscode; label in de plot en bron van de zone (`BUKR`, `BIT`, ...) |
+| `teensloot_peil`, `stix_offset_x` | per dwarsprofiel, herhaald op elke rij ervan |
 
-De werkboeken zijn eenmalig uit de oude bestanden gegenereerd:
+Een rij is uniek op `project + cross_section_key + diepte_niveau + peilbuis`.
+Een peilbuisnaam alleen is geen sleutel: `HB013PB01` bestaat in zes projecten.
+Filterdieptes en bovenkant peilbuis staan ook op Databricks, maar afgerond op
+0,1 m en voor een paar putten 1,5 m anders dan de inmeting; daarom staan ze hier.
+Het kaartpunt van een dwarsprofiel is de eerste peilbuis van het hoofdprofiel.
+
+### Dwarsprofielen heten naar hun dijkpaal
+
+Een dwarsprofiel heet naar de dijkpaal waar het ligt, zoals die in de
+peilbuiscodes staat: `B_BE0072+3_BUKR_GMW_PB1_F-385` → `BE_0072`. Die sleutel is
+de naam van het stix-bestand (`D-Stability/BE_0072.stix`), de geometrie
+(`dwarsprofielen/BE_0072.csv`) en de plot (`plot_Beemster_BE_0072.html`).
+
+- Delen twee dwarsprofielen een dijkpaal, dan krijgen beide de offset erbij:
+  `BLM_0019+89` en `BLM_0019+99`, `D12-DP_0016+66` en `D12-DP_0016+187`.
+- Diepere peilbuizen in hetzelfde dwarsprofiel krijgen dezelfde sleutel met
+  `diepte_niveau` `A` (of `B`); de app toont ze in de plot van het hoofdprofiel.
+
+### Een nieuw dwarsprofiel toevoegen
+
+1. **Kies de sleutel.** Neem de dijkpaal uit de code van de eerste peilbuis
+   (meestal de kruin): `B_BE0072+3_BUKR_GMW_PB1_F-385` → `BE_0072` (voorvoegsel,
+   `_`, paalnummer met vier cijfers). Bestaat die sleutel al, in welk project
+   dan ook, zet dan de offset erachter: `BE_0072+3`. Diepere peilbuizen in
+   hetzelfde dwarsprofiel krijgen dezelfde sleutel met `diepte_niveau` `A` of `B`.
+2. **Stix**: zet het bestand in `input_data/D-Stability/<sleutel>.stix`.
+3. **Geometrie**: zet het dijkprofiel in `input_data/dwarsprofielen/<sleutel>.csv`
+   met de kolommen `x,y` (m langs het profiel, m NAP). Gebruik dezelfde
+   x-oorsprong als `x_profiel` van de peilbuizen.
+4. **Peilbuizen**: voeg per peilbuis een rij toe aan `input_data/config.csv` en
+   vul `project` tot en met `teensloot_peil` in; laat `meetlocatie_id` en
+   `koppeling` leeg. Gaat het om een nieuw project, voeg dan eerst een rij toe
+   aan `projecten.csv` en maak `input_data/<project>/` met een neerslagbestand.
+5. **Koppel aan Databricks**:
+   ```bash
+   uv run python scripts/bouw_koppeltabel_ld_dd.py --vul-config
+   ```
+   Dat vult `meetlocatie_id` waar de koppeling eenduidig is (`gekoppeld`,
+   `meerdere sensoren`) en zet in `koppeling` de status. Beoordeel
+   `twijfelachtig` en `meerdere kandidaten` met de hand in
+   `input_data/koppeltabel_LD_DD.csv` en vul daar zelf de `meetlocatie_id` in.
+   Zijn de putten nieuw op het platform, ververs dan eerst
+   `object_data_databricks_dwarsprofielen.csv`.
+6. **Controleer**:
+   ```bash
+   uv run python main.py --project <project> --strict
+   uv run streamlit run app.py
+   ```
+   `main.py` stopt bij een fout in de invoer: een sleutel die ook in een ander
+   project staat, een ontbrekende geometrie, een dubbele rij of een
+   `meetlocatie_id` die bij twee peilbuizen hoort. Een stix- of geometriebestand
+   zonder rij in `config.csv` geeft een waarschuwing. Meldt de log een grote
+   resterende afwijking tegen de stix (RMSE > 0,5 m), zet dan `stix_offset_x`.
+7. **Commit** `config.csv`, het stix-bestand en de geometrie samen.
+
+### Koppeltabel
 
 ```bash
-uv run python scripts/bootstrap_workbook.py --alle          # bouwt ze opnieuw
-uv run python scripts/vergelijk_invoer.py --alle            # bewijst dat niets verandert
+uv run python scripts/bouw_koppeltabel_ld_dd.py              # alleen de tabel
+uv run python scripts/bouw_koppeltabel_ld_dd.py --vul-config # en config.csv bijwerken
 ```
 
-`vergelijk_invoer.py` controleert het werkboek tegen `input_data/_bron/`: zelfde
-algemene config, profielnamen, lijsten, metadata en geometrie. Draai dat na elke
-wijziging aan `workbook_lader` of `bootstrap_workbook`. **Let op:** `bootstrap_workbook`
-overschrijft handmatige aanvullingen in het werkboek, zoals ingevulde zones en
-`meetreeks_id`. Het is een migratiescript, geen onderdeel van de pipeline.
+`input_data/koppeltabel_LD_DD.csv` zet onze peilbuizen (`LD_`) naast de
+meetreeksen op Databricks (`DD_`, uit
+`object_data_databricks_dwarsprofielen.csv`), met in `MATCH_` hoe zeker elke
+koppeling is. `--vul-config` overschrijft nooit een ingevulde `meetlocatie_id`.
+
+De invoer is eenmalig omgezet uit xlsx-werkboeken per project, en daarna uit
+csv's per project naar deze centrale indeling; de werkboeken en de
+migratiescripts staan in de git-geschiedenis.
 
 ## Databricks
 
@@ -99,8 +197,7 @@ dwarsprofiel uit het dataplatform, in plaats van uit een met de hand bijgewerkte
 Excel-export. Zie [`notebooks/README.md`](notebooks/README.md). De boxplots
 blijven voorlopig lokaal.
 
-`input_data/` staat daarom **wel** onder versiebeheer, inclusief `.xlsx` en
-`.stix`: de cluster heeft geen internet en geen S-schijf, dus de Git folder moet
+`input_data/` staat daarom **wel** onder versiebeheer, inclusief `.stix`: de cluster heeft geen internet en geen S-schijf, dus de Git folder moet
 de invoer leveren. De ruwe meetexports in `input_data/*/peilbuisdata/` blijven
 erbuiten — die zijn samen ~95 MB en worden juist door de notebooks vervangen.
 
@@ -110,15 +207,17 @@ erbuiten — die zijn samen ~95 MB en worden juist door de notebooks vervangen.
   staat in 12 peilbuizen in Beemster, Purmer, Schellingwoude en Schermer. In
   Schellingwoude staat het op positie 1 van profiel 1 t/m 4, waar normaal `BUKR`
   staat, waardoor `heeft_kruinzone_peilbuis` daar `False` geeft en de freatische
-  lijn zonder kruinanker wordt opgebouwd. In het werkboek is de zone nu
-  expliciet; `analyse.py` is bewust niet aangepast, omdat dat elke plot
-  verandert. Dat is een aparte wijziging, met figuren voor en na.
+  lijn zonder kruinanker wordt opgebouwd. `analyse.py` is bewust niet
+  aangepast, omdat dat elke plot verandert. Dat is een aparte wijziging, met
+  figuren voor en na. De controle in `workbook_lader.valideer` meldt deze
+  peilbuizen als waarschuwing.
 - **13 peilbuizen in 13_6** hebben codes zonder zone-token (bv.
-  `PB483-1 _F-207`); hun `zone` staat leeg en moet met de hand ingevuld worden.
+  `PB483-1 _F-207`); hun zone is onbekend. Er is geen zonekolom meer: de zone
+  komt alleen uit `code`, dus het token moet in de code staan.
 - **`analyse.py` gebruikt twee mechanismen voor dezelfde vraag**: de zone uit de
   code, en de rij-volgorde (`y_peilbuis_mv[2]` = berm, `[3]` = teen). Die kunnen
   elkaar tegenspreken.
 - **Bladnamen in de meetexport worden op deelstring gezocht**, eerste treffer
   wint. Met namen als `HB001PB01` en `HB010PB01` in bladnamen die Excel op 31
-  tekens afkapt, kan dat het verkeerde blad pakken. Het werkboek heeft daarom een
-  kolom `peilbuisdata_blad` om het blad expliciet vast te leggen.
+  tekens afkapt, kan dat het verkeerde blad pakken. Dit verdwijnt zodra de
+  stijghoogtes via `meetlocatie_id` uit Databricks komen.

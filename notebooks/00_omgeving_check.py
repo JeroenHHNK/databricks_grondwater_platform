@@ -164,24 +164,25 @@ except Exception as fout:  # noqa: BLE001
 
 # COMMAND ----------
 
-# MAGIC %md ## 5. Zijn de werkboeken meegekomen met de Git folder?
+# MAGIC %md ## 5. Is de centrale invoer meegekomen met de Git folder?
 
 # COMMAND ----------
 
 import pandas as pd
 
-for project in paths.projecten():
-    pad: Path = paths.workbook_pad(project)
-    if not pad.is_file():
-        print(f"  AF  {project:<24} geen werkboek op {pad}")
-        continue
-    peilbuizen = pd.read_excel(pad, sheet_name="peilbuizen")
-    stix = len(list(paths.stix_map(project).glob("*.stix")))
-    met_id = peilbuizen["meetreeks_id"].notna().sum() if "meetreeks_id" in peilbuizen else 0
-    print(
-        f"  OK  {project:<24} {len(peilbuizen):>3} peilbuizen, {stix:>2} stix, "
-        f"{met_id:>3} met meetreeks_id"
-    )
+pad: Path = paths.config_csv()
+if not pad.is_file():
+    print(f"  AF  geen config.csv op {pad}")
+else:
+    config = pd.read_csv(pad, dtype=str)
+    stix: set[str] = {p.stem for p in paths.stix_map().glob("*.stix")}
+    for project, groep in config.groupby("project"):
+        sleutels: set[str] = set(groep["cross_section_key"])
+        print(
+            f"  {'OK' if sleutels <= stix else 'AF'}  {project:<24} {len(groep):>3} peilbuizen, "
+            f"{len(sleutels & stix):>2}/{len(sleutels):>2} stix, "
+            f"{groep['meetlocatie_id'].notna().sum():>3} met meetlocatie_id"
+        )
 
 # COMMAND ----------
 

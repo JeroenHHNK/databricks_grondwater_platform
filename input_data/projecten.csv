@@ -1,0 +1,8 @@
+project,buitenwaterstand,maatgevend_boezempeil_offset,peilbuisdata_bestand,peilbuisdata_header_rij,neerslagdata_bestand,terugkeertijden_bestand,buitenwaterstand_bestand
+13_6,-0.05,2,peilbuisdata_13_6_30072026_samengevoegd.xlsx,2,neerslagdata_berkhout_30072026.csv,,
+Beemster,-0.5,0.3,peilbuisdata_Beemster_alle_sensoren_05082026.xlsx,2,neerslagdata_berkhout_22072026.csv,return_periods_beemster_19062026.csv,
+Beemster_4_oude_raaien,-0.5,0.3,peilbuisdata_Beemster_4_oude_raaien_alle_sensoren_05082026.xlsx,2,neerslagdata_berkhout_22072026.csv,return_periods_4_oude_raaien_beemster_19062026.csv,
+Belmermeer,-1.56,0.3,peilbuisdata_Belmermeer_alle_sensoren_09102026.xlsx,2,neerslagdata_berkhout_22072026.csv,,
+Purmer,-0.5,0.3,peilbuisdata_Purmer_alle_sensoren_05082026.xlsx,2,neerslagdata_berkhout_22072026.csv,,
+Schellingwoude,-0.4,0.5,peilbuisdata_Schellingwoude_alle_sensoren_05082026.xlsx,2,neerslagdata_berkhout_24072026.csv,,buitenwaterstanden_gemaal_drieban_markermeer.csv
+Schermer,-0.5,0.3,peilbuisdata_Schermer_alle_sensoren_05082026.xlsx,2,neerslagdata_berkhout_24072026.csv,,

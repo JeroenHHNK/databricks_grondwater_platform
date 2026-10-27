@@ -11,8 +11,8 @@ lokaal (`main.py`). Deze notebooks leveren de invoer daarvoor.
 
 | Notebook | Doet | Schrijft |
 |---|---|---|
-| `00_omgeving_check.py` | rechten, bronschema's, volume, werkboeken leesbaar | niets |
-| `10_peilbuizen_uit_werkboek.py` | onze peilbuizen uit de werkboeken naar Delta | `boxplots_peilbuizen`, `boxplots_profielen` |
+| `00_omgeving_check.py` | rechten, bronschema's, volume, `config.csv` leesbaar | niets |
+| `10_peilbuizen_uit_werkboek.py` | onze peilbuizen uit `config.csv` naar Delta | `boxplots_peilbuizen`, `boxplots_profielen` |
 | `20_match_peilbuizen.py` | **vinden we onze peilbuizen, en onder welke sleutel?** | `boxplots_match_kandidaten`, `boxplots_match_rapport`, `boxplots_peilbuis_meetreeks` |
 | `30_haal_reeksen_en_coordinaten_op.py` | stijghoogtes + coördinaten + dekking | `boxplots_stijghoogtes`, `boxplots_stijghoogte_dekking`, `boxplots_peilbuis_locaties` |
 
@@ -67,20 +67,26 @@ handmatige koppeltabel het antwoord in plaats van een normalisatieregel.
 Tegenstrijdigheden (op naam reeks A, op plek reeks B) wegen zwaarder dan de
 trefkans zelf.
 
-## De terugkoppeling naar het werkboek
+## De terugkoppeling naar config.csv
 
-`meetreeks_id` in het blad `peilbuizen` is de koppeling op lange termijn;
-notebook 20 is alleen de bootstrap. De cyclus:
+`meetlocatie_id` (`cs_meetlocatie_id`) in `input_data/config.csv` is de
+koppeling op lange termijn: één filter van één put, ook als de logger is
+vervangen en er een nieuwe meetreeks bij kwam. De cyclus:
 
-1. Notebook 20 exporteert per project een xlsx op het volume, met **dezelfde
-   kolomnamen als het werkboek**, zodat een kolom overnemen kopiëren-en-plakken is.
-2. Plak de geaccepteerde `meetreeks_id` in `input_data/<project>/<project>.xlsx`.
-3. Zet `handmatig_vastgezet = TRUE` waar je zelf hebt beslist. Geen notebook
-   overschrijft die rijen daarna nog.
-4. Committen, pushen, Git folder pullen, notebook 10 opnieuw draaien.
+1. Lokaal: `uv run python scripts/bouw_koppeltabel_ld_dd.py --vul-config` vult
+   lege `meetlocatie_id`'s waar de koppeling eenduidig is (`gekoppeld`,
+   `meerdere sensoren`). Op Databricks: de export van notebook 20.
+2. Beoordeel `twijfelachtig` en `meerdere kandidaten` met de hand en vul daar
+   zelf de `meetlocatie_id` in. Een ingevulde waarde wordt nooit overschreven.
+3. Committen, pushen, Git folder pullen, notebook 10 opnieuw draaien.
 
-Niet-gevonden peilbuizen blijven als lege `meetreeks_id` in het werkboek
-zichtbaar — er is geen aparte lijst die kan gaan afwijken.
+Niet-gekoppelde peilbuizen blijven als lege `meetlocatie_id` in `config.csv`
+zichtbaar, met de reden in `koppeling`.
+
+**Let op:** `config.csv` heeft geen maaiveldhoogte. Notebook 10 levert
+`hoogte_maaiveld_nap` daarom leeg aan, zodat de strategie in notebook 20 die
+filterdiepte onder maaiveld vergelijkt niets vindt. De andere strategieën werken
+gewoon.
 
 ## Bewust niet gedaan
 
