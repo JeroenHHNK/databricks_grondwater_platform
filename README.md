@@ -215,10 +215,31 @@ migratiescripts staan in de git-geschiedenis.
 
 De notebooks in `notebooks/` halen de stijghoogtes en de coördinaten per
 dwarsprofiel uit het dataplatform, in plaats van uit een met de hand bijgewerkte
-Excel-export. Zie [`notebooks/README.md`](notebooks/README.md). De boxplots
-blijven voorlopig lokaal.
+Excel-export. Zie [`notebooks/README.md`](notebooks/README.md).
 
-`input_data/` staat daarom **wel** onder versiebeheer, inclusief `.stix`: de cluster heeft geen internet en geen S-schijf, dus de Git folder moet
+### De app als Databricks App
+
+`app.yaml` zegt hoe de app start (`streamlit run app.py`); `requirements.txt`
+bevat de pakketten die Databricks Apps bij het deployen installeert. Getest op
+Python 3.11 en 3.13. De app leest de stijghoogtes uit
+`input_data/databricks_export/`, dat met de broncode meekomt: er is geen SQL
+warehouse of extra recht voor nodig.
+
+1. **Git folder bijwerken:** pull de gewenste branch (nu `development`).
+2. **App maken:** *Compute → Apps → Create app → Custom*, met een naam
+   (bijvoorbeeld `boxplots-peilbuizen`).
+3. **Deployen:** kies als broncode de map van de Git folder (de map met
+   `app.yaml`) en deploy. De eerste keer duurt het installeren van de pakketten
+   een paar minuten.
+4. **Controleren:** open de app-URL. Gaat het mis, dan staat de oorzaak in de
+   tab *Logs* van de app.
+
+**Nieuwe stijghoogtes:** draai `notebooks/db_notebook_exporteer_stijghoogtes.py`,
+commit en push `input_data/databricks_export/`, pull de Git folder en deploy de
+app opnieuw. Wie de app mag openen (`CAN USE`) staat bij de app onder
+*Permissions*.
+
+`input_data/` staat **wel** onder versiebeheer, inclusief `.stix`: de cluster heeft geen internet en geen S-schijf, dus de Git folder moet
 de invoer leveren. De ruwe meetexports in `input_data/*/peilbuisdata/` blijven
 erbuiten — die zijn samen ~95 MB en worden juist door de notebooks vervangen.
 
