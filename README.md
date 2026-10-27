@@ -221,7 +221,7 @@ Excel-export. Zie [`notebooks/README.md`](notebooks/README.md).
 
 `app.yaml` zegt hoe de app start (`streamlit run app.py`). Databricks Apps
 installeert de pakketten met `uv` uit `pyproject.toml` en `uv.lock`
-(`requirements.txt` wordt dan niet gebruikt). De runtime heeft Python 3.11 en
+(`requirements.txt` wordt dan niet gebruikt). De runtime heeft (vermoedelijk) Python 3.11 en
 geen internet buiten de pakketbron, dus `requires-python` moet 3.11 toelaten:
 anders probeert `uv` een nieuwere Python van GitHub te downloaden en mislukt de
 build. Na een wijziging in `pyproject.toml` altijd `uv lock` draaien en
