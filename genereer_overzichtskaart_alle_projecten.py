@@ -20,7 +20,7 @@ sys.stderr.reconfigure(encoding="utf-8")
 def verzamel_locaties_voor_project(project_naam: str) -> list[dict]:
     """Laadt het werkboek van één project en bepaalt de kaartlocaties van de profielen."""
     invoer = workbook_lader.laad_project(project_naam)
-    stix_bestanden = sorted(paths.stix_map(project_naam).glob("*.stix"))
+    stix_bestanden = sorted(paths.stix_map().glob("*.stix"))
 
     return kaart_generator.verzamel_profiel_locaties(
         invoer.profielen_df,

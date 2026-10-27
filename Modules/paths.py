@@ -31,10 +31,10 @@ VOLUME_BASIS = (
 
 # --- Mapnamen binnen de repo -----------------------------------------------
 INVOER_MAP = "input_data"
-BRON_MAP = "_bron"
 STIX_MAP = "D-Stability"
 PEILBUISDATA_MAP = "peilbuisdata"
 EXTRA_MAP = "extra"
+DWARSPROFIEL_MAP = "dwarsprofielen"
 UITVOER_MAP = "Projecten"
 
 
@@ -53,32 +53,51 @@ def invoer_basis() -> Path:
     return repo_root() / INVOER_MAP
 
 
-def bron_map(project: str) -> Path:
-    """De oude config.yaml en werkboeken; herkomst, geen runtime-invoer."""
-    return invoer_basis() / BRON_MAP / project
-
-
 def projecten() -> list[str]:
-    """Alle projectnamen: de mappen in input_data/, behalve `_bron`."""
-    basis: Path = invoer_basis()
-    if not basis.is_dir():
+    """Alle projectnamen, uit projecten.csv."""
+    pad: Path = projecten_csv()
+    if not pad.is_file():
         return []
-    return sorted(
-        p.name for p in basis.iterdir() if p.is_dir() and p.name != BRON_MAP
-    )
+    import pandas as pd  # alleen hier nodig; paths blijft verder zonder pandas
+
+    return sorted(pd.read_csv(pad, usecols=["project"], dtype=str)["project"].str.strip())
 
 
 def project_map(project: str) -> Path:
     return invoer_basis() / project
 
 
-def workbook_pad(project: str) -> Path:
-    """Het handmatig onderhouden werkboek: input_data/<project>/<project>.xlsx."""
-    return project_map(project) / f"{project}.xlsx"
+# --- de centrale invoer -----------------------------------------------------
+# Alles wat per dwarsprofiel is, staat voor alle projecten samen; de sleutel
+# (`BE_0072`) is uniek over alle projecten.
 
 
-def stix_map(project: str) -> Path:
-    return project_map(project) / STIX_MAP
+def config_csv() -> Path:
+    """Eén rij per peilbuis per dwarsprofiel, voor alle projecten."""
+    return invoer_basis() / "config.csv"
+
+
+def projecten_csv() -> Path:
+    """Eén rij per project: buitenwaterstand, boezempeiloffset, bestandsnamen."""
+    return invoer_basis() / "projecten.csv"
+
+
+def dwarsprofiel_map() -> Path:
+    """De dwarsprofielgeometrie, één csv per dwarsprofiel: dwarsprofielen/BE_0072.csv."""
+    return invoer_basis() / DWARSPROFIEL_MAP
+
+
+def stix_map() -> Path:
+    """De D-Stability-bestanden, één per dwarsprofiel: D-Stability/BE_0072.stix."""
+    return invoer_basis() / STIX_MAP
+
+
+# --- per project: alleen wat niet per dwarsprofiel is ----------------------
+
+
+def reeks_csv(project: str, peilbuis_naam: str) -> Path:
+    """De stijghoogtereeks van één peilbuis: peilbuisdata/<peilbuis_naam>.csv."""
+    return peilbuisdata_map(project) / f"{peilbuis_naam}.csv"
 
 
 def peilbuisdata_map(project: str) -> Path:

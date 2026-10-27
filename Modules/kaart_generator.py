@@ -68,6 +68,51 @@ def verzamel_profiel_locaties(
     return profiel_locaties
 
 
+def maak_project_kaart(
+    profielen_df: DataFrame,
+    stix_bestanden: list[Path],
+    project_map_naam: str,
+    opslag_map: Path | None = None,
+) -> folium.Map | None:
+    """
+    Een Folium-kaart met een marker per profiel, of None zonder coördinaten.
+
+    Met `opslag_map` linkt elke popup naar de plot die daar al staat; zonder
+    (de Streamlit-app, die geen bestanden schrijft) toont de popup alleen de naam.
+    """
+    profiel_locaties = verzamel_profiel_locaties(
+        profielen_df, stix_bestanden, project_map_naam
+    )
+    if not profiel_locaties:
+        return None
+
+    gem_lat = np.mean([loc["lat"] for loc in profiel_locaties])
+    gem_lon = np.mean([loc["lon"] for loc in profiel_locaties])
+    m = folium.Map(
+        location=[gem_lat, gem_lon],
+        zoom_start=12,
+        tiles=ACHTERGROND_TILES_URL,
+        attr=ACHTERGROND_TILES_ATTRIBUTIE,
+    )
+
+    for locatie in profiel_locaties:
+        if opslag_map is None:
+            popup_html = f"<b>{locatie['naam']}</b>"
+        elif (Path(f"{opslag_map}/plots/") / locatie["html"]).exists():
+            popup_html = f"<b>{locatie['naam']}</b><br><a href='{locatie['html']}' target='_blank'>Bekijk plot</a>"
+        else:
+            popup_html = f"<b>{locatie['naam']}</b><br>Plot niet beschikbaar"
+
+        folium.Marker(
+            location=[locatie["lat"], locatie["lon"]],
+            popup=folium.Popup(popup_html, max_width=300),
+            tooltip=locatie["naam"],
+            icon=folium.Icon(color="blue", icon="info-sign"),
+        ).add_to(m)
+
+    return m
+
+
 def maak_folium_kaart(
     profielen_df: DataFrame,
     stix_bestanden: list[Path],
@@ -75,40 +120,14 @@ def maak_folium_kaart(
     project_map_naam: str,
 ) -> None:
     """Genereert een Folium-kaart met markers voor elk profiel die naar hun plot linken."""
-
-    profiel_locaties = verzamel_profiel_locaties(
-        profielen_df, stix_bestanden, project_map_naam
-    )
-
-    if profiel_locaties:
-        gem_lat = np.mean([loc["lat"] for loc in profiel_locaties])
-        gem_lon = np.mean([loc["lon"] for loc in profiel_locaties])
-        m = folium.Map(
-            location=[gem_lat, gem_lon],
-            zoom_start=12,
-            tiles=ACHTERGROND_TILES_URL,
-            attr=ACHTERGROND_TILES_ATTRIBUTIE,
-        )
-
-        for locatie in profiel_locaties:
-            plot_pad = Path(f"{opslag_map}/plots/") / locatie["html"]
-            if plot_pad.exists():
-                popup_html = f"<b>{locatie['naam']}</b><br><a href='{locatie['html']}' target='_blank'>Bekijk plot</a>"
-            else:
-                popup_html = f"<b>{locatie['naam']}</b><br>Plot niet beschikbaar"
-
-            folium.Marker(
-                location=[locatie["lat"], locatie["lon"]],
-                popup=folium.Popup(popup_html, max_width=300),
-                tooltip=locatie["naam"],
-                icon=folium.Icon(color="blue", icon="info-sign"),
-            ).add_to(m)
-
-        html_map_pad = Path(f"{opslag_map}/plots/Overzichtskaart_Profielen.html")
-        m.save(str(html_map_pad))
-        print(f"✅ HTML kaart opgeslagen als: {html_map_pad}")
-    else:
+    m = maak_project_kaart(profielen_df, stix_bestanden, project_map_naam, opslag_map)
+    if m is None:
         print("⚠️ Geen profiel locaties met coördinaten gevonden voor folium kaart.")
+        return
+
+    html_map_pad = Path(f"{opslag_map}/plots/Overzichtskaart_Profielen.html")
+    m.save(str(html_map_pad))
+    print(f"✅ HTML kaart opgeslagen als: {html_map_pad}")
 
 
 def maak_gecombineerde_folium_kaart(

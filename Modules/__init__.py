@@ -7,21 +7,21 @@ Waterveiligheid 2030 project.
 """
 
 from . import analyse
-from . import config_lader
 from . import data_lader
 from . import kaart_generator
 from . import paths
 from . import plotten
+from . import profiel
 from . import stix_verwerker
 from . import workbook_lader
 
 __all__ = [
     "analyse",
-    "config_lader",
     "data_lader",
     "kaart_generator",
     "paths",
     "plotten",
+    "profiel",
     "stix_verwerker",
     "workbook_lader",
 ]

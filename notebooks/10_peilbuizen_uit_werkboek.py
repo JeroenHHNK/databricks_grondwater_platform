@@ -2,13 +2,16 @@
 # MAGIC %md
 # MAGIC # 10 - Peilbuizen uit de werkboeken naar Delta
 # MAGIC
-# MAGIC Leest per project `input_data/<project>/<project>.xlsx` (geleverd door de
-# MAGIC Git folder) en zet de bladen `profielen` en `peilbuizen` in twee tabellen.
+# MAGIC Leest `input_data/config.csv` en `projecten.csv` (geleverd door de Git
+# MAGIC folder), per project via `workbook_lader.laad_project`, en zet ze in twee
+# MAGIC tabellen. Elk profiel en
+# MAGIC elke peilbuis draagt de kolom `dwarsprofiel` (`BE_0072`): de dijkpaal
+# MAGIC waar het dwarsprofiel ligt.
 # MAGIC Dat is de "onze kant"-helft van het matchprobleem; notebook 20 zet daar de
 # MAGIC platformkant tegenover.
 # MAGIC
 # MAGIC Beide tabellen worden **overschreven**: ze houden de laatste stand van de
-# MAGIC werkboeken bij, geen historie. Het werkboek is de bron van waarheid.
+# MAGIC config bij, geen historie. `config.csv` is de bron van waarheid.
 
 # COMMAND ----------
 
@@ -35,7 +38,7 @@ if str(REPO_ROOT) not in sys.path:
 import pandas as pd  # noqa: E402
 from pyspark.sql import functions as F  # noqa: E402
 
-from Modules import paths, platform_match  # noqa: E402
+from Modules import analyse, paths, platform_match, workbook_lader  # noqa: E402
 
 GEVRAAGD: str = dbutils.widgets.get("projecten").strip()
 PROJECTEN: list[str] = (
@@ -58,45 +61,47 @@ print(f"projecten: {PROJECTEN}")
 
 profiel_rijen: list[dict] = []
 peilbuis_rijen: list[dict] = []
+GEEN_GETAL: float = float("nan")  # een lege double-kolom; None geeft Spark geen type
+
+
+def _getal(waarde) -> float:
+    return GEEN_GETAL if pd.isna(waarde) else float(waarde)
+
 
 for project in PROJECTEN:
-    pad: Path = paths.workbook_pad(project)
-    if not pad.is_file():
-        print(f"  overslaan: {project} heeft geen werkboek ({pad})")
+    try:
+        invoer = workbook_lader.laad_project(project)
+    except KeyError as fout:
+        print(f"  overslaan: {fout}")
         continue
 
-    profielen: pd.DataFrame = pd.read_excel(pad, sheet_name="profielen")
-    peilbuizen: pd.DataFrame = pd.read_excel(pad, sheet_name="peilbuizen")
-    projectinfo: pd.DataFrame = pd.read_excel(pad, sheet_name="project")
-    projectnummer: str = str(
-        dict(zip(projectinfo["key"], projectinfo["value"])).get("projectnummer", "")
-    )
-
-    for _, rij in profielen.iterrows():
+    for _, rij in invoer.profielen_df.iterrows():
         profiel_rijen.append(
             {
                 "project": project,
                 "profiel_id": str(rij["profiel_id"]),
+                "dwarsprofiel": str(rij["dwarsprofiel"]),
                 "naam": str(rij["naam"]),
-                "hoofdprofiel_id": "" if pd.isna(rij.get("hoofdprofiel_id")) else str(rij["hoofdprofiel_id"]),
-                "diepte_niveau": str(rij.get("diepte_niveau", "")),
-                "x_rd": None if pd.isna(rij.get("x_rd")) else float(rij["x_rd"]),
-                "y_rd": None if pd.isna(rij.get("y_rd")) else float(rij["y_rd"]),
-                "stix_bestand": "" if pd.isna(rij.get("stix_bestand")) else str(rij["stix_bestand"]),
+                "hoofdprofiel_id": str(rij["hoofdprofiel_id"]),
+                "diepte_niveau": str(rij["diepte_niveau"]),
+                "x_rd": _getal(rij["x"]),
+                "y_rd": _getal(rij["y"]),
+                "stix_bestand": str(rij["stix_bestand"]),
             }
         )
 
-    for _, rij in peilbuizen.iterrows():
+    for _, rij in invoer.peilbuizen_df.iterrows():
         naam: str = str(rij["peilbuis_naam"])
-        code: str = "" if pd.isna(rij.get("code_peilbuis")) else str(rij["code_peilbuis"])
+        code: str = "" if pd.isna(rij["code_peilbuis"]) else str(rij["code_peilbuis"])
         putdeel, filterdeel = platform_match.put_en_filter(naam)
         peilbuis_rijen.append(
             {
                 "project": project,
-                "projectnummer": projectnummer,
+                "projectnummer": "" if pd.isna(rij["projectnummer"]) else str(rij["projectnummer"]),
                 "profiel_id": str(rij["profiel_id"]),
+                "dwarsprofiel": str(rij["dwarsprofiel"]),
                 "positie": int(rij["positie"]),
-                "zone": "" if pd.isna(rij.get("zone")) else str(rij["zone"]),
+                "zone": analyse.classificeer_peilbuis_zone(code) or "",
                 "peilbuis_naam": naam,
                 "code_peilbuis": code,
                 # normalisaties voor notebook 20
@@ -105,15 +110,17 @@ for project in PROJECTEN:
                 "filter_nummer": filterdeel or platform_match.pb_nummer(code),
                 "filter_uit_code_m": platform_match.filter_diepte_uit_code(code),
                 # eigen metadata, als vergelijkingsmateriaal
-                "x_rd": None if pd.isna(rij.get("x_rd")) else float(rij["x_rd"]),
-                "y_rd": None if pd.isna(rij.get("y_rd")) else float(rij["y_rd"]),
-                "hoogte_maaiveld_nap": None if pd.isna(rij.get("hoogte_maaiveld_nap")) else float(rij["hoogte_maaiveld_nap"]),
-                "bovenkant_filter_nap": None if pd.isna(rij.get("bovenkant_filter_nap")) else float(rij["bovenkant_filter_nap"]),
-                "onderkant_filter_nap": None if pd.isna(rij.get("onderkant_filter_nap")) else float(rij["onderkant_filter_nap"]),
-                "in_boxplot": bool(rij.get("in_boxplot", True)),
-                # wat al handmatig is vastgelegd
-                "meetreeks_id_werkboek": "" if pd.isna(rij.get("meetreeks_id")) else str(rij["meetreeks_id"]),
-                "handmatig_vastgezet": bool(rij.get("handmatig_vastgezet", False)),
+                "x_rd": _getal(rij["x_rd"]),
+                "y_rd": _getal(rij["y_rd"]),
+                # Niet in config.csv; leeg zodat notebook 20 en 30 blijven draaien.
+                "hoogte_maaiveld_nap": GEEN_GETAL,
+                "bovenkant_filter_nap": _getal(rij["bovenkant_filter_nap"]),
+                "onderkant_filter_nap": _getal(rij["onderkant_filter_nap"]),
+                "in_boxplot": True,
+                # wat al is vastgelegd: de meetlocatie uit config.csv
+                "meetlocatie_id": "" if pd.isna(rij["meetlocatie_id"]) else str(rij["meetlocatie_id"]),
+                "meetreeks_id_werkboek": "",
+                "handmatig_vastgezet": False,
             }
         )
 
@@ -150,7 +157,7 @@ display(
         F.sum(F.when(F.col("zone") == "", 1).otherwise(0)).alias("zone_leeg"),
         F.sum(F.when(F.col("x_rd").isNull(), 1).otherwise(0)).alias("geen_coordinaat"),
         F.sum(F.when(F.col("bovenkant_filter_nap").isNull(), 1).otherwise(0)).alias("geen_filterdiepte"),
-        F.sum(F.when(F.col("meetreeks_id_werkboek") != "", 1).otherwise(0)).alias("heeft_meetreeks_id"),
+        F.sum(F.when(F.col("meetlocatie_id") != "", 1).otherwise(0)).alias("heeft_meetlocatie_id"),
         F.countDistinct("naam_canoniek").alias("unieke_namen"),
     ).orderBy("project")
 )
