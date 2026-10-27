@@ -69,11 +69,31 @@ samen in één iframe, zodat de tijdslider gekoppeld blijft aan de markering in 
 tijdreeks; "Download als HTML" levert hetzelfde bestand op als `main.py`. Er
 wordt niets naar schijf geschreven.
 
-De stijghoogtes komen uit `input_data/<project>/peilbuisdata/<peilbuis_naam>.csv`,
-anders uit de export (xlsx) in diezelfde map. Is er geen van beide, dan vraagt de
-app om een upload van de export, die alleen in het geheugen blijft.
+De stijghoogtes komen standaard uit Databricks: de daggemiddelden in
+`input_data/databricks_export/`, gemaakt door
+`notebooks/db_notebook_exporteer_stijghoogtes.py`. Per peilbuis wordt één
+meetreeks gekozen (`Modules/databricks_reeksen.py`):
 
-**De meetreeksen staan niet in Git** (`peilbuisdata/` is uitgesloten). Zet een
+1. alleen reeksen in `m NAP` met metingen;
+2. een `meetreeks_id` in `config.csv` zet de keuze vast;
+3. anders de reeks met de meeste metingen.
+
+Voor de MVP zijn het de ruwe metingen, zonder filter op `validatie_status`. Een
+peilbuis zonder reeks valt uit de plot; de app zegt welke. Wat er te controleren
+valt, staat in `input_data/databricks_export/te_controleren.csv`:
+
+```bash
+uv run python scripts/controleer_reeksen.py
+```
+
+Lokaal kan in de zijbalk ook een lokale bron gekozen worden:
+`input_data/<project>/peilbuisdata/<peilbuis_naam>.csv`, of de export (xlsx) in
+diezelfde map. Is er geen enkele bron, dan vraagt de app om een upload van de
+export, die alleen in het geheugen blijft. De boxplots, de mediaan, de
+uitschieters en de terugkeertijden staan voor de MVP uit
+(`ONDERDELEN_STANDAARD` in `Modules/plotten.py`).
+
+**De lokale meetreeksen staan niet in Git** (`peilbuisdata/` is uitgesloten). Zet een
 export in `input_data/<project>/peilbuisdata/` onder de naam uit
 `peilbuisdata_bestand` in `projecten.csv` en maak er csv's per peilbuis van:
 
@@ -112,6 +132,7 @@ kwam.
 | `peilbuis` | put + filter (`MB001PB01`); ook de naam van de lokale reeks-csv |
 | `projectnummer` | het onderzoeksproject van de peilbuis (`VN-86349-1`); nodig om te koppelen |
 | `meetlocatie_id` | de sleutel naar Databricks; leeg = (nog) niet gekoppeld |
+| `meetreeks_id` | optioneel: zet de meetreeks vast als de meetlocatie er meer heeft; leeg = de reeks met de meeste metingen |
 | `koppeling` | de status uit de koppeltabel, zodat zichtbaar is waarom een id ontbreekt |
 | `x_profiel` | ligging in het dwarsprofiel (m); bepaalt ook de volgorde van de peilbuizen |
 | `x_rd`, `y_rd` | RD-coördinaten van de put |

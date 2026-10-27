@@ -6,9 +6,12 @@ Stond eerder als één lus in `main.py`, die de figuren meteen als HTML wegschre
 Nu geeft `maak_profiel_figuren` de figuren terug, zodat `main.py` ze naar een
 bestand schrijft en `app.py` ze in Streamlit toont, zonder tussenbestand.
 
-Waar de stijghoogtes vandaan komen is een parameter (`LaadReeksen`): nu de
-Excel-export, straks het datawarehouse. De rest van de verwerking merkt daar
-niets van.
+Waar de stijghoogtes vandaan komen is een parameter (`LaadReeksen`): de lokale
+export, of de export uit Databricks (`databricks_reeksen`). De rest van de
+verwerking merkt daar niets van.
+
+Een peilbuis zonder stijghoogtes valt uit zijn dwarsprofiel, in plaats van het
+hele profiel te laten mislukken; `ProfielFiguren.ontbrekend` zegt welke.
 """
 
 from __future__ import annotations
@@ -16,6 +19,7 @@ from __future__ import annotations
 from dataclasses import dataclass
 from functools import partial
 from pathlib import Path
+from dataclasses import field
 from typing import Any, Callable
 
 import numpy as np
@@ -28,9 +32,14 @@ from .workbook_lader import ProjectInvoer
 
 # Krijgt de peilbuisnamen (`stijghoogte_namen`) en geeft een DataFrame terug met
 # een DatetimeIndex en één kolom per naam, zoals `data_lader.laad_peilbuis_data`.
+# Een naam zonder data mag ontbreken of alleen NaN bevatten.
 LaadReeksen = Callable[[list[str]], DataFrame]
 
 BUITENWATERSTAND_KOLOM = "Buitenwaterstand Markermeer"
+
+
+class GeenStijghoogtes(ValueError):
+    """Geen enkele peilbuis van het hoofdprofiel heeft stijghoogtes: er valt niets te plotten."""
 
 
 @dataclass
@@ -59,6 +68,8 @@ class ProfielFiguren:
     uitvoer_stam: str
     profiel_figuur: go.Figure
     tijdreeks_figuur: go.Figure
+    # Peilbuizen van dit dwarsprofiel (ook A/B) zonder stijghoogtes; die staan niet in de plot.
+    ontbrekend: list[str] = field(default_factory=list)
 
     def als_html(self) -> str:
         """De twee figuren plus het script dat de tijdslider aan de tijdreeks koppelt."""
@@ -154,6 +165,18 @@ def lokale_reeksen(invoer: ProjectInvoer) -> LaadReeksen:
     return partial(data_lader.laad_peilbuis_data, pad)
 
 
+def databricks_reeksen(invoer: ProjectInvoer) -> LaadReeksen:
+    """De daggemiddelden uit `input_data/databricks_export/`, één gekozen reeks per peilbuis."""
+    from . import databricks_reeksen as db  # alleen nodig als deze bron gekozen wordt
+
+    return db.export_reeksen(invoer.project)
+
+
+def _met_data(pb_gegevens: DataFrame, namen: list[str]) -> list[bool]:
+    """Per naam: zit er minstens één meting in `pb_gegevens`?"""
+    return [n in pb_gegevens.columns and bool(pb_gegevens[n].notna().any()) for n in namen]
+
+
 def _laad_buitenwaterstand(invoer: ProjectInvoer) -> DataFrame | float:
     """Fluctuerende buitenwaterstand uit een bestand, anders de vaste waarde uit het werkboek."""
     algemene_config: dict = invoer.algemene_config
@@ -194,6 +217,7 @@ class _DiepProfiel:
     x_peilbuis: list[float]
     pb_gegevens: DataFrame
     stijghoogtes: list[np.ndarray]
+    ontbrekend: list[str] = field(default_factory=list)
 
     def metadata_zonder_labels(self) -> DataFrame:
         # De labels van de diepere peilbuizen zouden die van het hoofdprofiel
@@ -233,11 +257,21 @@ def _laad_diep_profiel(
         ]
         stijghoogte_namen = str(diep_profiel["stijghoogte_namen"]).split(",")
         pb_gegevens = laad_reeksen(stijghoogte_namen)
+        aanwezig = _met_data(pb_gegevens, stijghoogte_namen)
+        ontbrekend = [n for n, a in zip(stijghoogte_namen, aanwezig) if not a]
+        if ontbrekend:
+            print(f"⚠️ {naam}: geen stijghoogtes voor {', '.join(ontbrekend)}; die vallen weg.")
+        if not any(aanwezig):
+            return _DiepProfiel(diep_profiel, metadata_pb.iloc[0:0], [], DataFrame(), [], ontbrekend)
+        stijghoogte_namen = [n for n, a in zip(stijghoogte_namen, aanwezig) if a]
+        x_peilbuis = [x for x, a in zip(x_peilbuis, aanwezig) if a]
+        metadata_pb = metadata_pb[aanwezig].reset_index(drop=True)
+        pb_gegevens = pb_gegevens[stijghoogte_namen]
         stijghoogtes = [pb_gegevens[n].dropna().to_numpy() for n in stijghoogte_namen]
     except Exception as e:
         print(f"❌ Fout bij laden van {omschrijving.lower()} data: {e}")
         return None
-    return _DiepProfiel(diep_profiel, metadata_pb, x_peilbuis, pb_gegevens, stijghoogtes)
+    return _DiepProfiel(diep_profiel, metadata_pb, x_peilbuis, pb_gegevens, stijghoogtes, ontbrekend)
 
 
 def maak_profiel_figuren(
@@ -300,6 +334,10 @@ def maak_profiel_figuren(
     # --- Diepe ('A') en nog diepere ('B') peilbuizen ---
     diep_a = _laad_diep_profiel(ctx, profiel, "A", "Diep profiel", offset_x, laad_reeksen)
     diep_b = _laad_diep_profiel(ctx, profiel, "B", "Nog dieper profiel", offset_x, laad_reeksen)
+    ontbrekend_diep: list[str] = [n for d in (diep_a, diep_b) if d is not None for n in d.ontbrekend]
+    # Een A/B-profiel waarvan geen enkele peilbuis data heeft, telt niet mee.
+    diep_a = diep_a if diep_a is not None and diep_a.x_peilbuis else None
+    diep_b = diep_b if diep_b is not None and diep_b.x_peilbuis else None
 
     # De STIX-geometrie blijft ongewijzigd (leidend); alleen kleuren omzetten.
     uitvoer_stam = stix_bestand.stem if stix_bestand else profiel_naam.replace(" ", "_")
@@ -317,12 +355,24 @@ def maak_profiel_figuren(
         x + offset_x
         for x in parseer_x_coordinaten(profiel["x_coordinaten_dwarsprofiel"])
     ]
-    y_peilbuis_mv = [
-        analyse.vind_y_in_dwarsprofiel(dijkprofiel, x) for x in x_peilbuis
-    ]
 
     stijghoogte_namen = str(profiel["stijghoogte_namen"]).split(",")
     pb_gegevens: DataFrame = laad_reeksen(stijghoogte_namen)
+    aanwezig: list[bool] = _met_data(pb_gegevens, stijghoogte_namen)
+    ontbrekend: list[str] = [n for n, a in zip(stijghoogte_namen, aanwezig) if not a]
+    if not any(aanwezig):
+        raise GeenStijghoogtes(
+            f"Geen stijghoogtes voor de peilbuizen van {profiel_naam} ({', '.join(stijghoogte_namen)})."
+        )
+    if ontbrekend:
+        print(f"⚠️ {profiel_naam}: geen stijghoogtes voor {', '.join(ontbrekend)}; die vallen weg.")
+        stijghoogte_namen = [n for n, a in zip(stijghoogte_namen, aanwezig) if a]
+        x_peilbuis = [x for x, a in zip(x_peilbuis, aanwezig) if a]
+        metadata_pb = metadata_pb[aanwezig].reset_index(drop=True)
+        pb_gegevens = pb_gegevens[stijghoogte_namen]
+    y_peilbuis_mv = [
+        analyse.vind_y_in_dwarsprofiel(dijkprofiel, x) for x in x_peilbuis
+    ]
     stijghoogtes = [
         pb_gegevens[naam].dropna().to_numpy() for naam in stijghoogte_namen
     ]
@@ -419,4 +469,6 @@ def maak_profiel_figuren(
         ts_pb_gegevens, profiel_naam, ts_metadata_pb, ctx.neerslag_data
     )
 
-    return ProfielFiguren(profiel_naam, uitvoer_stam, profiel_figuur, tijdreeks_figuur)
+    return ProfielFiguren(
+        profiel_naam, uitvoer_stam, profiel_figuur, tijdreeks_figuur, ontbrekend + ontbrekend_diep
+    )

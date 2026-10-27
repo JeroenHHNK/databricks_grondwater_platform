@@ -10,10 +10,13 @@ De verwerking is dezelfde als in `main.py` (`Modules/profiel.py`); alleen de
 uitvoer verschilt. De invoer is de csv in `input_data/<project>/`; elk
 dwarsprofiel heet naar zijn dijkpaal (`BE_0072`).
 
-De stijghoogtes komen, in deze volgorde, uit:
-1. `peilbuisdata/<peilbuis_naam>.csv` (scripts/zet_export_om.py);
-2. de peilbuisdata-export (xlsx) in `peilbuisdata/`;
-3. een upload van die export, die alleen in het geheugen blijft.
+De stijghoogtes komen uit een van deze bronnen; zijn er meer, dan is de bron in
+de zijbalk te kiezen en staat Databricks bovenaan:
+1. de Databricks-export in `input_data/databricks_export/` (daggemiddelden, één
+   gekozen meetreeks per peilbuis; zie `Modules/databricks_reeksen.py`);
+2. `peilbuisdata/<peilbuis_naam>.csv` (scripts/zet_export_om.py);
+3. de peilbuisdata-export (xlsx) in `peilbuisdata/`;
+4. een upload van die export, die alleen in het geheugen blijft.
 """
 
 import io
@@ -29,7 +32,7 @@ from pandas import DataFrame
 sys.stdout.reconfigure(encoding="utf-8")
 sys.stderr.reconfigure(encoding="utf-8")
 
-from Modules import data_lader, kaart_generator, paths, workbook_lader
+from Modules import data_lader, databricks_reeksen, kaart_generator, paths, workbook_lader
 from Modules import profiel as profiel_module
 from Modules.profiel import LaadReeksen, ProfielFiguren, ProjectContext
 
@@ -66,6 +69,12 @@ def _mtimes(map_pad: Path, namen: list[str]) -> tuple[float, ...]:
     )
 
 
+@st.cache_resource(show_spinner="Stijghoogtes uit Databricks laden…")
+def _databricks_lader(project: str, gewijzigd: float, config_gewijzigd: float) -> LaadReeksen:
+    # De mtimes van de export en van config.csv zitten alleen in de cachesleutel.
+    return databricks_reeksen.export_reeksen(project)
+
+
 @st.cache_data(show_spinner=False)
 def _reeksen_uit_upload(inhoud: bytes, namen: tuple[str, ...]) -> DataFrame:
     return data_lader.laad_peilbuis_data(io.BytesIO(inhoud), list(namen))
@@ -82,30 +91,56 @@ def _figuren(
     )
 
 
-def _kies_bron(ctx: ProjectContext) -> tuple[str, LaadReeksen] | None:
-    """De stijghoogtebron: csv per peilbuis, de lokale export, of een upload. None zolang er geen is."""
+def _bronnen(ctx: ProjectContext) -> list[tuple[str, str, LaadReeksen]]:
+    """De beschikbare stijghoogtebronnen als (label, cachesleutel, lader), Databricks eerst."""
+    bronnen: list[tuple[str, str, LaadReeksen]] = []
+    if databricks_reeksen.export_beschikbaar():
+        dag: Path = databricks_reeksen.export_map() / databricks_reeksen.DAG_CSV
+        gewijzigd: float = dag.stat().st_mtime
+        config_gewijzigd: float = paths.config_csv().stat().st_mtime
+        bronnen.append((
+            "Databricks (daggemiddelden)",
+            f"databricks:{gewijzigd}:{config_gewijzigd}",
+            lambda namen: _databricks_lader(ctx.project, gewijzigd, config_gewijzigd)(namen),
+        ))
+
     reeksen: Path | None = ctx.invoer.paden.get("reeksen")
     if reeksen is not None:
-        st.sidebar.caption(f"Stijghoogtes: `peilbuisdata/` ({len(list(reeksen.glob('*.csv')))} reeksen)")
-        return (
+        bronnen.append((
+            f"lokaal: peilbuisdata/ ({len(list(reeksen.glob('*.csv')))} csv's)",
             f"csv:{reeksen}",
             lambda namen: _reeksen_uit_csv(str(reeksen), tuple(namen), _mtimes(reeksen, namen)),
-        )
+        ))
 
     pad: Path | None = ctx.invoer.paden["peilbuisdata"]
     if pad is not None:
-        gewijzigd: float = pad.stat().st_mtime
-        st.sidebar.caption(f"Stijghoogtes: `{pad.name}`")
-        return (
-            f"bestand:{pad}:{gewijzigd}",
-            lambda namen: _reeksen_uit_bestand(str(pad), gewijzigd, tuple(namen)),
-        )
+        bestand_gewijzigd: float = pad.stat().st_mtime
+        bronnen.append((
+            f"lokaal: {pad.name}",
+            f"bestand:{pad}:{bestand_gewijzigd}",
+            lambda namen: _reeksen_uit_bestand(str(pad), bestand_gewijzigd, tuple(namen)),
+        ))
+    return bronnen
+
+
+def _kies_bron(ctx: ProjectContext) -> tuple[str, LaadReeksen] | None:
+    """De stijghoogtebron: Databricks, een lokale bron, of een upload. None zolang er geen is."""
+    bronnen = _bronnen(ctx)
+    if bronnen:
+        labels: list[str] = [label for label, _, _ in bronnen]
+        if len(bronnen) == 1:
+            st.sidebar.caption(f"Stijghoogtes: {labels[0]}")
+            gekozen = bronnen[0]
+        else:
+            gekozen = bronnen[labels.index(st.sidebar.radio("Stijghoogtes", labels))]
+        return gekozen[1], gekozen[2]
 
     verwacht: str = str(ctx.invoer.algemene_config.get("peilbuisdata_bestand", ""))
     upload = st.sidebar.file_uploader(
         "Peilbuisdata-export (.xlsx)",
         type=["xlsx"],
-        help=f"Niet gevonden in input_data/{ctx.project}/peilbuisdata/. Verwacht: {verwacht}",
+        help=f"Geen Databricks-export en niets in input_data/{ctx.project}/peilbuisdata/. "
+        f"Verwacht: {verwacht}",
     )
     if upload is None:
         return None
@@ -129,11 +164,16 @@ def _toon_profiel(ctx: ProjectContext, profiel: pd.Series, bron: tuple[str, Laad
     bron_sleutel, laad_reeksen = bron
     try:
         figuren = _figuren(ctx.project, profiel["profiel_id"], bron_sleutel, laad_reeksen)
+    except profiel_module.GeenStijghoogtes as fout:
+        st.info(f"{fout} Zie input_data/databricks_export/te_controleren.csv.")
+        return
     except Exception as fout:  # noqa: BLE001 - de app moet blijven draaien
         st.error(f"Profiel {profiel['naam']} kon niet verwerkt worden: {fout}")
         st.exception(fout)
         return
 
+    if figuren.ontbrekend:
+        st.warning(f"Geen stijghoogtes voor: {', '.join(figuren.ontbrekend)}. Die staan niet in de plot.")
     html: str = figuren.als_html()
     st.download_button(
         "Download als HTML",
@@ -206,7 +246,7 @@ def main() -> None:
     with tab_plot:
         if bron is None:
             st.info(
-                "Geen stijghoogtes gevonden voor dit project: geen csv's in "
+                "Geen stijghoogtes gevonden voor dit project: geen Databricks-export, geen csv's in "
                 f"`input_data/{project}/peilbuisdata/` en geen export. Upload de export "
                 "in de zijbalk (die blijft alleen in het geheugen), of zet hem om met "
                 f"`uv run python scripts/zet_export_om.py --project {project}`."

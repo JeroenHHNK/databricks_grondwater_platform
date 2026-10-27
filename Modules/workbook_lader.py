@@ -113,7 +113,7 @@ def _waarde(waarde: Any) -> Any:
 
 TEKST_KOLOMMEN: tuple[str, ...] = (
     "project", "cross_section_key", "diepte_niveau", "peilbuis",
-    "projectnummer", "meetlocatie_id", "koppeling", "code",
+    "projectnummer", "meetlocatie_id", "meetreeks_id", "koppeling", "code",
 )
 
 
