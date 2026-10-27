@@ -15,6 +15,11 @@ lokaal (`main.py`). Deze notebooks leveren de invoer daarvoor.
 | `10_peilbuizen_uit_werkboek.py` | onze peilbuizen uit `config.csv` naar Delta | `boxplots_peilbuizen`, `boxplots_profielen` |
 | `20_match_peilbuizen.py` | **vinden we onze peilbuizen, en onder welke sleutel?** | `boxplots_match_kandidaten`, `boxplots_match_rapport`, `boxplots_peilbuis_meetreeks` |
 | `30_haal_reeksen_en_coordinaten_op.py` | stijghoogtes + coördinaten + dekking | `boxplots_stijghoogtes`, `boxplots_stijghoogte_dekking`, `boxplots_peilbuis_locaties` |
+| `db_notebook_exporteer_stijghoogtes.py` | reeksen, dagwaarden, afwijkingen en validatiekolommen voor alle peilbuizen met een `meetlocatie_id` in `config.csv` | csv's in `input_data/databricks_export/` (Git folder) |
+
+`db_notebook_exporteer_stijghoogtes.py` staat los van 10–30: het leest
+`config.csv` rechtstreeks. Na het draaien de map `input_data/databricks_export/`
+committen en pushen vanuit de Git folder.
 
 Notebook 20 is de kern. 30 heeft minstens één gekoppelde `meetreeks_id` nodig.
 

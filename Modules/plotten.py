@@ -27,6 +27,17 @@ PLOT_KLEUREN_STANDAARD: dict[str, str] = {
     "deep_gw_line": "#8A2BE2",  # paars
 }
 
+# Onderdelen van de profielplot die aan of uit kunnen. Voor de MVP staan de
+# boxplots, de mediaan, de uitschieters en de terugkeertijden uit; de
+# gemiddelden, de freatische lijnen en de dagelijkse meetpunten blijven. Per
+# aanroep te overschrijven met `onderdelen` in `plot_config`.
+ONDERDELEN_STANDAARD: dict[str, bool] = {
+    "boxplot": False,
+    "mediaan": False,
+    "uitschieters": False,
+    "terugkeertijden": False,
+}
+
 # Koppelt de tijdslider van de profielplot (boven) aan een verticale markeringslijn in de
 # tijdreeksplot (onder): bij het verslepen van de slider wordt de bijbehorende datum uit het
 # actieve slider-label gelezen en als 'shape' in de tijdreeksplot gezet. Nodig omdat de twee
@@ -210,6 +221,10 @@ def maak_profiel_plot(plot_data: dict, plot_config: dict):
     GEMIDDELDE_PUNT_KLEUR: str = PLOT_KLEUREN["meanpoint"]
     MEDIAAN_KLEUR: str = PLOT_KLEUREN["median"]
     DIEPE_GW_LIJN_KLEUR: str = PLOT_KLEUREN["deep_gw_line"]
+    ONDERDELEN: dict[str, bool] = {
+        **ONDERDELEN_STANDAARD,
+        **(plot_config.get("onderdelen") or {}),
+    }
 
     # Voeg bodemlagen toe (robuuste methode: één trace per grondsoort)
     for grondsoort, kleurgon in geometrie_per_grondsoort.items():
@@ -269,7 +284,7 @@ def maak_profiel_plot(plot_data: dict, plot_config: dict):
         uit_y.extend(uitschieters.tolist())
 
     # Voeg de enkele Box trace toe voor alle boxplots
-    if alle_box_x:
+    if alle_box_x and ONDERDELEN["boxplot"]:
         figuur.add_trace(
             go.Box(
                 y=alle_box_y,
@@ -286,7 +301,7 @@ def maak_profiel_plot(plot_data: dict, plot_config: dict):
         )
 
     # Voeg statistische markers toe in de gewenste legenda-volgorde
-    if uit_x:
+    if uit_x and ONDERDELEN["uitschieters"]:
         figuur.add_trace(
             go.Scatter(
                 x=uit_x,
@@ -318,18 +333,19 @@ def maak_profiel_plot(plot_data: dict, plot_config: dict):
             legendgroup="gemiddelde",
         )
     )
-    figuur.add_trace(
-        go.Scatter(
-            x=med_x,
-            y=med_y,
-            mode="markers",
-            marker=dict(
-                symbol="line-ew-open", color=MEDIAAN_KLEUR, size=18, line=dict(width=4)
-            ),
-            name="Mediaan",
-            legendgroup="mediaan",
+    if ONDERDELEN["mediaan"]:
+        figuur.add_trace(
+            go.Scatter(
+                x=med_x,
+                y=med_y,
+                mode="markers",
+                marker=dict(
+                    symbol="line-ew-open", color=MEDIAAN_KLEUR, size=18, line=dict(width=4)
+                ),
+                name="Mediaan",
+                legendgroup="mediaan",
+            )
         )
-    )
 
     # Filter dieptes
     filter_breedte: int = 1
@@ -539,7 +555,11 @@ def maak_profiel_plot(plot_data: dict, plot_config: dict):
         )
 
     # Voeg terugkeertijdlijnen toe met specifieke kleuren
-    if terugkeertijden_data is not None and not terugkeertijden_data.empty:
+    if (
+        ONDERDELEN["terugkeertijden"]
+        and terugkeertijden_data is not None
+        and not terugkeertijden_data.empty
+    ):
         kleuren_map = {
             100: "darkorange",
             300: "red",
