@@ -9,11 +9,13 @@
 # MAGIC
 # MAGIC | bestand | inhoud |
 # MAGIC |---|---|
-# MAGIC | `reeksen.csv` | per peilbuis per meetreeks: `reeks_nr`, code, eenheid, filters, aantal metingen, eerste/laatste, gem/min/max, meetinterval |
-# MAGIC | `stijghoogtes_dag.csv` | per `reeks_nr` per dag (UTC): aantal, gemiddelde, minimum, maximum |
-# MAGIC | `afwijkingen.csv` | ruwe metingen die meer dan `drempel_m` van de dagmediaan van hun reeks afwijken |
+# MAGIC | `reeksen.csv` | per peilbuis per meetreeks: `reeks_nr`, code, eenheid, filters, `validatie_status` van de reeks, aantal metingen (en per status), eerste/laatste, gem/min/max, meetinterval |
+# MAGIC | `stijghoogtes_dag.csv` | per `reeks_nr` per dag (UTC): aantal, gemiddelde, minimum, maximum; aantal per `validatie_status` en het gemiddelde van alleen status 2 |
+# MAGIC | `afwijkingen.csv` | ruwe metingen die meer dan `drempel_m` van de dagmediaan van hun reeks afwijken, met hun `validatie_status` |
 # MAGIC | `schema.csv` | kolommen van `meting`, `meetreeks`, `validatiestatus`, `validatieresultaat` |
 # MAGIC | `validatie_tellingen.csv` | per status-/validatiekolom de waarden en hun aantal |
+# MAGIC | `validatiestatus.csv` | de hele tabel `validatiestatus`: wat elke status betekent |
+# MAGIC | `validatieresultaat.csv` | `validatieresultaat` samengevat per tabel, kolom, type, ernst en bericht (zonder `pk`) |
 # MAGIC
 # MAGIC Metingen worden ontdubbeld op `meetreeks_id + tijdstempel_utc` (`meting.id` is
 # MAGIC niet uniek). De koppeling meetreeks -> meetlocatie is dezelfde als in
@@ -81,7 +83,7 @@ spark.sql(f"""
            CAST(r.begin_filter AS DOUBLE) AS begin_filter,
            CAST(r.eind_filter AS DOUBLE) AS eind_filter,
            CAST(r.bovenkant_peilbuis AS DOUBLE) AS bovenkant_peilbuis,
-           r.bronsysteem,
+           r.bronsysteem, r.validatie_status AS reeks_validatie_status,
            coalesce(l_id.id, l_code.id, l_naam.id) AS meetlocatie_id,
            CASE WHEN l_id.id IS NOT NULL THEN 'object_id'
                 WHEN l_code.id IS NOT NULL THEN 'locatie_code'
@@ -95,7 +97,7 @@ spark.sql(f"""
 put_reeksen: DataFrame = spark.sql("""
     SELECT p.project, p.cross_section_key, p.diepte_niveau, p.peilbuis, p.meetlocatie_id,
            rl.meetreeks_id, rl.meetreeks_code, rl.eenheid, rl.begin_filter, rl.eind_filter,
-           rl.bovenkant_peilbuis, rl.bronsysteem, rl.brug
+           rl.bovenkant_peilbuis, rl.bronsysteem, rl.reeks_validatie_status, rl.brug
     FROM putten p
     LEFT JOIN reeks_locatie rl ON rl.meetlocatie_id = p.meetlocatie_id
 """).cache()
@@ -113,7 +115,7 @@ print(f"{put_reeksen.select('meetreeks_id').distinct().count()} meetreeksen; "
 ids: DataFrame = put_reeksen.select("meetreeks_id").where(F.col("meetreeks_id").isNotNull()).distinct()
 metingen: DataFrame = (
     spark.table(paths.TBL_METING)
-    .select("meetreeks_id", "tijdstempel_utc", "waarde")
+    .select("meetreeks_id", "tijdstempel_utc", "waarde", "validatie_status")
     .join(ids, "meetreeks_id", "inner")
     .filter(F.col("waarde").isNotNull())
     .dropDuplicates(["meetreeks_id", "tijdstempel_utc"])
@@ -145,6 +147,9 @@ interval: DataFrame = (
         F.round(F.max("waarde"), 4).alias("max"),
         F.countDistinct("datum").alias("dagen"),
         F.percentile_approx("dt_min", 0.5).alias("interval_mediaan_min"),
+        F.sum(F.when(F.col("validatie_status") == 1, 1).otherwise(0)).alias("n_status_1"),
+        F.sum(F.when(F.col("validatie_status") == 2, 1).otherwise(0)).alias("n_status_2"),
+        F.sum(F.when(~F.col("validatie_status").isin(1, 2) | F.col("validatie_status").isNull(), 1).otherwise(0)).alias("n_status_overig"),
     )
 )
 reeksen_pd: pd.DataFrame = (
@@ -167,6 +172,10 @@ dag_pd: pd.DataFrame = (
         F.round(F.avg("waarde"), 4).alias("gem"),
         F.round(F.min("waarde"), 4).alias("min"),
         F.round(F.max("waarde"), 4).alias("max"),
+        F.sum(F.when(F.col("validatie_status") == 1, 1).otherwise(0)).alias("n_status_1"),
+        F.sum(F.when(F.col("validatie_status") == 2, 1).otherwise(0)).alias("n_status_2"),
+        F.sum(F.when(~F.col("validatie_status").isin(1, 2) | F.col("validatie_status").isNull(), 1).otherwise(0)).alias("n_status_overig"),
+        F.round(F.avg(F.when(F.col("validatie_status") == 2, F.col("waarde"))), 4).alias("gem_status_2"),
     )
     .orderBy("meetreeks_id", "datum")
     .toPandas()
@@ -186,7 +195,7 @@ afwijkingen_pd: pd.DataFrame = (
     metingen.join(dagmediaan, ["meetreeks_id", "datum"])
     .withColumn("afwijking", F.round(F.col("waarde") - F.col("dagmediaan"), 4))
     .filter(F.abs("afwijking") > DREMPEL_M)
-    .select("meetreeks_id", "tijdstempel_utc", "waarde", "dagmediaan", "afwijking")
+    .select("meetreeks_id", "tijdstempel_utc", "waarde", "validatie_status", "dagmediaan", "afwijking")
     .orderBy("meetreeks_id", "tijdstempel_utc")
     .limit(MAX_AFWIJKINGEN)
     .toPandas()
@@ -238,6 +247,23 @@ tellingen_pd = (
 display(schema_pd)
 display(tellingen_pd)
 
+# validatiestatus is een kleine opzoektabel (id, omschrijving).
+validatiestatus_pd: pd.DataFrame = spark.table(paths.TBL_VALIDATIESTATUS).orderBy("id").toPandas()
+# validatieresultaat: samengevat, zonder pk (die wijst naar individuele rijen).
+validatieresultaat_pd: pd.DataFrame = (
+    spark.table(paths.TBL_VALIDATIERESULTAAT)
+    .groupBy("schema", "tabel", "kolom", "verwachting_type", "validatie_type", "ernst", "gebruikersbericht")
+    .agg(
+        F.count("*").alias("aantal"),
+        F.min("validatie_tijd").alias("eerste"),
+        F.max("validatie_tijd").alias("laatste"),
+    )
+    .orderBy(F.desc("aantal"))
+    .toPandas()
+)
+display(validatiestatus_pd)
+display(validatieresultaat_pd)
+
 # COMMAND ----------
 
 # MAGIC %md ## Wegschrijven naar de Git folder
@@ -260,6 +286,8 @@ for naam, df in (
     ("afwijkingen.csv", afwijkingen_pd),
     ("schema.csv", schema_pd),
     ("validatie_tellingen.csv", tellingen_pd),
+    ("validatiestatus.csv", validatiestatus_pd),
+    ("validatieresultaat.csv", validatieresultaat_pd),
 ):
     pad = UITMAP / naam
     df.to_csv(pad, index=False)
