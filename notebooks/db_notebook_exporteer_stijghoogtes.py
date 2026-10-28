@@ -2,10 +2,15 @@
 # MAGIC %md
 # MAGIC # db_notebook - Stijghoogtes en reeksinformatie exporteren naar csv
 # MAGIC
-# MAGIC Haalt voor elke peilbuis met een `meetlocatie_id` in `input_data/config.csv`
+# MAGIC Haalt voor elke peilbuis met een `DD_meetlocatie_id` in `input_data/config.csv`
 # MAGIC de meetreeksen en metingen op, en schrijft ze als csv in de Git folder:
 # MAGIC `input_data/databricks_export/`. Daarna committen en pushen vanuit de Git
 # MAGIC folder, zodat de bestanden lokaal te gebruiken zijn.
+# MAGIC
+# MAGIC De app haalt de stijghoogtes zelf live op (`modules/databricks_live.py`).
+# MAGIC Deze export is de terugval als dat niet lukt, de bron voor
+# MAGIC `notebooks/controleer_reeksen.py` (uitschieters, validatie) en voor werken
+# MAGIC zonder verbinding met Databricks.
 # MAGIC
 # MAGIC | bestand | inhoud |
 # MAGIC |---|---|
@@ -19,7 +24,8 @@
 # MAGIC
 # MAGIC Metingen worden ontdubbeld op `meetreeks_id + tijdstempel_utc` (`meting.id` is
 # MAGIC niet uniek). De koppeling meetreeks -> meetlocatie is dezelfde als in
-# MAGIC notebook 20: via `meetlocatie_object_id`, dan `meetlocatie_code`, dan de code.
+# MAGIC `db_notebook_exporteer_meetreeksen.py`: via `meetlocatie_object_id`, dan
+# MAGIC `meetlocatie_code`, dan de code. Tabellen en kolommen: `DATA_CATALOG.md`.
 # MAGIC
 # MAGIC Er gaan geen persoonsnamen mee: kolommen met `door`, `naam`, `gebruiker`,
 # MAGIC `user` of `email` in de naam worden niet geteld.
@@ -51,12 +57,12 @@ if str(REPO_ROOT) not in sys.path:
 import pandas as pd  # noqa: E402
 from pyspark.sql import DataFrame, Window, functions as F  # noqa: E402
 
-from Modules import paths  # noqa: E402
+from modules import paths  # noqa: E402
 
 GEVRAAGD: str = dbutils.widgets.get("projecten").strip()
 DREMPEL_M: float = float(dbutils.widgets.get("drempel_m"))
 MAX_AFWIJKINGEN: int = int(dbutils.widgets.get("max_afwijkingen"))
-UITMAP: Path = REPO_ROOT / "input_data" / "databricks_export"
+UITMAP: Path = paths.export_map()
 
 print(f"repo {REPO_ROOT} | uitmap {UITMAP} | drempel {DREMPEL_M} m")
 
@@ -66,14 +72,15 @@ print(f"repo {REPO_ROOT} | uitmap {UITMAP} | drempel {DREMPEL_M} m")
 
 # COMMAND ----------
 
-config: pd.DataFrame = pd.read_csv(REPO_ROOT / "input_data" / "config.csv", dtype=str)
+config: pd.DataFrame = pd.read_csv(paths.config_csv(), dtype=str)
 if GEVRAAGD:
-    config = config[config["project"].isin([p.strip() for p in GEVRAAGD.split(",") if p.strip()])]
+    config = config[config["LD_project"].isin([p.strip() for p in GEVRAAGD.split(",") if p.strip()])]
+# De uitvoer houdt de korte namen (project, peilbuis, ...), zoals altijd.
 putten_pd: pd.DataFrame = config.loc[
-    config["meetlocatie_id"].notna(),
-    ["project", "cross_section_key", "diepte_niveau", "peilbuis", "meetlocatie_id"],
-]
-print(f"{len(config)} peilbuizen in config.csv, {len(putten_pd)} met meetlocatie_id")
+    config["DD_meetlocatie_id"].notna(),
+    ["LD_project", "LD_cross_section_key", "LD_diepte_niveau", "LD_peilbuis", "DD_meetlocatie_id"],
+].rename(columns=lambda k: k[3:])
+print(f"{len(config)} peilbuizen in config.csv, {len(putten_pd)} met DD_meetlocatie_id")
 
 spark.createDataFrame(putten_pd).createOrReplaceTempView("putten")
 

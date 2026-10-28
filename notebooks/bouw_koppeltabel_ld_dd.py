@@ -2,16 +2,22 @@
 """
 Eén koppeltabel tussen onze peilbuizen en de meetreeksen op Databricks.
 
-    uv run python scripts/bouw_koppeltabel_ld_dd.py
-    uv run python scripts/bouw_koppeltabel_ld_dd.py --vul-config
+    uv run python notebooks/bouw_koppeltabel_ld_dd.py
+    uv run python notebooks/bouw_koppeltabel_ld_dd.py --vul-config
 
 Leest:
 - LD_ (lokale data): `input_data/config.csv`, per project, met het profiel
   waaronder de peilbuis in de app staat;
-- DD_ (data Databricks): `input_data/object_data_databricks_dwarsprofielen.csv`,
-  een eerdere export van `meetreeks` + `meetlocatie` met de dwarsprofielindeling.
+- DD_ (Databricks-data): `input_data/databricks_export/meetreeksen.csv`, alle
+  meetreeksen op het platform met hun meetlocatie, uit
+  `notebooks/db_notebook_exporteer_meetreeksen.py`. Is die er nog niet, dan
+  de oudere export `object_data_databricks_dwarsprofielen.csv` in dezelfde map.
 
-Schrijft `input_data/koppeltabel_LD_DD.csv`, met dezelfde opbouw als de
+Van de DD-kant doen alleen de reeksen mee die binnen VOORSELECTIE_M van een
+van onze peilbuizen liggen, of dezelfde naam (put + filter) hebben; dat laatste
+vangt meetlocaties zonder coördinaten.
+
+Schrijft `input_data/controle/koppeltabel_LD_DD.csv`, met dezelfde opbouw als de
 DD-export (één rij per meetreeks, dezelfde kolommen met DD_ ervoor) en de
 peilbuis uit config.csv ernaast. Daarnaast een rij per peilbuis zonder
 meetreeks en per meetreeks zonder peilbuis, zodat zichtbaar is wat ontbreekt.
@@ -37,11 +43,14 @@ alleen vindt HB002 in Beemster ook HB02 kilometers verderop, dus een naam die
 op een bekende afstand of in een ander project ligt, telt niet mee.
 
 `config.csv` blijft de bron. `--vul-config` zet daarin, per peilbuis:
-- `koppeling` op de status van kandidaat 1;
-- een lege `meetlocatie_id` op `DD_cs_meetlocatie_id`, maar alleen bij status
-  `gekoppeld` of `meerdere sensoren` (één meetlocatie). Een ingevulde
-  `meetlocatie_id` wordt nooit overschreven; `twijfelachtig` en
-  `meerdere kandidaten` blijven handwerk.
+- `DD_koppeling` op de status van kandidaat 1;
+- een lege `DD_meetlocatie_id` op `DD_cs_meetlocatie_id`, maar alleen bij
+  status `gekoppeld` of `meerdere sensoren` (één meetlocatie). Een ingevulde
+  `DD_meetlocatie_id` wordt nooit overschreven; `twijfelachtig` en
+  `meerdere kandidaten` blijven handwerk;
+- bij elke `DD_meetlocatie_id`: `DD_meetlocatie_code`, `DD_x_rd`, `DD_y_rd`
+  van die meetlocatie en `DD_afstand_m` tot `LD_x_rd`, `LD_y_rd`. Zo is te zien
+  of de koppeling klopt. Alleen `LD_`-kolommen vul je zelf in.
 """
 
 from __future__ import annotations
@@ -57,9 +66,10 @@ from pandas import DataFrame
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
-from Modules import paths, platform_match, workbook_lader  # noqa: E402
+from modules import paths, platform_match, workbook_lader  # noqa: E402
 
-DD_EXPORT: str = "object_data_databricks_dwarsprofielen.csv"
+DD_EXPORT: str = "meetreeksen.csv"
+DD_EXPORT_OUD: str = "object_data_databricks_dwarsprofielen.csv"
 UITVOER: str = "koppeltabel_LD_DD.csv"
 
 # Peilbuizen in één put staan op dezelfde plek; een andere put op hetzelfde
@@ -69,6 +79,8 @@ MAX_AFSTAND_M: float = 5.0
 FILTER_WAARSCHUWING_M: float = 0.25
 # Reeksen met minder metingen zijn meestal fragmenten (2-5 rijen bij Fugro).
 MIN_METINGEN: int = 100
+# Welke reeksen van het hele platform als kandidaat meedoen (zie boven).
+VOORSELECTIE_M: float = 25.0
 
 # Uit het blad `profielen`, per profiel; nodig om het dwarsprofiel te plotten.
 PROFIEL_KOLOMMEN: dict[str, str] = {
@@ -129,8 +141,9 @@ def lokale_peilbuizen() -> DataFrame:
         )
         pb = pb.merge(profiel, on="profiel_id", how="left")
         pb.insert(0, "project", project)
-        # De status uit een vorige run; de nieuwe staat in MATCH_status.
-        pb = pb.drop(columns=["koppeling"])
+        # De status uit een vorige run (de nieuwe staat in MATCH_status) en
+        # wat --vul-config uit Databricks overneemt: dat is geen lokale data.
+        pb = pb.drop(columns=["koppeling", *[k for k in pb.columns if k.startswith("DD_")]])
         delen.append(pb)
 
     ld: DataFrame = pd.concat(delen, ignore_index=True)
@@ -145,6 +158,7 @@ def lokale_peilbuizen() -> DataFrame:
 
 
 def databricks_reeksen(pad: Path) -> DataFrame:
+    """Alle meetreeksen uit de export, met de sleutels om te vergelijken."""
     dd: DataFrame = pd.read_csv(pad)
     dd["_sleutel"] = dd["sensor_sleutel"].map(platform_match.sleutel_uit_sensor).fillna(
         dd["code"].map(platform_match.sleutel_uit_meetreeks_code)
@@ -154,8 +168,24 @@ def databricks_reeksen(pad: Path) -> DataFrame:
     dd["_project_nr"] = dd["meetlocatie_code"].astype(str).str.extract(
         r"^_(\d{4,})_", expand=False
     )
-    dd["_dd"] = np.arange(len(dd))
     return dd
+
+
+def voorselectie(dd: DataFrame, ld: DataFrame) -> DataFrame:
+    """De reeksen binnen VOORSELECTIE_M van een peilbuis, of met de naam van een peilbuis."""
+    xy_ld = ld[["x_rd", "y_rd"]].dropna().to_numpy(float)
+    xy_dd = dd[["rd_x", "rd_y"]].to_numpy(float)
+    # Per reeks de afstand tot de dichtstbijzijnde peilbuis, in blokken zodat een
+    # platform met tienduizenden reeksen ook in het geheugen past.
+    dichtstbij = np.full(len(dd), np.inf)
+    for start in range(0, len(dd), 5000):
+        blok = xy_dd[start:start + 5000]
+        afstand = np.hypot(blok[:, None, 0] - xy_ld[None, :, 0], blok[:, None, 1] - xy_ld[None, :, 1])
+        dichtstbij[start:start + 5000] = np.nanmin(np.where(np.isnan(afstand), np.inf, afstand), axis=1)
+    namen: set[str] = set(ld["_sleutel"].dropna())
+    gekozen: DataFrame = dd[(dichtstbij <= VOORSELECTIE_M) | dd["_sleutel"].isin(namen)].copy()
+    gekozen["_dd"] = np.arange(len(gekozen))
+    return gekozen.reset_index(drop=True)
 
 
 def kandidaten(ld: DataFrame, dd: DataFrame) -> DataFrame:
@@ -278,11 +308,13 @@ def bouw_koppeltabel(ld: DataFrame, dd: DataFrame) -> DataFrame:
 
     # Volgorde: per project en profiel zoals in de app, de reeksen zonder
     # peilbuis achteraan, gegroepeerd per DD-dwarsprofiel.
-    tabel = tabel.sort_values(
-        ["LD_project", "LD_app_profiel_id", "LD_profiel_id", "LD_positie",
-         "MATCH_kandidaat_nr", "DD_dwarsprofiel_id", "DD_zone_volgorde", "DD_filename"],
-        na_position="last", kind="stable",
-    )
+    # De DD_dwarsprofiel-kolommen staan alleen in de oudere export.
+    volgorde: list[str] = [
+        k for k in ["LD_project", "LD_app_profiel_id", "LD_profiel_id", "LD_positie", "MATCH_kandidaat_nr",
+                    "DD_dwarsprofiel_id", "DD_zone_volgorde", "DD_filename", "DD_code"]
+        if k in tabel.columns
+    ]
+    tabel = tabel.sort_values(volgorde, na_position="last", kind="stable")
     match_kol: list[str] = [k for k in tabel.columns if k.startswith("MATCH_")]
     return tabel[
         match_kol
@@ -291,12 +323,21 @@ def bouw_koppeltabel(ld: DataFrame, dd: DataFrame) -> DataFrame:
     ].reset_index(drop=True)
 
 
-def vul_config(tabel: DataFrame) -> tuple[int, int]:
-    """Zet `koppeling` en lege `meetlocatie_id` in config.csv; geeft (ingevuld, gewijzigd)."""
+def _meter(waarde: float) -> str:
+    return "" if pd.isna(waarde) else f"{waarde:.2f}"
+
+
+def vul_config(tabel: DataFrame, alle_dd: DataFrame) -> tuple[int, int]:
+    """
+    Zet `DD_koppeling`, lege `DD_meetlocatie_id` en de DD-informatie in
+    config.csv; geeft (ingevuld, gewijzigd). `alle_dd` is het hele platform,
+    zodat ook een met de hand gekozen meetlocatie buiten de voorselectie zijn
+    gegevens krijgt.
+    """
     pad: Path = paths.config_csv()
     # Alles als tekst, zodat de rest van het bestand byte voor byte gelijk blijft.
     config: DataFrame = pd.read_csv(pad, dtype=str, keep_default_na=False)
-    sleutel: list[str] = ["project", "cross_section_key", "diepte_niveau", "peilbuis"]
+    sleutel: list[str] = ["LD_project", "LD_cross_section_key", "LD_diepte_niveau", "LD_peilbuis"]
 
     gekoppeld: DataFrame = tabel.dropna(subset=["LD_peilbuis_naam"])
     per_pb: DataFrame = (
@@ -308,30 +349,51 @@ def vul_config(tabel: DataFrame) -> tuple[int, int]:
     voorstel = config[sleutel].merge(per_pb, on=sleutel, how="left")
 
     ingevuld = 0
-    oud_status = config["koppeling"].copy()
+    oud_status = config["DD_koppeling"].copy()
     for i, rij in voorstel.iterrows():
         if pd.isna(rij["status"]):
             continue
-        config.at[i, "koppeling"] = rij["status"]
-        if not config.at[i, "meetlocatie_id"] and rij["status"] in GEKOPPELD and len(rij["ids"]) == 1:
-            config.at[i, "meetlocatie_id"] = next(iter(rij["ids"]))
+        config.at[i, "DD_koppeling"] = rij["status"]
+        if not config.at[i, "DD_meetlocatie_id"] and rij["status"] in GEKOPPELD and len(rij["ids"]) == 1:
+            config.at[i, "DD_meetlocatie_id"] = next(iter(rij["ids"]))
             ingevuld += 1
+
+    locaties: DataFrame = (
+        alle_dd.dropna(subset=["cs_meetlocatie_id"]).drop_duplicates("cs_meetlocatie_id")
+        .set_index("cs_meetlocatie_id")[["cs_code", "rd_x", "rd_y"]]
+    )
+    for i, mid in config["DD_meetlocatie_id"].items():
+        if mid not in locaties.index:
+            continue
+        loc = locaties.loc[mid]
+        x, y = pd.to_numeric(config.at[i, "LD_x_rd"]), pd.to_numeric(config.at[i, "LD_y_rd"])
+        config.at[i, "DD_meetlocatie_code"] = "" if pd.isna(loc["cs_code"]) else str(loc["cs_code"])
+        config.at[i, "DD_x_rd"] = _meter(loc["rd_x"])
+        config.at[i, "DD_y_rd"] = _meter(loc["rd_y"])
+        config.at[i, "DD_afstand_m"] = _meter(np.hypot(x - loc["rd_x"], y - loc["rd_y"]))
     config.to_csv(pad, index=False)
-    return ingevuld, int((config["koppeling"] != oud_status).sum())
+    return ingevuld, int((config["DD_koppeling"] != oud_status).sum())
 
 
 if __name__ == "__main__":
     sys.stdout.reconfigure(encoding="utf-8")
     parser = argparse.ArgumentParser(description=__doc__.splitlines()[1])
     parser.add_argument("--vul-config", action="store_true",
-                        help="zet koppeling en lege meetlocatie_id in input_data/config.csv")
+                        help="zet de DD_-kolommen in input_data/config.csv")
     args = parser.parse_args()
 
     ld: DataFrame = lokale_peilbuizen()
-    dd: DataFrame = databricks_reeksen(paths.invoer_basis() / DD_EXPORT)
+    bron: Path = paths.export_map() / DD_EXPORT
+    if not bron.is_file():
+        bron = paths.export_map() / DD_EXPORT_OUD
+    print(f"Databricks-kant: {bron.relative_to(paths.repo_root())}")
+    alle_dd: DataFrame = databricks_reeksen(bron)
+    dd: DataFrame = voorselectie(alle_dd, ld)
+    print(f"{len(alle_dd):,} meetreeksen, waarvan {len(dd):,} binnen {VOORSELECTIE_M:.0f} m "
+          "of met de naam van een peilbuis")
     tabel: DataFrame = bouw_koppeltabel(ld, dd)
 
-    uit: Path = paths.invoer_basis() / UITVOER
+    uit: Path = paths.controle_map() / UITVOER
     tabel.to_csv(uit, index=False)
     print(f"✅ {uit}: {len(tabel)} rijen, {tabel.shape[1]} kolommen")
 
@@ -343,5 +405,5 @@ if __name__ == "__main__":
     print(f"\nMeetreeksen zonder peilbuis: {(tabel['MATCH_status'] == 'alleen databricks').sum()}")
 
     if args.vul_config:
-        ingevuld, gewijzigd = vul_config(tabel)
-        print(f"\n✅ config.csv: {ingevuld} meetlocatie_id ingevuld, {gewijzigd} koppelingen gewijzigd")
+        ingevuld, gewijzigd = vul_config(tabel, alle_dd)
+        print(f"\n✅ config.csv: {ingevuld} DD_meetlocatie_id ingevuld, {gewijzigd} koppelingen gewijzigd")

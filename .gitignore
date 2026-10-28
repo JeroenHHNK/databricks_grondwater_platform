@@ -36,8 +36,7 @@ Desktop.ini
 !input_data/**/*.xlsx
 !input_data/**/*.stix
 
-# De ruwe meetexports zijn de bulk (~95 MB) en worden vervangen door een
-# Databricks-query. Niet versiebeheren; zie notebooks/.
+# Oude lokale meetexports (xlsx per project); vervangen door de Databricks-export.
 input_data/*/peilbuisdata/
 
 # Excel lock-/tijdelijke bestanden

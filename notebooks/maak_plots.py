@@ -1,37 +1,46 @@
-# main.py
+# maak_plots.py
+"""
+Controleert de invoer en schrijft per dwarsprofiel de plot als HTML, zoals de
+"Download als HTML" in de app. Stijghoogtes live uit Databricks als
+DATABRICKS_WAREHOUSE_ID is ingesteld, anders uit de export.
+
+    uv run python notebooks/maak_plots.py --project Beemster   # één project
+    uv run python notebooks/maak_plots.py --alle --strict      # stop bij de eerste fout
+
+Uitvoer in Projecten/<project>/plots/ (niet versiebeheerd). Een run met een
+mislukt profiel eindigt met exitcode 1.
+"""
 import argparse
 import sys
 from pathlib import Path
 import traceback
-import plotly.io as pio
 
 # Forceer UTF-8 voor stdout/stderr zodat emoji's (✅⚠️❌) in print-statements
 # geen UnicodeEncodeError geven op Windows-consoles met een niet-UTF-8 codepage (bv. cp1252).
 sys.stdout.reconfigure(encoding="utf-8")
 sys.stderr.reconfigure(encoding="utf-8")
 
-# Importeren van de WV2030 module
-from Modules import kaart_generator, paths, profiel as profiel_module, workbook_lader
+sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
-pio.renderers.default = "browser"
+from modules import databricks_reeksen, paths, profiel as profiel_module, workbook_lader  # noqa: E402
 
 
-def main(project_map_naam: str, strict: bool = False) -> int:
+def main(project_map_naam: str, bron: databricks_reeksen.Bron, strict: bool = False) -> int:
     """
     Hoofdfunctie om het proces voor het genereren van plots te coördineren.
 
     Geeft het aantal mislukte profielen terug, zodat een aanroeper (of een job)
     kan zien of er echt iets gemaakt is.
 
-    De verwerking per profiel zit in `Modules/profiel.py`, die ook door de
+    De verwerking per profiel zit in `modules/profiel.py`, die ook door de
     Streamlit-app (`app.py`) gebruikt wordt; hier worden de figuren alleen als
     HTML weggeschreven.
     """
     # === Configuratie Laden ===
     # Alles komt uit de centrale invoer in input_data/ (config.csv, projecten.csv,
-    # D-Stability/, dwarsprofielen/; zie workbook_lader); de paden staan in Modules/paths.py.
+    # D-Stability/, dwarsprofielen/; zie workbook_lader); de paden staan in modules/paths.py.
     ctx = profiel_module.laad_project_context(project_map_naam)
-    laad_reeksen = profiel_module.lokale_reeksen(ctx.invoer)
+    laad_reeksen = databricks_reeksen.laad_reeksen(bron, project_map_naam)
     PLOTS_PAD: Path = paths.plots_map(project_map_naam)
     profielen_df = ctx.invoer.profielen_df
 
@@ -72,6 +81,11 @@ def main(project_map_naam: str, strict: bool = False) -> int:
             print(f"✅ Plot opgeslagen als: {uitvoer_bestandsnaam}\n")
             gelukt += 1
 
+        except profiel_module.GeenStijghoogtes as e:
+            print(f"⚠️ {profiel_naam} overgeslagen: {e}")
+            overgeslagen += 1
+            continue
+
         except Exception as e:
             print(f"❌ Fout bij volledige verwerking van {profiel_naam}: {e}")
             traceback.print_exc()
@@ -79,14 +93,6 @@ def main(project_map_naam: str, strict: bool = False) -> int:
             if strict:
                 raise
             continue
-
-    # --- Genereer Folium Kaart ---
-    kaart_generator.maak_folium_kaart(
-        profielen_df,
-        stix_bestanden,
-        paths.repo_root() / paths.UITVOER_MAP / project_map_naam,
-        project_map_naam,
-    )
 
     print(
         f"\n=== {project_map_naam}: {gelukt} plot(s) gemaakt, "
@@ -124,11 +130,16 @@ if __name__ == "__main__":
     for los in workbook_lader.losse_bestanden():
         print(f"⚠️ {los.relative_to(paths.repo_root())} hoort bij geen dwarsprofiel in config.csv")
 
+    bron = databricks_reeksen.bron()
+    if bron.fout:
+        print(f"⚠️ Live ophalen mislukte ({bron.fout}); de export wordt gebruikt.")
+    print(f"Stijghoogtes: {bron.soort}, t/m {bron.laatste_meting()}\n")
+
     mislukt_totaal: int = 0
     niets_gemaakt: list[str] = []
     for naam in te_doen:
         try:
-            mislukt_totaal += main(naam, strict=args.strict)
+            mislukt_totaal += main(naam, bron, strict=args.strict)
         except Exception as fout:
             print(f"❌ {naam} volledig mislukt: {fout}")
             traceback.print_exc()

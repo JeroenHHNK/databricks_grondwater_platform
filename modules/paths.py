@@ -17,25 +17,19 @@ from pathlib import Path
 # Bron: alleen-lezen. Nooit naar gold_prd schrijven.
 TBL_METING = "gold_prd.hl_grondwaterpeilmeting.meting"
 TBL_MEETREEKS = "gold_prd.hl_grondwaterpeilmeting.meetreeks"
-TBL_OBJECT = "gold_prd.hl_grondwaterpeilmeting.object"
 TBL_VALIDATIESTATUS = "gold_prd.hl_grondwaterpeilmeting.validatiestatus"
 TBL_VALIDATIERESULTAAT = "gold_prd.hl_grondwaterpeilmeting.validatieresultaat"
 TBL_MEETLOCATIE = "gold_prd.hl_cs_objecten.meetlocatie"
 
-# Eigen output: tabellen in het persoonlijke schema, bestanden op het volume.
-UIT_CATALOG = "waterkeringbeheer_prd"
-UIT_SCHEMA = "thanzen"
-VOLUME_BASIS = (
-    "/Volumes/waterkeringbeheer_prd/misc_files/misc_files/boxplots_pipeline"
-)
-
 # --- Mapnamen binnen de repo -----------------------------------------------
 INVOER_MAP = "input_data"
 STIX_MAP = "D-Stability"
-PEILBUISDATA_MAP = "peilbuisdata"
-EXTRA_MAP = "extra"
 DWARSPROFIEL_MAP = "dwarsprofielen"
+TIJDREEKS_MAP = "tijdreeksen"
+EXPORT_MAP = "databricks_export"
+CONTROLE_MAP = "controle"
 UITVOER_MAP = "Projecten"
+NEERSLAG_CSV = "neerslag_berkhout.csv"
 
 
 def repo_root() -> Path:
@@ -63,11 +57,7 @@ def projecten() -> list[str]:
     return sorted(pd.read_csv(pad, usecols=["project"], dtype=str)["project"].str.strip())
 
 
-def project_map(project: str) -> Path:
-    return invoer_basis() / project
-
-
-# --- de centrale invoer -----------------------------------------------------
+# --- met de hand onderhouden ------------------------------------------------
 # Alles wat per dwarsprofiel is, staat voor alle projecten samen; de sleutel
 # (`BE_0072`) is uniek over alle projecten.
 
@@ -78,7 +68,7 @@ def config_csv() -> Path:
 
 
 def projecten_csv() -> Path:
-    """Eén rij per project: buitenwaterstand, boezempeiloffset, bestandsnamen."""
+    """Eén rij per project: buitenwaterstand, boezempeiloffset."""
     return invoer_basis() / "projecten.csv"
 
 
@@ -92,61 +82,31 @@ def stix_map() -> Path:
     return invoer_basis() / STIX_MAP
 
 
-# --- per project: alleen wat niet per dwarsprofiel is ----------------------
+def tijdreeks_map() -> Path:
+    """Neerslag en buitenwaterstanden: wat niet per peilbuis is."""
+    return invoer_basis() / TIJDREEKS_MAP
 
 
-def reeks_csv(project: str, peilbuis_naam: str) -> Path:
-    """De stijghoogtereeks van één peilbuis: peilbuisdata/<peilbuis_naam>.csv."""
-    return peilbuisdata_map(project) / f"{peilbuis_naam}.csv"
+def neerslag_csv() -> Path:
+    """Eén neerslagreeks (Berkhout) voor alle projecten."""
+    return tijdreeks_map() / NEERSLAG_CSV
 
 
-def peilbuisdata_map(project: str) -> Path:
-    return project_map(project) / PEILBUISDATA_MAP
+# --- gegenereerd ------------------------------------------------------------
 
 
-def extra_map(project: str) -> Path:
-    return project_map(project) / EXTRA_MAP
+def export_map() -> Path:
+    """Wat de db_notebooks uit Databricks halen."""
+    return invoer_basis() / EXPORT_MAP
+
+
+def controle_map() -> Path:
+    """Wat de controlescripts schrijven: de koppeltabel en te_controleren.csv."""
+    return invoer_basis() / CONTROLE_MAP
 
 
 def plots_map(project: str) -> Path:
-    """Uitvoermap; wordt aangemaakt als die nog niet bestaat."""
+    """Uitvoermap van maak_plots.py; wordt aangemaakt als die nog niet bestaat."""
     pad: Path = repo_root() / UITVOER_MAP / project / "plots"
     pad.mkdir(parents=True, exist_ok=True)
     return pad
-
-
-def zoek_invoerbestand(project: str, bestandsnaam: str) -> Path:
-    """
-    Zoekt een invoerbestand in de projectmap, `extra/` en `peilbuisdata/`.
-
-    Controleert de naam letterlijk tegen de maplijst, zodat een verschil in
-    hoofdletters hier opvalt en niet pas op de cluster: NTFS is
-    hoofdletterongevoelig, het bestandssysteem van de cluster niet.
-    """
-    kandidaten: list[Path] = [
-        project_map(project) / bestandsnaam,
-        extra_map(project) / bestandsnaam,
-        peilbuisdata_map(project) / bestandsnaam,
-    ]
-    for pad in kandidaten:
-        if pad.parent.is_dir() and bestandsnaam in {
-            p.name for p in pad.parent.iterdir()
-        }:
-            return pad
-    gezocht: str = "\n  ".join(str(p) for p in kandidaten)
-    raise FileNotFoundError(
-        f"'{bestandsnaam}' niet gevonden voor project '{project}'. Gezocht in:\n  {gezocht}"
-    )
-
-
-# --- Databricks-helpers ----------------------------------------------------
-
-
-def uit_tabel(naam: str) -> str:
-    """Volledige naam van een eigen tabel, bv. `boxplots_peilbuizen`."""
-    return f"{UIT_CATALOG}.{UIT_SCHEMA}.boxplots_{naam}"
-
-
-def volume_pad(*delen: str) -> str:
-    """Pad op het Unity Catalog-volume onder de boxplots_pipeline-map."""
-    return "/".join([VOLUME_BASIS, *delen])

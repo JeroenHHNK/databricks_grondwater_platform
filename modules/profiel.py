@@ -2,13 +2,12 @@
 """
 De verwerking van één profiel: van werkboek en meetreeksen naar twee Plotly-figuren.
 
-Stond eerder als één lus in `main.py`, die de figuren meteen als HTML wegschreef.
-Nu geeft `maak_profiel_figuren` de figuren terug, zodat `main.py` ze naar een
-bestand schrijft en `app.py` ze in Streamlit toont, zonder tussenbestand.
+`maak_profiel_figuren` geeft de figuren terug, zodat `app.py` ze in Streamlit
+toont en `notebooks/maak_plots.py` ze als HTML wegschrijft.
 
-Waar de stijghoogtes vandaan komen is een parameter (`LaadReeksen`): de lokale
-export, of de export uit Databricks (`databricks_reeksen`). De rest van de
-verwerking merkt daar niets van.
+Waar de stijghoogtes vandaan komen is een parameter (`LaadReeksen`); nu is dat
+Databricks, live of uit de export (`databricks_reeksen.laad_reeksen`). De rest
+van de verwerking merkt daar niets van.
 
 Een peilbuis zonder stijghoogtes valt uit zijn dwarsprofiel, in plaats van het
 hele profiel te laten mislukken; `ProfielFiguren.ontbrekend` zegt welke.
@@ -17,8 +16,6 @@ hele profiel te laten mislukken; `ProfielFiguren.ontbrekend` zegt welke.
 from __future__ import annotations
 
 from dataclasses import dataclass
-from functools import partial
-from pathlib import Path
 from dataclasses import field
 from typing import Any, Callable
 
@@ -31,7 +28,7 @@ from . import analyse, data_lader, plotten, stix_verwerker, workbook_lader
 from .workbook_lader import ProjectInvoer
 
 # Krijgt de peilbuisnamen (`stijghoogte_namen`) en geeft een DataFrame terug met
-# een DatetimeIndex en één kolom per naam, zoals `data_lader.laad_peilbuis_data`.
+# een DatetimeIndex en één kolom per naam.
 # Een naam zonder data mag ontbreken of alleen NaN bevatten.
 LaadReeksen = Callable[[list[str]], DataFrame]
 
@@ -48,7 +45,6 @@ class ProjectContext:
 
     invoer: ProjectInvoer
     neerslag_data: DataFrame
-    terugkeertijden_data: DataFrame | None
     # Een DataFrame met kolom 'waterstand' (fluctuerend) of een vast getal.
     buitenwaterstand_data: DataFrame | float
 
@@ -132,44 +128,11 @@ def laad_project_context(project: str) -> ProjectContext:
             f"{len(fouten)} fout(en) in {invoer.workbook.name}; los die eerst op."
         )
 
-    terugkeertijden_data = None
-    if invoer.paden["terugkeertijden"]:
-        terugkeertijden_data = data_lader.laad_terugkeertijden_data(
-            invoer.paden["terugkeertijden"]
-        )
-
     return ProjectContext(
         invoer=invoer,
         neerslag_data=data_lader.laad_neerslag_data(invoer.paden["neerslag"]),
-        terugkeertijden_data=terugkeertijden_data,
         buitenwaterstand_data=_laad_buitenwaterstand(invoer),
     )
-
-
-def lokale_reeksen(invoer: ProjectInvoer) -> LaadReeksen:
-    """
-    De reeksen uit `peilbuisdata/<peilbuis_naam>.csv`; zonder die csv's uit de
-    peilbuisdata-export (xlsx) waar `project.csv` naar verwijst.
-    """
-    reeksen: Path | None = invoer.paden.get("reeksen")
-    if reeksen is not None:
-        return partial(data_lader.laad_peilbuis_csv, reeksen)
-    pad: Path | None = invoer.paden["peilbuisdata"]
-    if pad is None:
-        raise FileNotFoundError(
-            f"Geen peilbuisreeksen gevonden voor {invoer.project}: geen csv's in "
-            f"input_data/{invoer.project}/peilbuisdata/ en geen export "
-            f"'{invoer.algemene_config.get('peilbuisdata_bestand', '')}'. Zet een export om met "
-            f"scripts/zet_export_om.py --project {invoer.project}."
-        )
-    return partial(data_lader.laad_peilbuis_data, pad)
-
-
-def databricks_reeksen(invoer: ProjectInvoer) -> LaadReeksen:
-    """De daggemiddelden uit `input_data/databricks_export/`, één gekozen reeks per peilbuis."""
-    from . import databricks_reeksen as db  # alleen nodig als deze bron gekozen wordt
-
-    return db.export_reeksen(invoer.project)
 
 
 def _met_data(pb_gegevens: DataFrame, namen: list[str]) -> list[bool]:
@@ -445,7 +408,8 @@ def maak_profiel_figuren(
         "heeft_kruin_peilbuis": heeft_kruin_peilbuis,
         "buitenwaterstand": buitenwaterstand_gemiddeld,
         "dijkprofiel": dijkprofiel,
-        "return_periods_data": ctx.terugkeertijden_data,
+        # Staan voor de MVP uit (plotten.ONDERDELEN_STANDAARD); er is geen bestand meer.
+        "return_periods_data": None,
         "project_folder_name": ctx.project,
     }
     for sleutel, diep in (("A", diep_a), ("B", diep_b)):
@@ -465,8 +429,10 @@ def maak_profiel_figuren(
         [metadata_pb, *(d.metadata_pb for d in (diep_a, diep_b) if d is not None)],
         axis=0,
     )
+    # De neerslag loopt over alle projecten samen; alleen de meetperiode telt.
+    neerslag: DataFrame = ctx.neerslag_data.loc[ts_pb_gegevens.index.min():ts_pb_gegevens.index.max()]
     tijdreeks_figuur = plotten.maak_tijdreeks_plot(
-        ts_pb_gegevens, profiel_naam, ts_metadata_pb, ctx.neerslag_data
+        ts_pb_gegevens, profiel_naam, ts_metadata_pb, neerslag
     )
 
     return ProfielFiguren(

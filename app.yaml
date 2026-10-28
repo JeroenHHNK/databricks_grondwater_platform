@@ -1,5 +1,6 @@
 # Databricks Apps: hoe de app start. Poort en adres zet Databricks zelf, via de
-# STREAMLIT_SERVER_*-omgevingsvariabelen; de pakketten komen uit requirements.txt.
+# STREAMLIT_SERVER_*-omgevingsvariabelen; de pakketten komen uit pyproject.toml
+# en uv.lock.
 command:
   - streamlit
   - run
@@ -8,3 +9,10 @@ command:
 env:
   - name: STREAMLIT_BROWSER_GATHER_USAGE_STATS
     value: "false"
+  # Het SQL warehouse voor de live stijghoogtes: de app-resource met sleutel
+  # `sql-warehouse` (Compute -> Apps -> de app -> Edit -> App resources).
+  # Staat uit tot de resource en de GRANTs uit DATA_CATALOG.md er zijn; tot dan
+  # toont de app de export uit input_data/databricks_export/. Aanzetten: de twee
+  # regels hieronder terugzetten, de resource toevoegen en opnieuw deployen.
+  # - name: DATABRICKS_WAREHOUSE_ID
+  #   valueFrom: sql-warehouse

@@ -2,8 +2,10 @@
 """
 Laadt de invoer van een project uit de centrale invoer in `input_data/`:
 
-- `config.csv`: één rij per peilbuis per dwarsprofiel, voor alle projecten;
-- `projecten.csv`: één rij per project (buitenwaterstand, bestandsnamen);
+- `config.csv`: één rij per peilbuis per dwarsprofiel, voor alle projecten.
+  `LD_`-kolommen vullen we zelf in, `DD_`-kolommen komen uit Databricks (via
+  `notebooks/bouw_koppeltabel_ld_dd.py --vul-config`);
+- `projecten.csv`: één rij per project (buitenwaterstand, boezempeiloffset);
 - `D-Stability/<key>.stix` en `dwarsprofielen/<key>.csv` per dwarsprofiel.
 
 Elk dwarsprofiel heet naar de dijkpaal waar het ligt (`BE_0072`); die sleutel
@@ -15,7 +17,7 @@ Voor de bestaande pipeline bouwt deze module de oude tabellen terug: een lange
 `peilbuizen_df` (één rij per peilbuis, met `positie` op volgorde van
 `x_profiel`) en een `profielen_df` met de string-gebaseerde kolommen
 (`stijghoogte_namen`, `Code_peilbuis`, `x_coordinaten_dwarsprofiel`), zodat
-`main.py`, `profiel.py` en `kaart_generator.py` niets merken.
+`profiel.py` en `kaart_generator.py` niets merken.
 """
 
 from __future__ import annotations
@@ -35,14 +37,22 @@ CSV_FLOATS = "round_trip"
 HOOFD = "hoofd"
 
 # config.csv -> de kolomnamen die de pipeline sinds het werkboek gebruikt.
+# De DD_-informatiekolommen (code, ligging en afstand van de meetlocatie)
+# houden hun naam.
 _CONFIG_HERNOEM: dict[str, str] = {
-    "cross_section_key": "dwarsprofiel",
-    "peilbuis": "peilbuis_naam",
-    "code": "code_peilbuis",
-    "x_profiel": "x_dwarsprofiel",
-    "bk_peilbuis": "hoogte_bovenkant_peilbuis",
-    "bk_filter": "bovenkant_filter_nap",
-    "ok_filter": "onderkant_filter_nap",
+    "LD_cross_section_key": "dwarsprofiel",
+    "LD_peilbuis": "peilbuis_naam",
+    "LD_projectnummer": "projectnummer",
+    "LD_code": "code_peilbuis",
+    "LD_x_profiel": "x_dwarsprofiel",
+    "LD_x_rd": "x_rd",
+    "LD_y_rd": "y_rd",
+    "LD_bk_peilbuis": "hoogte_bovenkant_peilbuis",
+    "LD_bk_filter": "bovenkant_filter_nap",
+    "LD_ok_filter": "onderkant_filter_nap",
+    "DD_meetlocatie_id": "meetlocatie_id",
+    "DD_meetreeks_id": "meetreeks_id",
+    "DD_koppeling": "koppeling",
 }
 
 # De kolomnamen die plotten.py verwacht.
@@ -112,22 +122,23 @@ def _waarde(waarde: Any) -> Any:
 
 
 TEKST_KOLOMMEN: tuple[str, ...] = (
-    "project", "cross_section_key", "diepte_niveau", "peilbuis",
-    "projectnummer", "meetlocatie_id", "meetreeks_id", "koppeling", "code",
+    "LD_project", "LD_cross_section_key", "LD_diepte_niveau", "LD_peilbuis",
+    "LD_projectnummer", "LD_code",
+    "DD_meetlocatie_id", "DD_meetreeks_id", "DD_koppeling", "DD_meetlocatie_code",
 )
 
 
 def lees_config() -> DataFrame:
-    """`config.csv` voor alle projecten."""
+    """`config.csv` voor alle projecten, met de kolomnamen van het bestand (LD_/DD_)."""
     pad: Path = paths.config_csv()
     if not pad.is_file():
         raise FileNotFoundError(f"Geen centrale config gevonden: {pad}")
     config: DataFrame = pd.read_csv(
         pad, float_precision=CSV_FLOATS, dtype={k: str for k in TEKST_KOLOMMEN}
     )
-    for kolom in ("project", "cross_section_key", "diepte_niveau", "peilbuis"):
+    for kolom in ("LD_project", "LD_cross_section_key", "LD_diepte_niveau", "LD_peilbuis"):
         config[kolom] = config[kolom].map(_tekst)
-    config["diepte_niveau"] = config["diepte_niveau"].replace("", HOOFD)
+    config["LD_diepte_niveau"] = config["LD_diepte_niveau"].replace("", HOOFD)
     return config
 
 
@@ -147,7 +158,7 @@ def laad_project(project: str) -> ProjectInvoer:
     }
 
     config: DataFrame = lees_config()
-    config = config[config["project"] == project]
+    config = config[config["LD_project"] == project]
     if config.empty:
         raise KeyError(f"Project {project} heeft geen rijen in {paths.config_csv().name}.")
 
@@ -176,12 +187,12 @@ def laad_project(project: str) -> ProjectInvoer:
 def _peilbuizen_uit_config(config: DataFrame) -> DataFrame:
     """Eén rij per peilbuis per profiel, met `profiel_id` en `positie` (volgorde van x)."""
     pb: DataFrame = config.copy()
-    pb.insert(0, "profiel_id", [profiel_id(k, d) for k, d in zip(pb["cross_section_key"], pb["diepte_niveau"])])
-    pb = pb.sort_values(["profiel_id", "x_profiel"], kind="stable")
+    pb.insert(0, "profiel_id", [profiel_id(k, d) for k, d in zip(pb["LD_cross_section_key"], pb["LD_diepte_niveau"])])
+    pb = pb.sort_values(["profiel_id", "LD_x_profiel"], kind="stable")
     pb.insert(2, "positie", pb.groupby("profiel_id").cumcount() + 1)
     return (
         # diepte_niveau zit al in profiel_id en in profielen_df.
-        pb.drop(columns=["project", "diepte_niveau", "teensloot_peil", "stix_offset_x"])
+        pb.drop(columns=["LD_project", "LD_diepte_niveau", "LD_teensloot_peil", "LD_stix_offset_x"])
         .rename(columns=_CONFIG_HERNOEM)
         .reset_index(drop=True)
     )
@@ -201,7 +212,7 @@ def _schoon_coords(coords_df: DataFrame) -> DataFrame:
 
 def _profielen_uit_peilbuizen(config: DataFrame, peilbuizen: DataFrame) -> DataFrame:
     """
-    Eén rij per profiel, in de brede vorm die `main.py` en `profiel.py` lezen.
+    Eén rij per profiel, in de brede vorm die `profiel.py` leest.
 
     `stijghoogte_namen` en `Code_peilbuis` zijn komma-gescheiden,
     `x_coordinaten_dwarsprofiel` schuin-gescheiden, zoals in de oude werkboeken.
@@ -209,11 +220,11 @@ def _profielen_uit_peilbuizen(config: DataFrame, peilbuizen: DataFrame) -> DataF
     kaartpunt is de eerste peilbuis van het hoofdprofiel.
     """
     per_profiel = {pid: groep for pid, groep in peilbuizen.groupby("profiel_id", sort=False)}
-    volgorde: DataFrame = config.drop_duplicates(["cross_section_key", "diepte_niveau"])
+    volgorde: DataFrame = config.drop_duplicates(["LD_cross_section_key", "LD_diepte_niveau"])
     rijen: list[dict[str, Any]] = []
     for _, r in volgorde.iterrows():
-        sleutel: str = r["cross_section_key"]
-        niveau: str = r["diepte_niveau"]
+        sleutel: str = r["LD_cross_section_key"]
+        niveau: str = r["LD_diepte_niveau"]
         pid: str = profiel_id(sleutel, niveau)
         groep: DataFrame = per_profiel[pid]
         hoofd: bool = niveau == HOOFD
@@ -231,9 +242,9 @@ def _profielen_uit_peilbuizen(config: DataFrame, peilbuizen: DataFrame) -> DataF
                 ),
                 "x": _als_getal(groep["x_rd"].iloc[0]) if hoofd else None,
                 "y": _als_getal(groep["y_rd"].iloc[0]) if hoofd else None,
-                "teensloot_peil": _als_getal(r["teensloot_peil"]) if hoofd else None,
+                "teensloot_peil": _als_getal(r["LD_teensloot_peil"]) if hoofd else None,
                 "stix_bestand": stix.name if hoofd and stix.is_file() else "",
-                "stix_offset_x_handmatig": _als_getal(r["stix_offset_x"]) if hoofd else None,
+                "stix_offset_x_handmatig": _als_getal(r["LD_stix_offset_x"]) if hoofd else None,
                 "coords_sheet": f"{paths.DWARSPROFIEL_MAP}/{sleutel}.csv" if hoofd else None,
                 "actief": True,
                 "dwarsprofiel": sleutel,
@@ -244,33 +255,21 @@ def _profielen_uit_peilbuizen(config: DataFrame, peilbuizen: DataFrame) -> DataF
 
 def _zoek_paden(project: str, algemene_config: dict[str, Any]) -> dict[str, Path | None]:
     """
-    Zoekt de bestanden waar `projecten.csv` naar verwijst.
-
-    `peilbuisdata` is de export (xlsx) in `peilbuisdata/`; `reeksen` de map met
-    één csv per peilbuis, als die er is.
+    De tijdreeksen die alle profielen van een project delen: de neerslag (één
+    reeks voor alle projecten) en, als `projecten.csv` er een noemt, de
+    buitenwaterstand in `tijdreeksen/`.
     """
-    paden: dict[str, Path | None] = {"stix_map": paths.stix_map()}
-    for sleutel, naam in (
-        ("peilbuisdata", "peilbuisdata_bestand"),
-        ("neerslag", "neerslagdata_bestand"),
-        ("terugkeertijden", "terugkeertijden_bestand"),
-        ("buitenwaterstand", "buitenwaterstand_bestand"),
-    ):
-        bestandsnaam: str = _tekst(algemene_config.get(naam))
-        paden[sleutel] = None
-        if not bestandsnaam:
-            continue
-        if sleutel == "peilbuisdata":
-            pad: Path = paths.peilbuisdata_map(project) / bestandsnaam
-            paden[sleutel] = pad if pad.is_file() else None
-        else:
-            try:
-                paden[sleutel] = paths.zoek_invoerbestand(project, bestandsnaam)
-            except FileNotFoundError:
-                pass
-
-    reeksen: Path = paths.peilbuisdata_map(project)
-    paden["reeksen"] = reeksen if reeksen.is_dir() and any(reeksen.glob("*.csv")) else None
+    paden: dict[str, Path | None] = {
+        "stix_map": paths.stix_map(),
+        "neerslag": paths.neerslag_csv(),
+        "buitenwaterstand": None,
+    }
+    bestandsnaam: str = _tekst(algemene_config.get("buitenwaterstand_bestand"))
+    if bestandsnaam:
+        pad: Path = paths.tijdreeks_map() / bestandsnaam
+        if not pad.is_file():
+            raise FileNotFoundError(f"{project}: buitenwaterstand_bestand {pad} bestaat niet")
+        paden["buitenwaterstand"] = pad
     return paden
 
 
@@ -347,39 +346,39 @@ def valideer(invoer: ProjectInvoer) -> list[Bevinding]:
             bevindingen.append(Bevinding("fout", pid, f"{profiel['coords_sheet']} ontbreekt"))
 
     config: DataFrame = lees_config()
-    eigen: DataFrame = config[config["project"] == invoer.project]
+    eigen: DataFrame = config[config["LD_project"] == invoer.project]
 
-    projecten_per_sleutel = config.groupby("cross_section_key")["project"].unique()
-    for sleutel in sorted(set(eigen["cross_section_key"])):
+    projecten_per_sleutel = config.groupby("LD_cross_section_key")["LD_project"].unique()
+    for sleutel in sorted(set(eigen["LD_cross_section_key"])):
         anderen = [p for p in projecten_per_sleutel[sleutel] if p != invoer.project]
         if anderen:
             bevindingen.append(
                 Bevinding("fout", sleutel, f"sleutel staat ook in project {', '.join(anderen)}")
             )
 
-    rijsleutel: list[str] = ["cross_section_key", "diepte_niveau", "peilbuis"]
+    rijsleutel: list[str] = ["LD_cross_section_key", "LD_diepte_niveau", "LD_peilbuis"]
     for _, rij in eigen[eigen.duplicated(rijsleutel)].iterrows():
         bevindingen.append(
-            Bevinding("fout", rij["cross_section_key"], f"{rij['peilbuis']} staat dubbel in config.csv")
+            Bevinding("fout", rij["LD_cross_section_key"], f"{rij['LD_peilbuis']} staat dubbel in config.csv")
         )
 
     # Eén peilbuis kan in twee dwarsprofielen staan; één meetlocatie bij twee peilbuizen niet.
     putten = (
-        config.dropna(subset=["meetlocatie_id"])
-        .drop_duplicates(["meetlocatie_id", "project", "peilbuis"])["meetlocatie_id"]
+        config.dropna(subset=["DD_meetlocatie_id"])
+        .drop_duplicates(["DD_meetlocatie_id", "LD_project", "LD_peilbuis"])["DD_meetlocatie_id"]
     )
     dubbel_id: set[str] = set(putten[putten.duplicated()])
-    for _, rij in eigen[eigen["meetlocatie_id"].isin(dubbel_id)].iterrows():
+    for _, rij in eigen[eigen["DD_meetlocatie_id"].isin(dubbel_id)].iterrows():
         bevindingen.append(
-            Bevinding("fout", rij["cross_section_key"],
-                      f"meetlocatie_id van {rij['peilbuis']} hoort ook bij een andere peilbuis")
+            Bevinding("fout", rij["LD_cross_section_key"],
+                      f"DD_meetlocatie_id van {rij['LD_peilbuis']} hoort ook bij een andere peilbuis")
         )
     return bevindingen
 
 
 def losse_bestanden() -> list[Path]:
     """Stix- en geometriebestanden waarvan de sleutel niet in config.csv staat."""
-    sleutels: set[str] = set(lees_config()["cross_section_key"])
+    sleutels: set[str] = set(lees_config()["LD_cross_section_key"])
     return [
         pad
         for map_, patroon in ((paths.stix_map(), "*.stix"), (paths.dwarsprofiel_map(), "*.csv"))

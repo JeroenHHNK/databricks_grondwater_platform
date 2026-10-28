@@ -2,21 +2,21 @@
 """
 Welke peilbuizen en meetreeksen verdienen een controle, en waarom.
 
-    uv run python scripts/controleer_reeksen.py
+    uv run python notebooks/controleer_reeksen.py
 
 Leest `input_data/config.csv` en de Databricks-export in
-`input_data/databricks_export/`, en schrijft
-`input_data/databricks_export/te_controleren.csv`: één rij per bevinding per
+`input_data/databricks_export/` (niet live: de uitschieters staan alleen in de
+export), en schrijft
+`input_data/controle/te_controleren.csv`: één rij per bevinding per
 peilbuis, met de sleutels om de reeks in Databricks terug te vinden.
 
 | categorie | betekent |
 |---|---|
-| geen meetlocatie_id | niet gekoppeld; `toelichting` geeft de koppelstatus |
+| geen meetlocatie_id | niet gekoppeld; `toelichting` geeft `DD_koppeling` |
 | geen meetreeks | de meetlocatie heeft geen enkele meetreeks |
 | geen reeks in m NAP | alleen reeksen in een andere eenheid, of zonder metingen |
-| vastgezette reeks onbekend | `meetreeks_id` in config.csv hoort niet bij de meetlocatie |
+| vastgezette reeks onbekend | `DD_meetreeks_id` in config.csv hoort niet bij de meetlocatie |
 | meerdere reeksen | parallelle sensoren; welke gekozen is en welke niet |
-| wijkt af van lokale export | daggemiddelde Databricks minus lokale export, waar die er is |
 | filter wijkt af | bovenkant/onderkant filter in config.csv vs Databricks |
 | bovenkant peilbuis wijkt af | idem |
 | uitschieters | metingen meer dan 0,5 m van de dagmediaan van hun reeks |
@@ -37,46 +37,36 @@ from pandas import DataFrame
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
-from Modules import databricks_reeksen as db, paths, workbook_lader  # noqa: E402
+from modules import databricks_reeksen as db, paths, workbook_lader  # noqa: E402
 
 FILTER_DREMPEL_M: float = 0.25  # Databricks rondt filters af op 0,01 m, bovenkant peilbuis op 0,1 m
-LOKAAL_DREMPEL_M: float = 0.05
 KORT_DAGEN: int = 180
 GESTOPT_DAGEN: int = 30
 UITVOER: str = "te_controleren.csv"
 
 VOLGORDE: list[str] = [
     "geen meetlocatie_id", "geen meetreeks", "geen reeks in m NAP", "vastgezette reeks onbekend",
-    "wijkt af van lokale export", "meerdere reeksen", "filter wijkt af",
+    "meerdere reeksen", "filter wijkt af",
     "bovenkant peilbuis wijkt af", "uitschieters", "korte reeks", "reeks gestopt",
     "andere eenheid op meetlocatie",
 ]
 
 
-def _lokaal_daggemiddelde(project: str, peilbuis: str) -> pd.Series | None:
-    pad: Path = paths.reeks_csv(project, peilbuis)
-    if not pad.is_file():
-        return None
-    s = pd.read_csv(pad, parse_dates=["Timestamp"]).set_index("Timestamp").iloc[:, 0]
-    return s.resample("D").mean().dropna()
-
-
 def bevindingen() -> DataFrame:
     config: DataFrame = workbook_lader.lees_config()
     reeksen: DataFrame = db.lees_reeksen()
-    dag: DataFrame = pd.read_csv(db.export_map() / db.DAG_CSV, parse_dates=["datum"])
     afw: DataFrame = pd.read_csv(db.export_map() / "afwijkingen.csv", parse_dates=["tijdstempel_utc"])
     keuze: DataFrame = db.kies_reeksen(config, reeksen)
     info: DataFrame = reeksen.dropna(subset=["reeks_nr"]).drop_duplicates("reeks_nr").set_index("reeks_nr")
     laatste_export = pd.to_datetime(info["tot"]).max()
 
-    per_put: DataFrame = config.groupby(["project", "peilbuis"], sort=False).agg(
-        cross_section_key=("cross_section_key", lambda s: "/".join(dict.fromkeys(s))),
-        diepte_niveau=("diepte_niveau", "first"),
-        koppeling=("koppeling", "first"),
-        bk_filter=("bk_filter", "first"),
-        ok_filter=("ok_filter", "first"),
-        bk_peilbuis=("bk_peilbuis", "first"),
+    per_put: DataFrame = config.groupby(["LD_project", "LD_peilbuis"], sort=False).agg(
+        cross_section_key=("LD_cross_section_key", lambda s: "/".join(dict.fromkeys(s))),
+        diepte_niveau=("LD_diepte_niveau", "first"),
+        koppeling=("DD_koppeling", "first"),
+        bk_filter=("LD_bk_filter", "first"),
+        ok_filter=("LD_ok_filter", "first"),
+        bk_peilbuis=("LD_bk_peilbuis", "first"),
     )
     rijen: list[dict] = []
 
@@ -112,7 +102,7 @@ def bevindingen() -> DataFrame:
             voeg_toe(k, "geen reeks in m NAP", soorten)
             continue
         if k.keuze == db.VASTGEZET_ONBEKEND:
-            voeg_toe(k, "vastgezette reeks onbekend", "de meetreeks_id in config.csv staat niet bij deze meetlocatie")
+            voeg_toe(k, "vastgezette reeks onbekend", "de DD_meetreeks_id in config.csv staat niet bij deze meetlocatie")
             continue
 
         nr = int(k.reeks_nr)
@@ -124,18 +114,6 @@ def bevindingen() -> DataFrame:
                      + "niet gekozen: " + "; ".join(
                          f"{x.meetreeks_code} {0 if pd.isna(x.metingen) else int(x.metingen)} metingen, gem {x.gem}"
                          for x in andere.itertuples()), nr)
-
-        lokaal = _lokaal_daggemiddelde(k.project, k.peilbuis)
-        if lokaal is not None:
-            j = pd.concat([lokaal.rename("lok"), dag[dag["reeks_nr"] == nr].set_index("datum")["gem"].rename("db")],
-                          axis=1, join="inner")
-            if j.empty:
-                voeg_toe(k, "wijkt af van lokale export",
-                         f"geen overlappende dagen; lokaal {lokaal.index.min():%Y-%m-%d} t/m {lokaal.index.max():%Y-%m-%d}, "
-                         f"Databricks {r['van'][:10]} t/m {r['tot'][:10]}", nr)
-            elif abs((j["db"] - j["lok"]).mean()) >= LOKAAL_DREMPEL_M:
-                voeg_toe(k, "wijkt af van lokale export",
-                         f"Databricks min lokaal gemiddeld {(j['db'] - j['lok']).mean():+.3f} m over {len(j)} dagen", nr)
 
         for naam, eigen, platform in (("bovenkant filter", put["bk_filter"], r["begin_filter"]),
                                       ("onderkant filter", put["ok_filter"], r["eind_filter"])):
@@ -170,7 +148,7 @@ def bevindingen() -> DataFrame:
 if __name__ == "__main__":
     sys.stdout.reconfigure(encoding="utf-8")
     tabel: DataFrame = bevindingen()
-    pad: Path = db.export_map() / UITVOER
+    pad: Path = paths.controle_map() / UITVOER
     tabel.to_csv(pad, index=False)
     print(f"✅ {pad.relative_to(paths.repo_root())}: {len(tabel)} bevindingen bij "
           f"{tabel[['project', 'peilbuis']].drop_duplicates().shape[0]} peilbuizen\n")

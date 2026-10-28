@@ -27,6 +27,19 @@ PLOT_KLEUREN_STANDAARD: dict[str, str] = {
     "deep_gw_line": "#8A2BE2",  # paars
 }
 
+# Eén kleur per peilbuis, dezelfde in de profielplot (buis en filter) en de
+# tijdreeksplot (lijn), zodat een lijn bij zijn put te vinden is. Volgorde: het
+# hoofdprofiel van links naar rechts, dan A, dan B. Hetzelfde gecontroleerde
+# palet als de kaart; een profiel heeft er nu hooguit 6.
+PEILBUIS_KLEUREN: list[str] = [
+    "#2a78d6", "#eb6834", "#1baf7a", "#eda100", "#e87ba4", "#008300", "#6250d6", "#e34948",
+]
+BUITENWATERSTAND_KLEUR = "#5a5a55"
+
+
+def peilbuis_kleur(i: int) -> str:
+    return PEILBUIS_KLEUREN[i % len(PEILBUIS_KLEUREN)]
+
 # Onderdelen van de profielplot die aan of uit kunnen. Voor de MVP staan de
 # boxplots, de mediaan, de uitschieters en de terugkeertijden uit; de
 # gemiddelden, de freatische lijnen en de dagelijkse meetpunten blijven. Per
@@ -117,9 +130,11 @@ def maak_tijdreeks_plot(
         serie = pb_gegevens[kolomnaam].dropna()
         # Gebruik het label uit de metadata als het bestaat, anders de kolomnaam zelf.
         label = code_labels[i] if i < len(code_labels) else kolomnaam
+        kleur = peilbuis_kleur(i) if i < len(code_labels) else BUITENWATERSTAND_KLEUR
         figuur.add_trace(
             go.Scatter(
-                x=serie.index, y=serie.values, mode="lines", name=label
+                x=serie.index, y=serie.values, mode="lines", name=label,
+                line=dict(color=kleur, width=2),
             )
         )
 
@@ -130,7 +145,8 @@ def maak_tijdreeks_plot(
                 y=neerslag_data["P(mm/d)"],
                 name="Neerslag",
                 yaxis="y2",
-                marker_color="blue",
+                # Neutraal, zodat het niet op een peilbuiskleur lijkt.
+                marker_color="#a0a09a",
                 opacity=0.6,
             )
         )
@@ -353,6 +369,7 @@ def maak_profiel_plot(plot_data: dict, plot_config: dict):
     # Diepe peilbuizen
     if heeft_diepe_peilbuizen and x_peilbuis_A and metadata_pb_A is not None:
         for idx, locatie in enumerate(x_peilbuis_A):
+            buis_kleur = peilbuis_kleur(len(x_peilbuis) + idx)
             # Eigenschappen diepe peilbuis
             diep_meta = metadata_pb_A.iloc[idx]
             diep_bovenkant_buis = diep_meta["Hoogte_bovenkant_peilbuis"]
@@ -384,7 +401,7 @@ def maak_profiel_plot(plot_data: dict, plot_config: dict):
                             x=[locatie, locatie],
                             y=[buis_start_y, ondiep_filter_bovenkant],
                             mode="lines",
-                            line=dict(color="grey", width=2, dash="solid"),
+                            line=dict(color=buis_kleur, width=2, dash="solid"),
                             showlegend=False,
                             hoverinfo="none",
                         )
@@ -396,7 +413,7 @@ def maak_profiel_plot(plot_data: dict, plot_config: dict):
                             x=[locatie, locatie],
                             y=[ondiep_filter_onderkant, buis_eind_y],
                             mode="lines",
-                            line=dict(color="grey", width=2, dash="solid"),
+                            line=dict(color=buis_kleur, width=2, dash="solid"),
                             showlegend=False,
                             hoverinfo="none",
                         )
@@ -408,7 +425,7 @@ def maak_profiel_plot(plot_data: dict, plot_config: dict):
                         x=[locatie, locatie],
                         y=[buis_start_y, buis_eind_y],
                         mode="lines",
-                        line=dict(color="grey", width=2, dash="solid"),
+                        line=dict(color=buis_kleur, width=2, dash="solid"),
                         showlegend=False,
                         hoverinfo="none",
                     )
@@ -421,14 +438,15 @@ def maak_profiel_plot(plot_data: dict, plot_config: dict):
                 x1=locatie + filter_breedte / 2,
                 y0=diep_filter_onderkant,
                 y1=diep_filter_bovenkant,
-                line=dict(color="grey", width=2, dash="solid"),
-                fillcolor="rgba(0,0,0,0)",
+                line=dict(color=buis_kleur, width=2, dash="solid"),
+                fillcolor=buis_kleur,
                 layer="above",
             )
 
     # Nog diepere peilbuizen
     if heeft_nog_diepere_peilbuizen and x_peilbuis_B and metadata_pb_B is not None:
         for idx, locatie in enumerate(x_peilbuis_B):
+            buis_kleur = peilbuis_kleur(len(x_peilbuis) + len(x_peilbuis_A or []) + idx)
             diep_meta_B = metadata_pb_B.iloc[idx]
             diep_bovenkant_buis = diep_meta_B["Hoogte_bovenkant_peilbuis"]
             diep_filter_bovenkant = diep_meta_B["bovenkant_filter_M_NAP"]
@@ -465,7 +483,7 @@ def maak_profiel_plot(plot_data: dict, plot_config: dict):
                             x=[locatie, locatie],
                             y=[buis_start_y, ondiep_filter_bovenkant],
                             mode="lines",
-                            line=dict(color="grey", width=2, dash="solid"),
+                            line=dict(color=buis_kleur, width=2, dash="solid"),
                             showlegend=False,
                             hoverinfo="none",
                         )
@@ -477,7 +495,7 @@ def maak_profiel_plot(plot_data: dict, plot_config: dict):
                             x=[locatie, locatie],
                             y=[ondiep_filter_onderkant, buis_eind_y],
                             mode="lines",
-                            line=dict(color="grey", width=2, dash="solid"),
+                            line=dict(color=buis_kleur, width=2, dash="solid"),
                             showlegend=False,
                             hoverinfo="none",
                         )
@@ -488,7 +506,7 @@ def maak_profiel_plot(plot_data: dict, plot_config: dict):
                         x=[locatie, locatie],
                         y=[buis_start_y, buis_eind_y],
                         mode="lines",
-                        line=dict(color="grey", width=2, dash="solid"),
+                        line=dict(color=buis_kleur, width=2, dash="solid"),
                         showlegend=False,
                         hoverinfo="none",
                     )
@@ -500,8 +518,8 @@ def maak_profiel_plot(plot_data: dict, plot_config: dict):
                 x1=locatie + filter_breedte / 2,
                 y0=diep_filter_onderkant,
                 y1=diep_filter_bovenkant,
-                line=dict(color="grey", width=2, dash="solid"),
-                fillcolor="rgba(0,0,0,0)",
+                line=dict(color=buis_kleur, width=2, dash="solid"),
+                fillcolor=buis_kleur,
                 layer="above",
             )
 
@@ -515,7 +533,7 @@ def maak_profiel_plot(plot_data: dict, plot_config: dict):
                 x=[locatie, locatie],
                 y=[hoogte_bovenkant, filter_bovenkant],
                 mode="lines",
-                line=dict(color="grey", width=2),
+                line=dict(color=peilbuis_kleur(idx), width=2),
                 showlegend=False,
                 name="Bovenkant filter",
             )
@@ -526,8 +544,8 @@ def maak_profiel_plot(plot_data: dict, plot_config: dict):
             x1=locatie + filter_breedte / 2,
             y0=filter_onderkant,
             y1=filter_bovenkant,
-            line=dict(color="grey", width=2),
-            fillcolor="rgba(0,0,0,0)",
+            line=dict(color=peilbuis_kleur(idx), width=2),
+            fillcolor=peilbuis_kleur(idx),
             layer="above",
         )
 
