@@ -13,6 +13,7 @@ from tarso_pipeline.fit_metrics import (
     observed_fields,
     rows_to_frame,
     spark_schema,
+    tarso_t95,
 )
 
 
@@ -40,6 +41,18 @@ def test_spark_schema_covers_the_handover_fields():
                   "bic double", "obj double", "interp boolean",
                   "parameters string", "model_path string"):
         assert field in ddl
+
+
+def test_tarso_t95_per_level_and_for_the_upper_regime():
+    optimal = {"Tarso_A0": 1.0, "Tarso_a0": 100.0, "Tarso_d0": -2.0,
+               "Tarso_A1": 3.0, "Tarso_a1": 40.0, "Tarso_d1": -1.0}
+    t95 = tarso_t95(optimal)
+    ln20 = np.log(20.0)
+    assert t95["t95_level0_days"] == pytest.approx(100.0 * ln20)
+    assert t95["t95_level1_days"] == pytest.approx(40.0 * ln20)
+    # Both drains active: a_e = a1 * A0 / (A0 + A1) = 40 * 1/4.
+    assert t95["t95_upper_regime_days"] == pytest.approx(10.0 * ln20)
+    assert set(t95) <= set(FIT_METRICS_SCHEMA)
 
 
 def test_observed_fields_of_an_empty_series():
@@ -138,6 +151,13 @@ def test_a_real_fit_populates_the_metrics(tmp_path, model_type):
         assert row[field] is not None, field
     assert row["freq"] == "D"
     assert json.loads(row["parameters"])  # parameters are JSON, not a repr
+    t95_fields = ("t95_level0_days", "t95_level1_days", "t95_upper_regime_days")
+    if model_type == "tarso":
+        for field in t95_fields:
+            assert row[field] > 0, field
+        assert row["t95_upper_regime_days"] < row["t95_level1_days"]
+    else:
+        assert all(row[field] is None for field in t95_fields)
     # Artefacts land in the three folders of the run directory, by kind.
     assert row["model_path"].endswith(f"pas_files{os.sep}well_{model_type}.pas")
     assert row["plot_path"].endswith(

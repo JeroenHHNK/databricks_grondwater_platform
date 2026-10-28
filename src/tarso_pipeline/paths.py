@@ -77,6 +77,7 @@ OUTPUT_CATALOG = "waterkeringbeheer_prd"
 OUTPUT_SCHEMA = "jvanruitenbeek"
 MANIFEST_TABLE = f"{OUTPUT_CATALOG}.{OUTPUT_SCHEMA}.pastas_series_manifest"
 METRICS_TABLE = f"{OUTPUT_CATALOG}.{OUTPUT_SCHEMA}.pastas_fit_metrics"
+CHECKS_TABLE = f"{OUTPUT_CATALOG}.{OUTPUT_SCHEMA}.pastas_model_checks"
 
 # WRITE VOLUME here is a separate grant from the table write that was tested;
 # confirm it once with a throwaway file before a batch run.

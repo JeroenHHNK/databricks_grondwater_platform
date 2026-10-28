@@ -26,6 +26,7 @@ from tarso_pipeline.fit_metrics import (
     extract_metrics,
     observed_fields,
 )
+from tarso_pipeline.model_checks import run_checks
 
 MODEL_TYPES = ("tarso", "recharge")
 STRESSMODEL_NAME = "Tarso"
@@ -125,8 +126,14 @@ def fit_series(
     forcing_station: str | None = None,
     forcing_units: str = "m",
     save_plot: bool = True,
+    check_rows: list | None = None,
 ) -> dict:
-    """Clean, fit, save and report one series. Never raises."""
+    """Clean, fit, save and report one series. Never raises.
+
+    Pass a list as ``check_rows`` to have the Brakenhoff (2022) checklist run on
+    the solved model and its `pastas_model_checks` rows appended to it. A fit
+    that fails adds nothing: there is no model to check.
+    """
     row = empty_row()
     row.update(
         {
@@ -196,6 +203,19 @@ def fit_series(
         )
         row.update(cleaned.as_row())
         row.update(observed_fields(head))
+
+        if check_rows is not None:
+            check_rows.extend(
+                run_checks(
+                    model,
+                    {
+                        "run_id": run_id,
+                        "meetreeks_id": meetreeks_id,
+                        "series_name": series_name,
+                        "model_type": model_type,
+                    },
+                )
+            )
 
         if run_directory:
             from tarso_pipeline.paths import (

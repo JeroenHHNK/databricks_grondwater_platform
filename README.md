@@ -24,6 +24,7 @@ src/tarso_pipeline/
   clean.py         collapse duplicate timestamps + resample; counts recorded
   fit.py           fit_series: load -> clean -> fit -> save -> metrics row
   fit_metrics.py   the pastas_fit_metrics row, read from the Pastas API
+  model_checks.py  the pastas_model_checks rows: Brakenhoff (2022) via ps.check
   imprex.py        discover + load the bias-corrected IMPREX ensemble
   simulate.py      replace a Tarso model's stresses and simulate
   extremes.py      hydrological-year block extremes, pooled across members
@@ -158,7 +159,7 @@ Each notebook has one job. Only two are job tasks; the other two are run by hand
 |---|---|---|---|
 | `exploration/explore_meting.py` | what is in the source, how many series are fit to model | no | nothing |
 | `ingestion/build_manifest.py` | select every series spanning >= `min_days` (365); quantify duplicate timestamps | **task 1** | `pastas_series_manifest` |
-| `transformation/fit_pastas_models.py` | clean, fit, save `.pas`, record metrics | **task 2** | `pastas_fit_metrics`, `.pas` files |
+| `transformation/fit_pastas_models.py` | clean, fit, save `.pas`, record metrics, run the model checks | **task 2** | `pastas_fit_metrics`, `pastas_model_checks`, `.pas` files |
 | `analysis/inspect_results.py` | did it work, are the fits any good, Tarso vs baseline | no | nothing |
 
 Task 2 depends on task 1: it reads the manifest table task 1 writes.

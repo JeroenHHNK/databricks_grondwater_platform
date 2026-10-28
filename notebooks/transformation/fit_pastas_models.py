@@ -17,7 +17,9 @@
 # MAGIC ```
 # MAGIC
 # MAGIC Plus one row per fit in
-# MAGIC `waterkeringbeheer_prd.jvanruitenbeek.pastas_fit_metrics`.
+# MAGIC `waterkeringbeheer_prd.jvanruitenbeek.pastas_fit_metrics`, and one row per
+# MAGIC model check (Brakenhoff et al. 2022) per successful fit in
+# MAGIC `waterkeringbeheer_prd.jvanruitenbeek.pastas_model_checks`.
 # MAGIC
 # MAGIC Artefacts are grouped by **kind**, not by series, so all 20 `.pas` files sit
 # MAGIC together and all 20 plots sit together. The model type is in the filename
@@ -87,6 +89,9 @@ dbutils.widgets.text("manifest_table",
 dbutils.widgets.text("metrics_table",
                      "waterkeringbeheer_prd.jvanruitenbeek.pastas_fit_metrics",
                      "Metrics table")
+dbutils.widgets.text("checks_table",
+                     "waterkeringbeheer_prd.jvanruitenbeek.pastas_model_checks",
+                     "Model checks table")
 dbutils.widgets.text("volume_base",
                      "/Volumes/waterkeringbeheer_prd/misc_files/misc_files/pastas_pipeline",
                      "Volume prefix")
@@ -162,11 +167,14 @@ from tarso_pipeline.fit import fit_series
 from tarso_pipeline.fit_metrics import rows_to_frame, spark_schema
 from tarso_pipeline.forcing import check_coverage, forcing_file, load_forcing_pair
 from tarso_pipeline.meting import series_rows_sql
+from tarso_pipeline.model_checks import rows_to_frame as check_rows_to_frame
+from tarso_pipeline.model_checks import spark_schema as checks_spark_schema
 from tarso_pipeline.paths import ARTEFACT_DIRS, artefact_dir, run_dir, series_name_from_id
 
 SOURCE = dbutils.widgets.get("source_table").strip()
 MANIFEST = dbutils.widgets.get("manifest_table").strip()
 METRICS = dbutils.widgets.get("metrics_table").strip()
+CHECKS = dbutils.widgets.get("checks_table").strip()
 VOLUME_BASE = dbutils.widgets.get("volume_base").strip().rstrip("/")
 FORCING_DIR = dbutils.widgets.get("forcing_dir").strip() or f"{VOLUME_BASE}/knmi_forcing"
 
@@ -194,6 +202,7 @@ RUN_DIR = run_dir(VOLUME_BASE, name=dbutils.widgets.get("run_folder").strip() or
 print(f"run_id       {RUN_ID}")
 print(f"manifest     {MANIFEST}")
 print(f"metrics      {METRICS}")
+print(f"checks       {CHECKS}")
 print(f"volume       {VOLUME_BASE}")
 print(f"run folder   {RUN_DIR}")
 print(f"forcing      {FORCING_FILE}  ({FORCING_UNITS})")
@@ -292,6 +301,7 @@ display(work)
 # COMMAND ----------
 
 rows = []
+check_rows = []
 for item in work.itertuples():
     raw = spark.sql(series_rows_sql(SOURCE, item.meetreeks_id)).toPandas()
     # The hash is the only name available; shortened for readable folders, with
@@ -326,12 +336,18 @@ for item in work.itertuples():
             forcing_station=STATION,
             forcing_units=FORCING_UNITS,
             save_plot=SAVE_PLOTS,
+            check_rows=check_rows,
         )
         rows.append(row)
         if row["success"]:
             print(f"   {model_type:9} OK   EVP={row['evp']:.1f}%  R2={row['r2']:.3f}  "
                   f"RMSE={row['rmse']:.3f}  nobs={row['nobs']}  "
                   f"(dedup removed {row['n_duplicate_timestamps']:,})")
+            failed = [c["check"] for c in check_rows
+                      if c["series_name"] == series_name
+                      and c["model_type"] == model_type and c["passed"] is not True]
+            print(f"   {'':9} checks: "
+                  + ("all passed" if not failed else f"not passed: {', '.join(failed)}"))
             if row["calibration_trimmed"]:
                 print(f"   {'':9} calibration trimmed: "
                       f"{row['tmin']} .. {row['tmax']} "
@@ -349,9 +365,36 @@ print(f"\n{int(results['success'].sum())} of {len(results)} fits succeeded")
 display(
     results[["series_name", "model_type", "success", "nobs", "span_days",
              "evp", "r2", "rmse", "aicc", "bic", "obj", "nfev",
+             "t95_level0_days", "t95_level1_days", "t95_upper_regime_days",
              "n_raw_rows", "n_duplicate_timestamps",
              "model_path", "plot_path", "diagnostics_path", "error_message"]]
 )
+
+# COMMAND ----------
+
+# MAGIC %md
+# MAGIC ## Model checks
+# MAGIC
+# MAGIC Brakenhoff et al. (2022) via `ps.check.checklist`: one row per check per fit
+# MAGIC in `pastas_model_checks`. A fit passes only when **every** check passes; a
+# MAGIC check that could not be evaluated (`passed` NULL) counts as not passed.
+
+# COMMAND ----------
+
+checks = check_rows_to_frame(check_rows)
+if checks.empty:
+    print("no successful fits, so nothing was checked")
+else:
+    verdict = (
+        checks.assign(ok=checks["passed"].eq(True))
+        .groupby(["series_name", "model_type"])
+        .agg(checks=("ok", "size"), passed=("ok", "sum"), all_passed=("ok", "all"))
+        .reset_index()
+    )
+    print(f"{int(verdict['all_passed'].sum())} of {len(verdict)} fits pass every check")
+    display(verdict)
+    display(checks[["series_name", "model_type", "check", "statistic", "operator",
+                    "threshold", "threshold_min", "threshold_max", "passed", "comment"]])
 
 # COMMAND ----------
 
@@ -371,6 +414,14 @@ else:
         "append"
     ).option("mergeSchema", "true").saveAsTable(METRICS)
     print(f"appended {len(results)} rows to {METRICS} as run {RUN_ID}")
+
+    if checks.empty:
+        print(f"no check rows; nothing written to {CHECKS}")
+    else:
+        spark.createDataFrame(checks, schema=checks_spark_schema()).write.format(
+            "delta"
+        ).mode("append").option("mergeSchema", "true").saveAsTable(CHECKS)
+        print(f"appended {len(checks)} rows to {CHECKS} as run {RUN_ID}")
 
     display(
         spark.table(METRICS)

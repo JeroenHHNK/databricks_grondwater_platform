@@ -26,6 +26,9 @@ dbutils.widgets.text("metrics_table",
 dbutils.widgets.text("manifest_table",
                      "waterkeringbeheer_prd.jvanruitenbeek.pastas_series_manifest",
                      "Manifest table")
+dbutils.widgets.text("checks_table",
+                     "waterkeringbeheer_prd.jvanruitenbeek.pastas_model_checks",
+                     "Model checks table")
 dbutils.widgets.text("run_id", "", "Run id (blank = the latest)")
 dbutils.widgets.text("good_r2", "0.7", "R2 considered healthy")
 
@@ -57,6 +60,7 @@ from pyspark.sql import functions as F
 
 METRICS = dbutils.widgets.get("metrics_table").strip()
 MANIFEST = dbutils.widgets.get("manifest_table").strip()
+CHECKS = dbutils.widgets.get("checks_table").strip()
 GOOD_R2 = float(dbutils.widgets.get("good_r2"))
 
 requested_run = dbutils.widgets.get("run_id").strip()
@@ -149,6 +153,42 @@ if counts and counts["total"]:
     if counts["poor"]:
         print(f"{counts['poor']} fitted but weak - inspect the cleaning for those "
               "before trusting them")
+
+# COMMAND ----------
+
+# MAGIC %md
+# MAGIC ## 3b. Do the fits pass the model checks?
+# MAGIC
+# MAGIC Brakenhoff et al. (2022), one row per check in `pastas_model_checks`. A fit
+# MAGIC passes only if **every** check passes; `passed` NULL (not evaluable) is a no.
+# MAGIC The checks most often failed are listed first — one check failing everywhere
+# MAGIC says more about the model setup than about the series.
+
+# COMMAND ----------
+
+if not spark.catalog.tableExists(CHECKS):
+    print(f"no {CHECKS} yet; run the fit notebook with this code version")
+else:
+    run_checks = spark.table(CHECKS).where(F.col("run_id") == RUN_ID)
+    ok = F.coalesce(F.col("passed"), F.lit(False))
+    display(
+        run_checks.groupBy("series_name", "model_type")
+        .agg(
+            F.count("*").alias("checks"),
+            F.sum(ok.cast("int")).alias("passed"),
+            F.min(ok).alias("all_passed"),
+            F.concat_ws("; ", F.collect_list(
+                F.when(~ok, F.col("check")))).alias("not_passed"),
+        )
+        .orderBy("all_passed", "series_name")
+    )
+    display(
+        run_checks.where(~ok)
+        .groupBy("model_type", F.regexp_replace("check", r"^Bounds: .*", "Bounds")
+                 .alias("check_kind"))
+        .agg(F.count("*").alias("fails"))
+        .orderBy(F.col("fails").desc())
+    )
 
 # COMMAND ----------
 

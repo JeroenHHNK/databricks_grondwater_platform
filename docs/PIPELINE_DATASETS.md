@@ -23,6 +23,7 @@ describes running code. Verified against the code on 2026-10-20:
 | 4 | `LoadedHead` / `PreparedHead` | ❌ **superseded** — `LoadedHead` is unused; **`prepare_head` and `PreparedHead` no longer exist**. Cleaning is `clean.py::clean_head` → `CleanedSeries`. |
 | 5 | Discovery DataFrame | ❌ **superseded** — replaced by `pastas_series_manifest`, keyed on `meetreeks_id`, not `(survey, file_path)`. |
 | 6 | Delta table `tarso_runs` | ❌ **superseded** — **no code writes `tarso_runs`.** The real table is `pastas_fit_metrics`; see §6a. |
+| 6b | Delta table `pastas_model_checks` | ✅ **current** — added 2026-10-28. |
 | 7 | Output: model files | ❌ **superseded** — path and filename both changed; see §3a's artefact tree. |
 | 8 | Job parameters | ❌ **superseded** — the real widgets are listed in §8a. |
 | 9 | Fixed model constants | ✅ **current** — matches `fit.py::build_model`. |
@@ -396,6 +397,15 @@ losing the row.
 > `ml.stats.summary()`; this table reads individual API methods instead. Add them to
 > `FIT_METRICS_SCHEMA` and `extract_metrics` if you want them.
 
+**Tarso response times.** Days until 95% of a recharge pulse has worked through,
+`t95 = -a * ln(0.05)`, from the fitted parameters. `NULL` for `recharge` rows.
+
+| Column | Spark | Notes |
+|---|---|---|
+| `t95_level0_days` | `double` | First drainage level (`Tarso_a0`): governs the head below `d1`. |
+| `t95_level1_days` | `double` | Second drainage level's own response (`Tarso_a1`). |
+| `t95_upper_regime_days` | `double` | Above `d1` both levels drain, and the simulation uses `a_e = a1·A0/(A0+A1)`. Always shorter than `t95_level1_days`. |
+
 ### 6a.4 What was actually fitted — the cleaning audit
 
 Every count from `clean.py::clean_head`, so a surprising fit can be traced to the
@@ -424,6 +434,57 @@ cleaning rather than the solver. This has no equivalent in §6.
 | `forcing_units` | `string` | `m` or `mm` — **recorded because it rescales the gain parameters**, making the two conventions incomparable. |
 | `pastas_version` | `string` | e.g. `1.12.0`. |
 | `fitted_at` | `timestamp` | Wall clock at row creation. |
+
+## 6b. Output: Delta table `pastas_model_checks` ✅ current
+
+`waterkeringbeheer_prd.jvanruitenbeek.pastas_model_checks`. Written by
+`notebooks/transformation/fit_pastas_models.py` in the same step as §6a, from
+`model_checks.MODEL_CHECKS_SCHEMA`. **`mode("append")` + `mergeSchema`.**
+
+**Grain: one row per check × series × model type × run.** Primary key (logical):
+`(run_id, meetreeks_id, model_type, check)`. Only successful fits are checked; a failed
+fit has no model and so no rows. Join to §6a on `(run_id, meetreeks_id, model_type)`.
+
+**A fit passes when every one of its rows has `passed = true`.** `passed` NULL means
+the check could not be evaluated; treat it as a no.
+
+### The checklist: Brakenhoff et al. (2022), via `ps.check.checklist`
+
+Built in `model_checks.brakenhoff_checks` rather than taken from
+`ps.check.get_checks_literature`: the stock 1.14 list raises `KeyError: 'Tarso_A'` on a
+Tarso model (two gains), and the pinned 1.12 has no `get_checks_literature` and tests
+every parameter's uncertainty, drainage levels included. Identical output on 1.12 and
+1.14 (verified 2026-10-28).
+
+| Check (`check`) | Passes when | Rows |
+|---|---|---|
+| `rsq>=0.7` | R² ≥ 0.7 | 1 |
+| `t95_<sm> < 0.5 Δt_calib` | 95% response memory < half the calibration length | 1 (Tarso: level 0) |
+| `t95_Tarso_level1 < 0.5 Δt_calib` | the same, for Tarso's second drainage level (`a1`) | Tarso only |
+| `runs_test (p > α)` | residuals show no autocorrelation, p > 0.05 | 1 |
+| `\|<gain>\| > 1.96σ` | the gain differs significantly from zero | recharge: `Recharge_A`; Tarso: `Tarso_A0`, `Tarso_A1` |
+| `Bounds: <parameter>` | the optimum is not on a `pmin`/`pmax` bound | one per parameter |
+
+> The models are fitted **without a noise model**, so the residuals stand in for the
+> noise. The 1.96σ test assumes they are white: when the runs test fails, do not lean on
+> the gain test either. A σ of 0 (`threshold` = 0) means Pastas could not estimate the
+> uncertainty, and the gain test then passes trivially.
+
+| Column | Spark | Notes |
+|---|---|---|
+| `run_id`, `meetreeks_id`, `series_name`, `model_type` | `string` | As in §6a. |
+| `checklist` | `string` | `brakenhoff_2022`. |
+| `check_order` | `int` | Position in the checklist, so the report order survives a query. |
+| `check` | `string` | Pastas' label, e.g. `rsq>=0.7`, `Bounds: Tarso_a1`. |
+| `statistic` | `double` | The value tested (R², days, p-value, parameter). |
+| `operator` | `string` | `>=`, `<`, `>`, or `within`. |
+| `threshold` | `double` | Scalar threshold; NULL for `within`. |
+| `threshold_min`, `threshold_max` | `double` | `pmin`/`pmax` for the bounds checks; NULL otherwise. |
+| `dimensions` | `string` | Pastas' unit guess, e.g. `[T]`. |
+| `passed` | `boolean` | Pastas' `pass` (renamed: Python keyword). NULL = not evaluable. |
+| `comment` | `string` | Pastas' caveat, or the error for a `checklist_error` row. |
+| `pastas_version` | `string` | The checks moved between releases; recorded for that reason. |
+| `checked_at` | `timestamp` | Wall clock at row creation. |
 
 ## 7. Output: model files ❌ superseded
 
