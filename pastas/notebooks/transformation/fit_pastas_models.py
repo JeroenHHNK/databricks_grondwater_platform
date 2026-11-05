@@ -145,7 +145,7 @@ def _resolve_source_root(given: str) -> str:
             raise RuntimeError(
                 f"No pyproject.toml above {os.getcwd()} and source_root was not set. "
                 "Set the source_root widget to the repo path, e.g. "
-                "/Workspace/Shared/Projecten/databricks_pastas_pipeline"
+                "/Workspace/Shared/Projecten/databricks_grondwater_platform/pastas"
             )
         current = parent
 

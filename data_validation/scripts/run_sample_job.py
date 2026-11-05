@@ -12,7 +12,7 @@ into the repo's Git-folder checkout and pushes it. Scoped to `--limit-series`
 
 Prerequisites (one-time):
   * the repo is on GitHub and added to Databricks as a **Git folder** (its workspace
-    path is `--repo-path`, e.g. /Workspace/Users/<you>/databricks_data_validation);
+    path is `--repo-path`, e.g. /Workspace/Users/<you>/databricks_grondwater_platform/data_validation);
   * a PAT for push stored as a Databricks **secret** (`--git-token-secret scope/key`);
   * an existing all-purpose cluster (`--cluster-id`);
   * ~/.databrickscfg with host + token (or `--profile`).
@@ -20,7 +20,7 @@ Prerequisites (one-time):
 Example (PowerShell):
     .\.venv\Scripts\python scripts\run_sample_job.py `
         --cluster-id 0101-123456-abcde123 `
-        --repo-path /Workspace/Users/j.vanruitenbeek@hhnk.nl/databricks_data_validation `
+        --repo-path /Workspace/Users/j.vanruitenbeek@hhnk.nl/databricks_grondwater_platform/data_validation `
         --git-token-secret gh/pat --limit-series 3
 
 Reads only; writes only to the personal schema and the repo. Never writes gold_prd.
