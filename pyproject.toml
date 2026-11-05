@@ -1,0 +1,33 @@
+# The central Databricks App (app.py). Databricks Apps installs these with uv from this
+# file and uv.lock. The projects keep their own pyproject.toml for their notebooks,
+# scripts and tests; when a project's app code needs a new package, add it here too and
+# run `uv lock`.
+[project]
+name = "grondwater-platform"
+version = "0.1.0"
+description = "One Databricks App for the groundwater projects: boxplots and data validation."
+readme = "README.md"
+# The Databricks Apps runtime is Python 3.11.
+requires-python = ">=3.11, <4.0"
+dependencies = [
+    "streamlit >= 1.66",              # st.iframe (boxplots), st.navigation sections
+    "pandas >= 2.2",
+    "numpy >= 1.26",
+    "plotly >= 6.2",
+    "pyarrow >= 18.0",                # also needed for fetchall_arrow
+    "openpyxl >= 3.1",
+    "pyyaml >= 6.0",                  # data_validation/config/settings.yaml
+    "requests >= 2.31",               # data_validation/local_validation/knmi.py
+    # boxplots
+    "d-geolib >= 2.7, < 3",           # reading .stix
+    "shapely >= 2.0",
+    "pyproj >= 3.6",
+    "databricks-sql-connector >= 4.0",
+    "databricks-sdk >= 0.40",
+]
+
+[dependency-groups]
+dev = ["pytest >= 8.2"]
+
+[tool.uv]
+package = false

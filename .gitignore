@@ -1,0 +1,9 @@
+# Root-level ignores; each project folder keeps its own .gitignore as well.
+__pycache__/
+*.py[cod]
+.venv/
+.env
+.pytest_cache/
+.ruff_cache/
+.DS_Store
+Thumbs.db

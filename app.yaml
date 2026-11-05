@@ -1,6 +1,8 @@
-# Databricks Apps: hoe de app start. Poort en adres zet Databricks zelf, via de
-# STREAMLIT_SERVER_*-omgevingsvariabelen; de pakketten komen uit pyproject.toml
-# en uv.lock.
+# Databricks Apps: how the central app starts. Databricks sets the port and address
+# through the STREAMLIT_SERVER_* environment variables; the packages come from the root
+# pyproject.toml and uv.lock (not from the projects' own files).
+#
+# Deploy: Compute -> Apps -> the app -> Deploy, source = the root of this Git folder.
 command:
   - streamlit
   - run
@@ -9,10 +11,15 @@ command:
 env:
   - name: STREAMLIT_BROWSER_GATHER_USAGE_STATS
     value: "false"
-  # Het SQL warehouse voor de live stijghoogtes: de app-resource met sleutel
-  # `sql-warehouse` (Compute -> Apps -> de app -> Edit -> App resources).
-  # Staat uit tot de resource en de GRANTs uit DATA_CATALOG.md er zijn; tot dan
-  # toont de app de export uit input_data/databricks_export/. Aanzetten: de twee
-  # regels hieronder terugzetten, de resource toevoegen en opnieuw deployen.
+  # Data validation: saving review decisions is off in the deployed app (its files are
+  # not kept and cannot be pushed to git). That is also the default inside a Databricks
+  # App; this line makes it explicit.
+  - name: VALIDATION_READ_ONLY
+    value: "1"
+  # Boxplots: the SQL warehouse for live heads, the app resource with key
+  # `sql-warehouse` (Compute -> Apps -> the app -> Edit -> App resources).
+  # Off until the resource and the GRANTs from boxplots/DATA_CATALOG.md are in place;
+  # until then the app shows the export in boxplots/input_data/databricks_export/.
+  # To switch on: uncomment the two lines below, add the resource and redeploy.
   # - name: DATABRICKS_WAREHOUSE_ID
   #   valueFrom: sql-warehouse
