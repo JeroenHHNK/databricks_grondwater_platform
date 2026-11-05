@@ -1,0 +1,63 @@
+# Dashboard + pipeline configuration.
+#
+# NOTE: the on-prem `dashboard/config.py` loads this file and applies its own
+# defaults. The keys below are the ones this Databricks-backed pipeline adds or
+# relies on; when you vendor in the on-prem `config/settings.yaml`, merge its
+# keys into this file rather than overwriting it.
+
+# --- Data pulled from the Databricks source (written by 02_export_to_git) ---
+# Everything replicated from Databricks lives under input_output/output_databricks/.
+# Replaces the old input_data/ + convert-fugro/convert-wiertsema flow; git carries
+# it, the local IDE pulls it.
+#   time_series_data/<filename>.csv   (Time,head — raw hourly copy)
+#   metadata/object_data.csv          (one row per series; join on `filename`)
+databricks_output_dir: input_output/output_databricks
+time_series_dir: input_output/output_databricks/time_series_data
+metadata_file: input_output/output_databricks/metadata/object_data.csv
+
+# --- Automated validation results (local_validation/validate.ipynb; gitignored) ---
+#   validated/<filename>.csv  (timestamp,raw_head,head,v1..v4,rule_a,rule_b)
+validated_dir: output_data/validated
+validation_summary_file: output_data/validation_summary.csv
+
+# --- Reviewed copies (written back to Delta by 03_validated_to_delta) ---
+# The manual review writes the verdicts here; 03 reads these and builds the
+# validated Delta table. Frozen store schema.
+repository_output_dir: input_output/output_repository
+
+# --- Ephemeral build artifacts (gitignored) ---
+output_data_dir: output_data
+
+# --- KNMI forcing committed to the repo (cluster has no egress) ---
+# forcing_file is written by local_validation/knmi_forcing.ipynb (hourly KNMI station
+# forcing_station: precipitation_mm, makkink_mm) and is the review app's default overlay;
+# any other CSV in forcing_dir is offered as well.
+forcing_file: input_output/knmi_berkhout.csv
+forcing_dir: data/forcing
+forcing_station: 249 # Berkhout
+
+# --- Validation store (layer 3; one <filename>.csv per series in repository_output_dir) ---
+# Notes in the store are capped at this many characters (review app).
+notes_max_len: 30
+# FROZEN. Do not change: breaks merge compatibility with existing review work.
+store:
+  frequency: "1h"
+  schema: [timestamp, raw_data, gecontroleerd, afgekeurd, note]
+
+# --- Automated flag layers (v1-v4), carried from the handover §5 ---
+# Applied in order by local_validation/checks.py; read by local_validation/data_io.py.
+flags:
+  # v1 bounds come per series from the metadata: filter bottom (eind_filter) and
+  # top of well (bovenkant_peilbuis). A missing bound skips that side.
+  v2_max_up: 0.30 # m/h
+  v2_max_down: -0.05 # m/h
+  v3_band: 0.15 # m either side of eind_filter (inclusive); no eind_filter -> v3 skipped
+  v3_min_run: 1 # steps; 1 = flag every in-band hour, >1 = only runs this long
+  v4_iqr_factor: 1.5
+
+# --- Autoflag rules (applied to the review store; manual review always wins) ---
+autoflag:
+  rule_a_drop: 0.10 # m in one hourly step
+  rule_a_apply: false # report-only: disagreed with human reviewers too often
+  rule_b_margin: 0.10 # m above the filter bottom
+  rule_b_apply: true
