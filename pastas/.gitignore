@@ -1,0 +1,24 @@
+__pycache__/
+*.py[cod]
+*.egg-info/
+.pytest_cache/
+.venv/
+venv/
+build/
+dist/
+
+# Data and model outputs never go to git
+*.csv
+*.pas
+!tests/data/*.csv
+# Forcing is small and ships with the code: the cluster has no internet.
+!data/forcing/*.csv
+
+# Databricks / local config with secrets
+.databricks/
+.env
+*.tfstate
+.DS_Store
+
+# Local output from scripts/check_knmi.py (not a cluster artefact)
+.local/

@@ -1,0 +1,31 @@
+[build-system]
+requires = ["setuptools>=68"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "tarso-pipeline"
+version = "0.1.0"
+description = "Minimal Pastas/Tarso training pipeline for Databricks"
+readme = "README.md"
+requires-python = ">=3.12"
+dependencies = [
+    "pandas",
+    "numpy",
+    # KNMI forcing download (src/tarso_pipeline/knmi.py).
+    "requests",
+]
+
+[project.optional-dependencies]
+# Pastas is only needed from step 2 onwards (model training).
+pastas = ["pastas==1.12.*"]
+dev = ["pytest"]
+
+[tool.setuptools.packages.find]
+where = ["src"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+pythonpath = ["src"]
+markers = [
+    "slow: runs a real Pastas fit (seconds, needs the pastas extra)",
+]
