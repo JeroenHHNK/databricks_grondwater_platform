@@ -282,10 +282,15 @@ def maak_profiel_figuren(
                     f"(afwijking {rmse_zonder:.3f}m -> {rmse_met:.3f}m)"
                 )
             if rmse_met > 0.5:
+                if rmse_zonder - rmse_met > 0.05:
+                    advies = ("een verschuiving helpt deels; zet zo nodig zelf "
+                              "'stix_offset_x' in profielen.csv.")
+                else:
+                    advies = ("verschuiven helpt niet: stix en dijkprofiel verschillen in "
+                              "hoogte, niet in ligging. Geen offset nodig.")
                 print(
-                    "   ⚠️ Resterende afwijking na correctie is nog aanzienlijk "
-                    f"(RMSE {rmse_met:.2f}m). Controleer dit profiel handmatig; evt. te "
-                    "corrigeren via kolom 'stix_offset_x_handmatig' in de profielen-Excel."
+                    "   ⚠️ Resterende afwijking tussen dijkprofiel en stix-maaiveld "
+                    f"(RMSE {rmse_met:.2f}m); {advies}"
                 )
 
         dijkprofiel[:, 0] += offset_x

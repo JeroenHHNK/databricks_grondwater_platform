@@ -7,8 +7,9 @@ DATABRICKS_WAREHOUSE_ID is ingesteld, anders uit de export.
     uv run python notebooks/maak_plots.py --project Beemster   # één project
     uv run python notebooks/maak_plots.py --alle --strict      # stop bij de eerste fout
 
-Uitvoer in Projecten/<project>/plots/ (niet versiebeheerd). Een run met een
-mislukt profiel eindigt met exitcode 1.
+Per project eerst de invoercontrole (`workbook_lader.valideer`); een `fout`
+daarin stopt het hele project, ook in de app. Uitvoer in Projecten/<project>/plots/
+(niet versiebeheerd). Een run met een mislukt profiel eindigt met exitcode 1.
 """
 import argparse
 import sys
@@ -39,6 +40,8 @@ def main(project_map_naam: str, bron: databricks_reeksen.Bron, strict: bool = Fa
     # === Configuratie Laden ===
     # Alles komt uit de centrale invoer in input_data/ (config.csv, projecten.csv,
     # D-Stability/, dwarsprofielen/; zie workbook_lader); de paden staan in modules/paths.py.
+    # laad_project_context draait ook de invoercontrole (workbook_lader.valideer)
+    # en stopt het project bij een `fout`.
     ctx = profiel_module.laad_project_context(project_map_naam)
     laad_reeksen = databricks_reeksen.laad_reeksen(bron, project_map_naam)
     PLOTS_PAD: Path = paths.plots_map(project_map_naam)

@@ -67,6 +67,11 @@ def config_csv() -> Path:
     return invoer_basis() / "config.csv"
 
 
+def profielen_csv() -> Path:
+    """Eén rij per dwarsprofiel: teenslootpeil, stix-offset, profiellijn in RD."""
+    return invoer_basis() / "profielen.csv"
+
+
 def projecten_csv() -> Path:
     """Eén rij per project: buitenwaterstand, boezempeiloffset."""
     return invoer_basis() / "projecten.csv"

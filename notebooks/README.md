@@ -7,10 +7,11 @@ in [DATA_CATALOG.md](../DATA_CATALOG.md).
 | bestand | waar | leest | schrijft |
 |---|---|---|---|
 | `db_notebook_exporteer_meetreeksen.py` | Databricks | `meetreeks`, `meetlocatie`, `meting` (niet `config.csv`) | `input_data/databricks_export/meetreeksen.csv` |
+| `nieuw_dwarsprofiel.py` | lokaal | `meetreeksen.csv`, stix, geometrie, profiellijn | met `--schrijf`: rijen in `config.csv` en `profielen.csv`, `D-Stability/<sleutel>.stix`, `dwarsprofielen/<sleutel>.csv`. Zonder `--schrijf` alleen tonen en controleren; `--zoek` toont de putten langs een lijn |
 | `bouw_koppeltabel_ld_dd.py` | lokaal | `config.csv`, `meetreeksen.csv` | `input_data/controle/koppeltabel_LD_DD.csv`; met `--vul-config` de `DD_`-kolommen in `config.csv` |
 | `db_notebook_exporteer_stijghoogtes.py` | Databricks | `config.csv` (`DD_meetlocatie_id`), `meetreeks`, `meetlocatie`, `meting` | `input_data/databricks_export/` (reeksen, dagwaarden, afwijkingen, validatie) |
 | `controleer_reeksen.py` | lokaal | `config.csv`, `databricks_export/` | `input_data/controle/te_controleren.csv` |
-| `maak_plots.py` | lokaal | alles; stijghoogtes live of uit de export | `Projecten/<project>/plots/*.html` (niet versiebeheerd) |
+| `maak_plots.py` | lokaal | alles; stijghoogtes live of uit de export | invoercontrole per project, dan `Projecten/<project>/plots/*.html` (niet versiebeheerd) |
 
 De `db_notebook_`-bestanden draaien in de Databricks Git folder van deze repo.
 Ze schrijven in de Git folder; commit en push daarna vanuit Databricks. Ze

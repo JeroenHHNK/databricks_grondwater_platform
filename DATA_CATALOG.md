@@ -117,6 +117,16 @@ metingen.
 ### 1. Alle meetreeksen (`db_notebook_exporteer_meetreeksen.py`)
 
 Hangt niet af van `config.csv`. Schrijft `databricks_export/meetreeksen.csv`.
+Twee lokale scripts lezen het: `bouw_koppeltabel_ld_dd.py` (de koppeling) en
+`nieuw_dwarsprofiel.py`, dat er de `LD_`-kolommen van een nieuw profiel mee
+voorinvult: `meetlocatie_code` → `LD_code` (zonder `_F-…`), `rd_x`/`rd_y` →
+`LD_x_rd`/`LD_y_rd` en `LD_x_profiel`, `bovenkant_peilbuis`, `begin_filter`,
+`eind_filter` → `LD_bk_peilbuis`, `LD_bk_filter`, `LD_ok_filter`. Die laatste
+drie zijn op 0,1 m afgerond; een inmeting gaat voor (`--inmeting`).
+Let op: filters horen bij de sensor (`sensor_sleutel`), ligging en bovenkant
+bij de meetlocatie. Zijn sensor en meetlocatie op het platform verwisseld (zoals
+B12/B13 in Heerhugowaard), dan passen ze niet bij elkaar; de invoercontrole
+meldt dat als een filter boven de bovenkant peilbuis.
 
 ```sql
 SELECT r.id AS meetreeks_id, trim(r.code) AS code, r.bronsysteem,
