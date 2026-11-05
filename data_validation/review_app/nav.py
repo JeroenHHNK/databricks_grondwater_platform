@@ -1,4 +1,9 @@
-"""The page objects, defined once so pages can `st.switch_page` to each other."""
+"""The page objects, defined once so pages can `st.switch_page` to each other.
+
+`PAGES` is what the central app (`../app.py`) shows under "Data validation";
+`navigation()` is the standalone app (`streamlit_app.py`), where the first page, Map,
+is the landing page.
+"""
 
 from __future__ import annotations
 
@@ -6,11 +11,14 @@ import streamlit as st
 
 from . import map_page, overview_page, review_page
 
-MAP = st.Page(map_page.render, title="Map", icon=":material/map:", url_path="map", default=True)
-REVIEW = st.Page(review_page.render, title="Review", icon=":material/fact_check:", url_path="review")
+MAP = st.Page(map_page.render, title="Map", icon=":material/map:", url_path="validation-map")
+REVIEW = st.Page(review_page.render, title="Review", icon=":material/fact_check:",
+                 url_path="validation-review")
 OVERVIEW = st.Page(overview_page.render, title="Overview", icon=":material/table_chart:",
-                   url_path="overview")
+                   url_path="validation-overview")
+
+PAGES = [MAP, REVIEW, OVERVIEW]
 
 
 def navigation():
-    return st.navigation([MAP, REVIEW, OVERVIEW])
+    return st.navigation(PAGES)

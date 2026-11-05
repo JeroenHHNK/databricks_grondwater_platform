@@ -39,7 +39,10 @@ from modules.profiel import ProfielFiguren, ProjectContext
 PLOT_HOOGTE = 1450
 KAART_HOOGTE = 650
 
-st.set_page_config(page_title="Boxplots peilbuizen", layout="wide", initial_sidebar_state="collapsed")
+# Als pagina van de centrale app (../app.py) zet die de paginaconfiguratie en
+# blijft de zijbalk met de navigatie open; alleen standalone hier.
+if not st.session_state.get("_centrale_app"):
+    st.set_page_config(page_title="Boxplots peilbuizen", layout="wide", initial_sidebar_state="collapsed")
 
 
 def _bron() -> databricks_reeksen.Bron:

@@ -2,9 +2,10 @@
 """
 Eén plek voor alle paden en voor elke Unity Catalog-naam.
 
-Lokaal en op Databricks dezelfde code: `repo_root()` zoekt omhoog naar
-`pyproject.toml` en gebruikt bewust *niet* `__file__`, omdat Databricks
-workspace-`.py`-bestanden met `exec` uitvoert en `__file__` dan niet bestaat.
+Lokaal en op Databricks dezelfde code: `repo_root()` gaat uit van de plek van
+deze module en valt terug op omhoog zoeken naar `pyproject.toml` vanaf de
+werkmap, omdat Databricks workspace-`.py`-bestanden met `exec` uitvoert en
+`__file__` dan niet bestaat.
 """
 
 from pathlib import Path
@@ -33,7 +34,20 @@ NEERSLAG_CSV = "neerslag_berkhout.csv"
 
 
 def repo_root() -> Path:
-    """Zoekt vanaf de werkmap omhoog naar de map met `pyproject.toml`."""
+    """
+    De map `boxplots/` (die met `pyproject.toml` en `input_data/`).
+
+    Eerst vanaf deze module: zo vindt de centrale app in de repo-root, die vanuit
+    een andere werkmap start, toch `boxplots/`. Lukt dat niet (`__file__` ontbreekt
+    als Databricks een workspace-bestand met `exec` uitvoert), dan vanaf de werkmap
+    omhoog naar de eerste map met `pyproject.toml`.
+    """
+    try:
+        hier = Path(__file__).resolve().parent.parent
+    except NameError:
+        hier = None
+    if hier is not None and (hier / "pyproject.toml").is_file() and (hier / INVOER_MAP).is_dir():
+        return hier
     for kandidaat in [Path.cwd(), *Path.cwd().parents]:
         if (kandidaat / "pyproject.toml").is_file():
             return kandidaat

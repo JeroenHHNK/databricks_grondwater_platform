@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import os
 from pathlib import Path
 
 import pandas as pd
@@ -75,6 +76,20 @@ def load_stressor_csv(path: str) -> dict:
         return {"error": f"{Path(path).name}: missing columns {', '.join(sorted(missing))}"}
     return {"precipitation": pd.to_numeric(df["precipitation_mm"], errors="coerce").dropna(),
             "evaporation": pd.to_numeric(df["makkink_mm"], errors="coerce").dropna()}
+
+
+READ_ONLY_MSG = ("Read-only here: saving review decisions is off in the deployed app, because "
+                 "a Databricks App's files are not kept and cannot be pushed to git. Review "
+                 "locally and push input_output/output_repository/.")
+
+
+def read_only() -> bool:
+    """Can the review be saved? `VALIDATION_READ_ONLY=1/0` decides; without it, saving is
+    off inside a Databricks App (which sets `DATABRICKS_APP_NAME`) and on everywhere else."""
+    flag = os.environ.get("VALIDATION_READ_ONLY", "").strip().lower()
+    if flag:
+        return flag in ("1", "true", "yes")
+    return bool(os.environ.get("DATABRICKS_APP_NAME"))
 
 
 def open_in_review(filename: str) -> None:

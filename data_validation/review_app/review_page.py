@@ -42,6 +42,9 @@ def _load(settings: dict, filename: str) -> None:
 
 
 def _save(settings: dict) -> None:
+    if common.read_only():
+        st.warning(common.READ_ONLY_MSG)
+        return
     filename, store = st.session_state.rv_filename, st.session_state.rv_store
     path = stores.save(settings, filename, store)
     st.session_state.rv_rs.on_disk = store.copy()
@@ -96,7 +99,7 @@ def _sidebar(settings: dict, meta: pd.DataFrame) -> str | None:
         if loaded and st.session_state.get("rv_dirty"):
             sb.warning(f"Unsaved edits on **{loaded}**. Save or discard them to switch.")
             c1, c2 = sb.columns(2)
-            if c1.button("Save", type="primary", width="stretch"):
+            if c1.button("Save", type="primary", width="stretch", disabled=common.read_only()):
                 _save(settings)
                 _load(settings, pick)
                 st.rerun()
@@ -108,8 +111,11 @@ def _sidebar(settings: dict, meta: pd.DataFrame) -> str | None:
 
     if "rv_store" in st.session_state:
         sb.divider()
+        if common.read_only():
+            sb.info(common.READ_ONLY_MSG)
         if sb.button("Save to validation store", type="primary", width="stretch",
-                     disabled=not (st.session_state.rv_dirty or st.session_state.rv_rs.changed)):
+                     disabled=common.read_only()
+                     or not (st.session_state.rv_dirty or st.session_state.rv_rs.changed)):
             _save(settings)
         if sb.button("Reload (discard unsaved edits)", width="stretch"):
             _load(settings, st.session_state.rv_filename)
