@@ -30,7 +30,8 @@ def vendor_summary(detail: pd.DataFrame) -> pd.DataFrame:
 def render() -> None:
     st.title("Review progress")
     c1, c2 = st.columns([1, 5])
-    if c1.button("Refresh"):
+    # In the central app, data is reloaded on one page: Refresh data.
+    if not st.session_state.get("_centrale_app") and c1.button("Refresh"):
         common.overview.clear()
         common.summary.clear()
         st.rerun()
