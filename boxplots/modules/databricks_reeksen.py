@@ -57,7 +57,7 @@ class Bron:
     # Per meetlocatie per meetreeks: meetlocatie_id, meetreeks_id, meetreeks_code,
     # eenheid, metingen, van, tot. De export heeft ook `reeks_nr` en filters.
     reeksen: DataFrame
-    dag: DataFrame  # meetreeks_id, datum, gem
+    dag: DataFrame  # meetreeks_id, datum, gem (en, als de bron ze heeft, min, max, n_status_1)
     fout: str | None = None  # waarom live niet lukte, als dit de terugval is
 
     def laatste_meting(self) -> str:
@@ -79,8 +79,11 @@ def lees_reeksen() -> DataFrame:
 
 def export_bron() -> Bron:
     reeksen: DataFrame = lees_reeksen()
+    # min, max en n_status_1 (tijdstippen die de bron invalide noemt) gebruikt
+    # alleen het Stijghoogtes-dashboard; oudere exports hebben ze misschien niet.
     dag: DataFrame = pd.read_csv(
-        export_map() / DAG_CSV, usecols=["reeks_nr", "datum", "gem"], parse_dates=["datum"]
+        export_map() / DAG_CSV, parse_dates=["datum"],
+        usecols=lambda k: k in {"reeks_nr", "datum", "gem", "min", "max", "n_status_1"},
     )
     # De export gebruikt een kort reeks_nr in plaats van de 64 tekens lange id.
     ids: Series = reeksen.dropna(subset=["reeks_nr"]).drop_duplicates("reeks_nr").set_index("reeks_nr")["meetreeks_id"]
