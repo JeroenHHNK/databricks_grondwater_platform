@@ -16,7 +16,11 @@ env:
   # App; this line makes it explicit.
   - name: VALIDATION_READ_ONLY
     value: "1"
-  # Boxplots: the SQL warehouse for live heads, the app resource with key
+  # Refresh data -> Live data access: the schema where validation results would be written
+  # (and read: validated_meting). Defaults to the personal schema the notebooks use.
+  # - name: VALIDATION_SCHEMA
+  #   value: "waterkeringbeheer_prd.jvanruitenbeek"
+  # Boxplots and Stijghoogtes: the SQL warehouse for live heads, the app resource with key
   # `sql-warehouse` (Compute -> Apps -> the app -> Edit -> App resources).
   # Off until the resource and the GRANTs from boxplots/DATA_CATALOG.md are in place;
   # until then the app shows the export in boxplots/input_data/databricks_export/.

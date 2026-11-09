@@ -22,10 +22,20 @@ uv sync
 uv run streamlit run app.py
 ```
 
-`app.py` puts the projects side by side in the navigation pane:
+`app.py` puts the projects side by side in the navigation pane (pages in `platform_app/nav.py`):
 
 - **Boxplots**: Dwarsprofielen (the map, then a cross-section; `?profiel=BE_0072` links straight to one)
+- **Stijghoogtes**: heads from the same source as Boxplots (daily means of the series Boxplots
+  picks per well), in `platform_app/stijghoogtes.py`:
+  - *Eén peilbuis*: one series with its daily min–max, filter levels and days the source marks invalid;
+  - *Per dwarsprofiel*: all wells of a cross section, coloured by zone (BUKR, BIKR, BIT, …), filter by zone and depth;
+  - *Zone vergelijken*: one zone (default BIKR) across cross sections and projects, with the median.
+  The zone is read from the well code (`…_BIKR_GMW_PB2_…`); wells without a zone token show as `onbekend`.
+  Every view is in the URL, and Boxplots links to *Per dwarsprofiel*.
 - **Data validation**: Map, Review, Overview
+- **Data → Refresh data**: the one place to reload data in the app, the steps to refresh each
+  project's source data, and a check of live access (below). The project pages have no refresh
+  buttons of their own in the central app.
 
 The root `pyproject.toml` and `uv.lock` are the app's dependencies; Databricks Apps
 installs from them. When app code in a project needs a new package, add it there as well
@@ -38,8 +48,21 @@ folder with `app.yaml`) as source. `app.yaml` holds the environment:
   files are not kept and cannot be pushed to git, so review decisions are made locally
   (`uv run streamlit run app.py`, where saving is on) and pushed as before. Without the
   variable, saving is off inside a Databricks App and on everywhere else.
-- `DATABRICKS_WAREHOUSE_ID` (commented out): live heads for Boxplots, see
-  [`boxplots/DATA_CATALOG.md`](boxplots/DATA_CATALOG.md). Without it, Boxplots shows its export.
+- `DATABRICKS_WAREHOUSE_ID` (commented out): live heads for Boxplots and Stijghoogtes, see
+  [`boxplots/DATA_CATALOG.md`](boxplots/DATA_CATALOG.md). Without it, both show the export.
+
+### Live data and permissions
+
+*Refresh data → Live data access* checks, as the app's service principal (or, with Databricks
+Apps user authorization switched on, as you), whether it can reach the SQL warehouse, read the
+three `gold_prd` tables the heads come from, see the validation schema and read
+`validated_meting`; optionally it creates and drops a scratch table to test writing. Every
+failure comes with the `GRANT` statements to fix it, filled in with the identity's name. It
+works before live is switched on: type the warehouse ID on the page. Locally it runs as your own
+`databricks auth login` profile. The checks are in `platform_app/toegang.py`.
+
+The schema for validation results is `VALIDATION_SCHEMA` (default
+`waterkeringbeheer_prd.jvanruitenbeek`, where `03_validated_to_delta` writes today).
 
 The standalone apps still run on their own: `boxplots/app.py` and
 `data_validation/streamlit_app.py`.
@@ -58,6 +81,7 @@ Add this repo once as a Git folder. Point notebooks and jobs at the project subf
 ## Tests
 
 ```bash
+uv run pytest tests                  # the central app's own code (platform_app/)
 cd data_validation && uv run --project .. pytest tests
 cd pastas && pip install -e ".[pastas,dev]" && pytest -m "not slow"
 ```
