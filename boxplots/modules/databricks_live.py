@@ -21,6 +21,8 @@ from __future__ import annotations
 
 import os
 import re
+from collections.abc import Iterator
+from contextlib import contextmanager
 
 import pandas as pd
 from pandas import DataFrame
@@ -60,6 +62,33 @@ def _ids_sql(meetlocatie_ids: list[str]) -> str:
     return ", ".join(f"'{i}'" for i in ids)
 
 
+@contextmanager
+def verbinding(access_token: str | None = None, warehouse_id: str | None = None) -> Iterator:
+    """
+    Een cursor op het SQL warehouse van `DATABRICKS_WAREHOUSE_ID`.
+
+    Zonder `access_token` als de app zelf (service principal) of lokaal als jij
+    (`databricks.sdk.core.Config`); met een token als de bezoeker, voor
+    *user authorization* van een Databricks App (header `X-Forwarded-Access-Token`).
+    `warehouse_id` overschrijft `DATABRICKS_WAREHOUSE_ID` (voor de toegangscontrole).
+    Zet de sessie op UTC: de dagen zijn UTC-dagen, net als in de export.
+    """
+    from databricks import sql
+    from databricks.sdk.core import Config
+
+    cfg = Config()
+    verbind = {"credentials_provider": lambda: cfg.authenticate} if access_token is None else {
+        "access_token": access_token}
+    with sql.connect(
+        server_hostname=cfg.host.removeprefix("https://").rstrip("/"),
+        http_path=f"/sql/1.0/warehouses/{(warehouse_id or os.environ[WAREHOUSE_VAR]).strip()}",
+        **verbind,
+    ) as verbinding_, verbinding_.cursor() as cursor:
+        # to_date volgt de sessietijdzone.
+        cursor.execute("SET TIME ZONE 'UTC'")
+        yield cursor
+
+
 def _query(cursor, sql: str) -> DataFrame:
     cursor.execute(sql)
     return cursor.fetchall_arrow().to_pandas()
@@ -72,42 +101,35 @@ def haal_op(meetlocatie_ids: list[str]) -> tuple[DataFrame, DataFrame]:
     Geeft (reeksen, dag):
     - reeksen: meetlocatie_id, meetreeks_id, meetreeks_code, eenheid, filters,
       metingen (aantal unieke tijdstippen), van, tot (eerste en laatste dag);
-    - dag: meetreeks_id, datum (UTC-dag), n, gem.
+    - dag: meetreeks_id, datum (UTC-dag), n, gem, min, max, n_status_1.
 
     Twee queries: de meetreeksen (klein) en de daggemiddelden, de enige die
     door `meting` gaat.
     """
-    # Pas hier: zonder warehouse hoeft de connector niet geladen te worden.
-    from databricks import sql
-    from databricks.sdk.core import Config
-
     gekozen = f"""
     {_REEKS_LOCATIE},
     gekozen AS (
         SELECT DISTINCT * FROM reeks_locatie WHERE meetlocatie_id IN ({_ids_sql(meetlocatie_ids)})
     )"""
 
-    cfg = Config()
-    with sql.connect(
-        server_hostname=cfg.host.removeprefix("https://").rstrip("/"),
-        http_path=f"/sql/1.0/warehouses/{os.environ[WAREHOUSE_VAR].strip()}",
-        credentials_provider=lambda: cfg.authenticate,
-    ) as verbinding, verbinding.cursor() as cursor:
-        # to_date volgt de sessietijdzone; de dagen zijn UTC-dagen, net als in de export.
-        cursor.execute("SET TIME ZONE 'UTC'")
+    with verbinding() as cursor:
         reeksen = _query(cursor, f"WITH {gekozen} SELECT * FROM gekozen")
         # De enige query die `meting` leest. meting.id is niet uniek en een
         # tijdstip kan dubbel staan: eerst één waarde per reeks per tijdstip.
+        # `n_status_1`: tijdstippen die de bron als invalide markeert (validatie_status 1).
         dag = _query(cursor, f"""
             WITH {gekozen},
             per_tijdstip AS (
-                SELECT m.meetreeks_id, m.tijdstempel_utc, avg(m.waarde) AS waarde
+                SELECT m.meetreeks_id, m.tijdstempel_utc, avg(m.waarde) AS waarde,
+                       max(CASE WHEN m.validatie_status = 1 THEN 1 ELSE 0 END) AS invalide
                 FROM {paths.TBL_METING} m
                 WHERE m.meetreeks_id IN (SELECT meetreeks_id FROM gekozen) AND m.waarde IS NOT NULL
                 GROUP BY m.meetreeks_id, m.tijdstempel_utc
             )
             SELECT meetreeks_id, to_date(tijdstempel_utc) AS datum,
-                   count(*) AS n, round(avg(waarde), 4) AS gem
+                   count(*) AS n, round(avg(waarde), 4) AS gem,
+                   round(min(waarde), 4) AS min, round(max(waarde), 4) AS max,
+                   sum(invalide) AS n_status_1
             FROM per_tijdstip
             GROUP BY meetreeks_id, to_date(tijdstempel_utc)
         """)

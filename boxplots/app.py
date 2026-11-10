@@ -146,7 +146,11 @@ def _toon_kaart(locaties: DataFrame, bron: databricks_reeksen.Bron) -> None:
         f"{_herkomst(bron)} · klik op een dwarsprofiel om het te openen"
         + (f" · grijs: {zonder_data} zonder stijghoogtes" if zonder_data else "")
     )
-    if knop.button("↻ Ververs stijghoogtes", width="stretch"):
+    if st.session_state.get("_centrale_app"):
+        # In de centrale app ververs je op één plek: Refresh data.
+        from platform_app import nav
+        knop.page_link(nav.REFRESH, label="Ververs gegevens", icon=":material/sync:")
+    elif knop.button("↻ Ververs stijghoogtes", width="stretch"):
         del st.session_state["bron"]
         st.rerun()
     nr: int = st.session_state.get("kaart_versie", 0)
@@ -211,6 +215,12 @@ def _toon_profiel(rij: pd.Series, versie: tuple[float, str], bron: databricks_re
         _herkomst(bron),
     ) if deel))
     _toon_invoercontrole(ctx)
+
+    if st.session_state.get("_centrale_app"):
+        from platform_app import nav
+        from platform_app.stijghoogtes import PROFIEL_PARAM, PROJECT_PARAM
+        st.page_link(nav.PER_DWARSPROFIEL, label="Stijghoogtes van dit dwarsprofiel", icon=":material/show_chart:",
+                     query_params={PROJECT_PARAM: project, PROFIEL_PARAM: profiel_id})
 
     tab_plot, tab_peilbuizen = st.tabs(["Profiel", "Peilbuizen"])
     with tab_plot:
