@@ -39,10 +39,11 @@ forcing_station: 249 # Berkhout
 # --- Validation store (layer 3; one <filename>.csv per series in repository_output_dir) ---
 # Notes in the store are capped at this many characters (review app).
 notes_max_len: 30
-# FROZEN. Do not change: breaks merge compatibility with existing review work.
+# FROZEN apart from `correctie` (manual offset in m, default 0; stores without it load
+# with 0). Do not change otherwise: breaks merge compatibility with existing review work.
 store:
   frequency: "1h"
-  schema: [timestamp, raw_data, gecontroleerd, afgekeurd, note]
+  schema: [timestamp, raw_data, gecontroleerd, afgekeurd, note, correctie]
 
 # --- Automated flag layers (v1-v4), carried from the handover §5 ---
 # Applied in order by local_validation/checks.py; read by local_validation/data_io.py.

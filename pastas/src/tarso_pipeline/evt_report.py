@@ -97,6 +97,36 @@ def return_period_table(per_tail: dict, t_list=DEFAULT_T_LIST) -> pd.DataFrame:
     return out
 
 
+RETURN_LEVEL_COLUMNS = ["run_id", "meetreeks_id", "series_name", "model_type", "tail", "family",
+                        "return_period", "level"]
+
+
+def return_level_rows(
+    meetreeks_id: str, series_name: str, run_id: str, table: pd.DataFrame | None,
+    model_type: str = "tarso",
+) -> list[dict]:
+    """``return_period_table`` in long form: one row per tail x family x T.
+
+    The shape of the ``<prefix>_return_levels`` Delta table, so a reader picks the
+    family it wants (the chosen one, or the automatic one) with a WHERE rather than a
+    column name. Levels are head units (m NAP); NaN levels are kept as None.
+    """
+    if table is None or table.empty:
+        return []
+    prefixes = {prefix: tail for tail, prefix in TAIL_PREFIX.items()}
+    rows = []
+    for column in table.columns:
+        prefix, family = column.split("_", 1)
+        for period, level in table[column].items():
+            rows.append({
+                "run_id": run_id, "meetreeks_id": meetreeks_id, "series_name": series_name,
+                "model_type": model_type, "tail": prefixes[prefix], "family": family,
+                "return_period": int(period),
+                "level": None if pd.isna(level) else float(level),
+            })
+    return rows
+
+
 def selection_rows(meetreeks_id: str, series_name: str, run_id: str, per_tail: dict) -> list[dict]:
     """One row per tail for ``evt_selection.csv``."""
     rows = []

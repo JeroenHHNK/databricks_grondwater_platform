@@ -106,6 +106,26 @@ def _save_plot(model, kind: str, path: Path) -> str | None:
         plt.close("all")
 
 
+SIMULATION_COLUMNS = ["run_id", "meetreeks_id", "series_name", "model_type", "datum",
+                      "observed", "simulated"]
+
+
+def simulation_frame(model, ids: dict) -> pd.DataFrame:
+    """Daily observed and simulated head over the calibration period, one row per day.
+
+    What the app plots for a model, so it never has to load a ``.pas``. Days without
+    an observation keep the simulation and have ``observed`` NaN.
+    """
+    simulated = model.simulate()
+    observed = model.observations()
+    frame = pd.DataFrame({"simulated": simulated}).join(pd.DataFrame({"observed": observed}), how="left")
+    frame = frame.rename_axis("datum").reset_index()
+    for key, value in ids.items():
+        frame[key] = value
+    frame["datum"] = pd.to_datetime(frame["datum"]).dt.normalize()
+    return frame[SIMULATION_COLUMNS]
+
+
 def fit_series(
     meetreeks_id: str,
     series_name: str,
@@ -127,12 +147,15 @@ def fit_series(
     forcing_units: str = "m",
     save_plot: bool = True,
     check_rows: list | None = None,
+    simulation_frames: list | None = None,
 ) -> dict:
     """Clean, fit, save and report one series. Never raises.
 
     Pass a list as ``check_rows`` to have the Brakenhoff (2022) checklist run on
     the solved model and its `pastas_model_checks` rows appended to it. A fit
-    that fails adds nothing: there is no model to check.
+    that fails adds nothing: there is no model to check. Likewise a list as
+    ``simulation_frames`` collects the daily observed/simulated head
+    (``simulation_frame``) of each successful fit.
     """
     row = empty_row()
     row.update(
@@ -216,6 +239,15 @@ def fit_series(
                     },
                 )
             )
+
+        if simulation_frames is not None:
+            try:
+                simulation_frames.append(simulation_frame(model, {
+                    "run_id": run_id, "meetreeks_id": meetreeks_id,
+                    "series_name": series_name, "model_type": model_type,
+                }))
+            except Exception:  # noqa: BLE001 - a missing plot series must not lose the fit
+                pass
 
         if run_directory:
             from tarso_pipeline.paths import (

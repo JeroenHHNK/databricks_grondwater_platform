@@ -10,6 +10,20 @@
 # MAGIC ~704-year synthetic sample of annual groundwater extremes, then fits
 # MAGIC extreme-value distributions and reports return levels.
 # MAGIC
+# MAGIC ### Validated or unvalidated (`data_basis`)
+# MAGIC
+# MAGIC `unvalidated` reads the raw source `gold_prd.hl_grondwaterpeilmeting.meting`;
+# MAGIC `validated` reads `waterkeringbeheer_prd.jvanruitenbeek.validated_meting`, the hours
+# MAGIC approved in the data validation review with corrections applied (same columns, written
+# MAGIC by `data_validation/databricks_code/notebooks/03_validated_to_delta.py`). Every table
+# MAGIC name follows from it: `unvalid_pastas_<kind>` or `valid_pastas_<kind>`
+# MAGIC (`tarso_pipeline.paths.output_table`). Pick the same basis as the fit run whose
+# MAGIC `.pas` files this reads.
+# MAGIC
+# MAGIC Writes `<prefix>_evt_selection`, `<prefix>_extremes_summary` and
+# MAGIC `<prefix>_return_levels` (one row per tail x family x return period: what the app and
+# MAGIC Boxplots read, so a chosen family is a WHERE, not a column name).
+# MAGIC
 # MAGIC ### What this is, and is not
 # MAGIC
 # MAGIC It is **simulation, not extrapolation**. Each `.pas` is loaded, the two stresses
@@ -46,6 +60,7 @@
 # COMMAND ----------
 
 dbutils.widgets.text("source_root", "", "Source root (blank = find pyproject.toml)")
+dbutils.widgets.dropdown("data_basis", "unvalidated", ["unvalidated", "validated"], "Train on")
 dbutils.widgets.text("volume_base",
                      "/Volumes/waterkeringbeheer_prd/misc_files/misc_files/pastas_pipeline",
                      "Volume prefix")
@@ -65,9 +80,8 @@ dbutils.widgets.dropdown("make_plots", "true", ["true", "false"], "Make plots?")
 dbutils.widgets.dropdown("write_tables", "true", ["true", "false"], "Write Delta tables?")
 dbutils.widgets.text("output_catalog", "waterkeringbeheer_prd", "Output catalog")
 dbutils.widgets.text("output_schema", "jvanruitenbeek", "Output schema")
-dbutils.widgets.text("metrics_table",
-                     "waterkeringbeheer_prd.jvanruitenbeek.pastas_fit_metrics",
-                     "Stage-2 metrics (to recover the full meetreeks_id)")
+dbutils.widgets.text("metrics_table", "",
+                     "Fit metrics, to recover the full meetreeks_id (blank = from data_basis)")
 dbutils.widgets.text("run_id", "", "Run id (blank = UTC timestamp)")
 
 # COMMAND ----------
@@ -110,7 +124,7 @@ import pandas as pd
 import pastas as ps
 from pyspark.sql import functions as F
 
-from tarso_pipeline.evt_report import TAILS
+from tarso_pipeline.evt_report import RETURN_LEVEL_COLUMNS, TAILS, return_level_rows
 from tarso_pipeline.extremes_run import discover_models, run_model
 from tarso_pipeline.imprex import discover_members
 from tarso_pipeline.paths import (
@@ -119,12 +133,16 @@ from tarso_pipeline.paths import (
     EXTREMES_DIRS,
     TAIL_PARAMETERS_FILE,
     extremes_dir,
+    basis_volume,
     extremes_summary_file,
+    output_table,
     run_dir,
 )
 
+BASIS = dbutils.widgets.get("data_basis")
 VOLUME_BASE = dbutils.widgets.get("volume_base").strip().rstrip("/")
-RUN_DIR = run_dir(VOLUME_BASE, name=dbutils.widgets.get("run_folder").strip() or None)
+# The fit stage's run folders, per data basis. The IMPREX forcing is shared.
+RUN_DIR = run_dir(basis_volume(VOLUME_BASE, BASIS), name=dbutils.widgets.get("run_folder").strip() or None)
 IMPREX_DIR = dbutils.widgets.get("imprex_dir").strip() or f"{VOLUME_BASE}/knmi_forcing"
 LOCATION = dbutils.widgets.get("location").strip()
 
@@ -145,10 +163,13 @@ RUN_ID = (
     or datetime.now(timezone.utc).strftime("%Y%m%dT%H%M%SZ")
 )
 
-METRICS_TABLE = dbutils.widgets.get("metrics_table").strip()
-SELECTION_TABLE = f"{CATALOG}.{SCHEMA}.pastas_evt_selection"
-SUMMARY_TABLE = f"{CATALOG}.{SCHEMA}.pastas_extremes_summary"
+METRICS_TABLE = (dbutils.widgets.get("metrics_table").strip()
+                 or output_table(BASIS, "fit_metrics", CATALOG, SCHEMA))
+SELECTION_TABLE = output_table(BASIS, "evt_selection", CATALOG, SCHEMA)
+SUMMARY_TABLE = output_table(BASIS, "extremes_summary", CATALOG, SCHEMA)
+RETURN_LEVELS_TABLE = output_table(BASIS, "return_levels", CATALOG, SCHEMA)
 
+print(f"basis         {BASIS}")
 print(f"run_id        {RUN_ID}")
 print(f"run folder    {RUN_DIR}")
 print(f"imprex        {IMPREX_DIR}  ({LOCATION})")
@@ -213,7 +234,7 @@ print(f"\nartefact folders ready under {RUN_DIR}")
 
 # COMMAND ----------
 
-summaries, selections, parameters = [], [], []
+summaries, selections, parameters, levels = [], [], [], []
 
 for item in models.itertuples():
     print(f"\n{item.series_name}")
@@ -235,6 +256,7 @@ for item in models.itertuples():
     summaries.append(result.summary)
     selections.extend(result.selection)
     parameters.extend(result.parameters)
+    levels.extend(return_level_rows(item.meetreeks_id, item.series_name, RUN_ID, result.return_table))
 
     s = result.summary
     print(f"   status={s['status']}  members={s['n_members']}  "
@@ -252,6 +274,7 @@ for item in models.itertuples():
 summary_frame = pd.DataFrame(summaries)
 selection_frame = pd.DataFrame(selections)
 parameter_frame = pd.DataFrame(parameters)
+levels_frame = pd.DataFrame(levels, columns=RETURN_LEVEL_COLUMNS)
 print(f"\n{len(summary_frame)} model(s): "
       f"{summary_frame['status'].value_counts().to_dict()}")
 
@@ -293,7 +316,7 @@ display(
 # MAGIC %md
 # MAGIC ## Delta tables
 # MAGIC
-# MAGIC Appended with the run id, so runs accumulate and join to `pastas_fit_metrics`
+# MAGIC Appended with the run id, so runs accumulate and join to `<prefix>_fit_metrics`
 # MAGIC on `series_name`.
 
 # COMMAND ----------
@@ -303,7 +326,8 @@ if not WRITE_TABLES:
 else:
     spark.sql(f"CREATE SCHEMA IF NOT EXISTS {CATALOG}.{SCHEMA}")
     for frame, table in ((selection_frame, SELECTION_TABLE),
-                         (summary_frame, SUMMARY_TABLE)):
+                         (summary_frame, SUMMARY_TABLE),
+                         (levels_frame, RETURN_LEVELS_TABLE)):
         if frame.empty:
             print(f"nothing to write to {table}")
             continue

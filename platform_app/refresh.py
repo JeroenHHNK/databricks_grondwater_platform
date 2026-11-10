@@ -35,7 +35,7 @@ def _bronnen() -> pd.DataFrame:
             heads += f" (live failed: {b.fout})"
     except Exception as fout:  # noqa: BLE001
         heads = f"not available: {fout}"
-    rijen.append({"Section": "Boxplots, Stijghoogtes", "Data now": heads,
+    rijen.append({"Section": "Boxplots, Peilbuizen (per dwarsprofiel, zone)", "Data now": heads,
                   "Refreshed by": "live: every new session · export: the boxplots export notebook + redeploy"})
 
     metadata = VALIDATIE_EXPORT / "metadata" / "object_data.csv"
@@ -44,7 +44,24 @@ def _bronnen() -> pd.DataFrame:
     rijen.append({"Section": "Data validation",
                   "Data now": f"{reeksen} series in the repo export · {reviews} reviewed series",
                   "Refreshed by": "the groundwater_source_replication job + git, then a redeploy"})
+    rijen.append({"Section": "Peilbuizen → Kaart",
+                  "Data now": f"{reeksen} series from the data validation export; heads "
+                              + ("live per series" if databricks_live.beschikbaar() else "from the hourly export"),
+                  "Refreshed by": "as Data validation; live heads in every new session"})
+    rijen.append({"Section": "Pastas, Boxplots return levels", "Data now": _pastas(),
+                  "Refreshed by": "live: on every load (10 min cache) · export: export_results.py + git + redeploy"})
     return pd.DataFrame(rijen)
+
+
+def _pastas() -> str:
+    from . import pastas_bron
+
+    delen = []
+    for basis in pastas_bron.DATA_BASES:
+        r = pastas_bron.lees(basis, "fit_metrics")
+        delen.append(f"{pastas_bron.prefix(basis)}: " + (f"{r.data['meetreeks_id'].nunique()} series ({r.bron})"
+                                                         if not r.data.empty else "none yet"))
+    return " · ".join(delen)
 
 
 def _herlaad() -> None:
@@ -61,7 +78,7 @@ def _uitleg() -> None:
         "(Compute → Apps → the app → Deploy). Live heads are the exception: they are read from "
         "the warehouse in every new session."
     )
-    with st.expander("Boxplots and Stijghoogtes: groundwater heads", expanded=True):
+    with st.expander("Boxplots and Peilbuizen: groundwater heads", expanded=True):
         st.markdown(
             "**Live (preferred):** set `DATABRICKS_WAREHOUSE_ID` in `app.yaml`, add the `sql-warehouse` "
             "resource to the app, and give the app the read grants (check below). Then every new session "
@@ -85,11 +102,17 @@ def _uitleg() -> None:
             f"`{toegang.doel_schema()}.{toegang.VALIDATIE_TABEL}`.\n"
             "4. Deploy the app again to show the new state here."
         )
-    with st.expander("Pastas: model fits and extremes (not shown in the app)"):
+    with st.expander("Pastas: model fits, return periods and the family pick"):
         st.markdown(
-            "Run the job or notebooks in `pastas/notebooks/` (ingestion → transformation). They write Delta "
-            "tables in the personal schema and files in the `misc_files` volume; see "
-            "`pastas/docs/DATABRICKS_PERMISSIONS.md`."
+            "1. In Databricks, run `pastas/notebooks/` with the widget `data_basis` = `unvalidated` or "
+            "`validated` (the latter reads `validated_meting`, so run `03_validated_to_delta` first): "
+            "`ingestion/build_manifest` → `transformation/fit_pastas_models` → `transformation/run_extremes`. "
+            "They write `unvalid_pastas_*` or `valid_pastas_*` tables.\n"
+            "2. **Live:** with the warehouse set and `SELECT` on those tables (check below) the Pastas pages "
+            "show a run as soon as it is written. **Export (until then):** run `analysis/export_results`, "
+            "commit and push `pastas/results_export/`, deploy again.\n"
+            "3. Pick the families in *Pastas → Modellen* locally, commit and push `pastas/family_choice/`, "
+            "then run `analysis/load_family_choice` in Databricks."
         )
 
 

@@ -9,7 +9,7 @@ from __future__ import annotations
 
 import streamlit as st
 
-from . import map_page, overview_page, review_page
+from . import map_page, overview_page, review_page, sources_page
 
 MAP = st.Page(map_page.render, title="Map", icon=":material/map:", url_path="validation-map")
 REVIEW = st.Page(review_page.render, title="Review", icon=":material/fact_check:",
@@ -17,7 +17,10 @@ REVIEW = st.Page(review_page.render, title="Review", icon=":material/fact_check:
 OVERVIEW = st.Page(overview_page.render, title="Overview", icon=":material/table_chart:",
                    url_path="validation-overview")
 
-PAGES = [MAP, REVIEW, OVERVIEW]
+SOURCES = st.Page(sources_page.render, title="Data sources", icon=":material/merge_type:",
+                  url_path="validation-sources")
+
+PAGES = [MAP, REVIEW, OVERVIEW, SOURCES]
 
 
 def navigation():

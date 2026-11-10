@@ -6,10 +6,17 @@ left out: it migrated the old ``output_data/<vendor>/<origin>/dashboard/`` layou
 which does not exist in this repo. Do not change the schema or merge rules.
 
 The store is one CSV per series with columns:
-    timestamp, raw_data, gecontroleerd, afgekeurd, note
+    timestamp, raw_data, gecontroleerd, afgekeurd, note, correctie
+
+``correctie`` (m, default 0) is the one addition to the on-prem contract: a
+manual offset for a period, e.g. +0.10 m for the two months a sensor hung lower
+after maintenance. ``raw_data`` is never changed by it; the corrected head is
+``raw_data + correctie`` (:func:`corrected`). Stores saved before the column
+existed load with ``correctie = 0``, so old review work merges unchanged.
 
 New raw data is folded in via :func:`merge_new_raw`, which protects the
-manual validation (and the validated raw value) of already-reviewed rows.
+manual validation (and the validated raw value) of already-reviewed rows, and
+keeps every row's correction.
 """
 from __future__ import annotations
 
@@ -19,7 +26,7 @@ from pathlib import Path
 
 import pandas as pd
 
-COLUMNS = ["timestamp", "raw_data", "gecontroleerd", "afgekeurd", "note"]
+COLUMNS = ["timestamp", "raw_data", "gecontroleerd", "afgekeurd", "note", "correctie"]
 
 
 def empty_store() -> pd.DataFrame:
@@ -39,7 +46,7 @@ def ensure_columns(df: pd.DataFrame) -> pd.DataFrame:
     if "raw_data" not in df.columns and "head" in df.columns:
         df = df.rename(columns={"head": "raw_data"})
 
-    for col, default in (("gecontroleerd", 0), ("afgekeurd", 0), ("note", "")):
+    for col, default in (("gecontroleerd", 0), ("afgekeurd", 0), ("note", ""), ("correctie", 0.0)):
         if col not in df.columns:
             df[col] = default
     if "raw_data" not in df.columns:
@@ -57,7 +64,9 @@ def _coerce_types(df: pd.DataFrame) -> pd.DataFrame:
         df[col] = (
             pd.to_numeric(df[col], errors="coerce").fillna(0).astype(int).clip(0, 1)
         )
-    df["note"] = df["note"].fillna("").astype(str)
+    # astype(object) first: an all-empty note column is read as float64.
+    df["note"] = df["note"].astype(object).fillna("").astype(str)
+    df["correctie"] = pd.to_numeric(df["correctie"], errors="coerce").fillna(0.0).astype(float)
     df = df.dropna(subset=["timestamp"]).sort_values("timestamp").reset_index(drop=True)
     return df
 
@@ -99,7 +108,8 @@ def merge_new_raw(
       (gecontroleerd==1 or afgekeurd==1) also keep their stored raw_data so a
       validated value is never overwritten; unreviewed rows refresh raw_data
       from the incoming data.
-    - New timestamps are appended as unreviewed (gecontroleerd=0, afgekeurd=0).
+    - New timestamps are appended as unreviewed (gecontroleerd=0, afgekeurd=0)
+      and uncorrected (correctie=0). Existing rows keep their correctie.
     """
     store = ensure_columns(store_df)
     incoming = normalize_raw(raw_df, round_freq=round_freq)
@@ -120,6 +130,37 @@ def merge_new_raw(
     merged = merged.drop(columns=["raw_data_new"])
 
     return _coerce_types(merged)
+
+
+def corrected(df: pd.DataFrame) -> pd.Series:
+    """The corrected head per row: ``raw_data + correctie``."""
+    return df["raw_data"] + df["correctie"].fillna(0.0)
+
+
+def set_correction(df: pd.DataFrame, start, end, offset: float) -> tuple[pd.DataFrame, int]:
+    """Set ``correctie = offset`` for every row with ``start <= timestamp <= end``.
+
+    Sets, not adds: applying +0.10 twice gives +0.10, and 0 removes a correction.
+    Returns the new store and the number of rows in the period.
+    """
+    out = ensure_columns(df)
+    in_period = out["timestamp"].between(pd.Timestamp(start), pd.Timestamp(end))
+    out.loc[in_period, "correctie"] = float(offset)
+    return out, int(in_period.sum())
+
+
+def correction_periods(df: pd.DataFrame) -> pd.DataFrame:
+    """Runs of consecutive rows with the same non-zero correctie: start, end, correctie, rows."""
+    cols = ["start", "end", "correctie", "rows"]
+    store = ensure_columns(df)
+    if store.empty:
+        return pd.DataFrame(columns=cols)
+    corr = store["correctie"].round(6)
+    run = (corr != corr.shift()).cumsum()
+    out = (store.assign(run=run, c=corr)[corr != 0]
+           .groupby("run").agg(start=("timestamp", "min"), end=("timestamp", "max"),
+                               correctie=("c", "first"), rows=("c", "size")))
+    return out.reset_index(drop=True)[cols]
 
 
 def load(path: Path) -> pd.DataFrame:

@@ -22,3 +22,8 @@ dist/
 
 # Local output from scripts/check_knmi.py (not a cluster artefact)
 .local/
+
+# ... except what the Streamlit app reads from git: the results export
+# (notebooks/analysis/export_results.py) and the family picks made in the app.
+!results_export/**/*.csv
+!family_choice/*.csv

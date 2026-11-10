@@ -28,6 +28,12 @@ SCHRIJFTEST_TABEL = "__app_schrijftest"
 
 BRON_TABELLEN: list[str] = [paths.TBL_METING, paths.TBL_MEETREEKS, paths.TBL_MEETLOCATIE]
 
+# The Pastas result tables the app reads (Pastas pages, Boxplots return levels), per data
+# basis; written by the pastas notebooks into the same schema (tarso_pipeline.paths).
+PASTAS_TABELLEN: list[str] = [f"{prefix}_{kind}" for prefix in ("unvalid_pastas", "valid_pastas")
+                              for kind in ("fit_metrics", "model_checks", "simulations", "evt_selection",
+                                           "return_levels")]
+
 
 @dataclass(frozen=True)
 class Uitkomst:
@@ -112,6 +118,21 @@ def controleer(cursor, schema: str | None = None, schrijftest: bool = False) -> 
         else:
             uit.append(Uitkomst(f"Lezen: {schema}.{VALIDATIE_TABEL}", True,
                                 "bestaat nog niet (03_validated_to_delta maakt hem)"))
+
+        # Pastas results: one line for the ones not there yet, one per table that is.
+        nog_niet = [t for t in PASTAS_TABELLEN if t not in tabellen]
+        for naam in (t for t in PASTAS_TABELLEN if t in tabellen):
+            try:
+                cursor.execute(f"SELECT 1 FROM {schema}.{naam} LIMIT 1")
+                cursor.fetchall()
+                uit.append(Uitkomst(f"Lezen: {schema}.{naam}", True, "SELECT werkt"))
+            except Exception as fout:  # noqa: BLE001
+                uit.append(Uitkomst(f"Lezen: {schema}.{naam}", False, _fout(fout),
+                                    f"GRANT SELECT ON TABLE {schema}.{naam} TO `{wie}`;"))
+        if nog_niet:
+            uit.append(Uitkomst("Pastas-resultaten", True,
+                                f"bestaan nog niet: {', '.join(nog_niet)} (de pastas-notebooks maken ze; "
+                                "tot dan leest de app de export in git)"))
 
     if schrijftest:
         tabel = f"{schema}.{SCHRIJFTEST_TABEL}"

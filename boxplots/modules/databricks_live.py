@@ -141,3 +141,34 @@ def haal_op(meetlocatie_ids: list[str]) -> tuple[DataFrame, DataFrame]:
     reeksen = reeksen.merge(per_reeks, left_on="meetreeks_id", right_index=True, how="left")
     reeksen["metingen"] = reeksen["metingen"].fillna(0).astype(int)
     return reeksen, dag
+
+
+def dag_voor_reeksen(meetreeks_ids: list[str]) -> DataFrame:
+    """
+    Daggemiddelden van willekeurige meetreeksen (ook die niet in een dwarsprofiel
+    zitten), voor de Peilbuizen-kaart: meetreeks_id, datum, n, gem, min, max, n_status_1.
+    Dezelfde berekening als in `haal_op`, alleen gekozen op meetreeks_id.
+    """
+    ids = sorted({i for i in meetreeks_ids if isinstance(i, str) and _ID.fullmatch(i)})
+    if not ids:
+        raise ValueError("Geen geldige meetreeks_id om op te vragen.")
+    lijst = ", ".join(f"'{i}'" for i in ids)
+    with verbinding() as cursor:
+        dag = _query(cursor, f"""
+            WITH per_tijdstip AS (
+                SELECT m.meetreeks_id, m.tijdstempel_utc, avg(m.waarde) AS waarde,
+                       max(CASE WHEN m.validatie_status = 1 THEN 1 ELSE 0 END) AS invalide
+                FROM {paths.TBL_METING} m
+                WHERE m.meetreeks_id IN ({lijst}) AND m.waarde IS NOT NULL
+                GROUP BY m.meetreeks_id, m.tijdstempel_utc
+            )
+            SELECT meetreeks_id, to_date(tijdstempel_utc) AS datum,
+                   count(*) AS n, round(avg(waarde), 4) AS gem,
+                   round(min(waarde), 4) AS min, round(max(waarde), 4) AS max,
+                   sum(invalide) AS n_status_1
+            FROM per_tijdstip
+            GROUP BY meetreeks_id, to_date(tijdstempel_utc)
+            ORDER BY meetreeks_id, datum
+        """)
+    dag["datum"] = pd.to_datetime(dag["datum"])
+    return dag

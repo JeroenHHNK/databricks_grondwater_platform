@@ -2,8 +2,9 @@
 # MAGIC %md
 # MAGIC # Inspect the fitted models
 # MAGIC
-# MAGIC **Run by hand, not as a job task.** Read-only. Reads
-# MAGIC `pastas_fit_metrics` and answers the questions you have after a run:
+# MAGIC **Run by hand, not as a job task.** Read-only. Reads `<prefix>_fit_metrics`
+# MAGIC (`unvalid_pastas` or `valid_pastas`, from `data_basis`) and answers the questions you
+# MAGIC have after a run:
 # MAGIC
 # MAGIC - did it work, and where did it fail?
 # MAGIC - are the fits any good?
@@ -20,15 +21,10 @@
 
 # COMMAND ----------
 
-dbutils.widgets.text("metrics_table",
-                     "waterkeringbeheer_prd.jvanruitenbeek.pastas_fit_metrics",
-                     "Metrics table")
-dbutils.widgets.text("manifest_table",
-                     "waterkeringbeheer_prd.jvanruitenbeek.pastas_series_manifest",
-                     "Manifest table")
-dbutils.widgets.text("checks_table",
-                     "waterkeringbeheer_prd.jvanruitenbeek.pastas_model_checks",
-                     "Model checks table")
+dbutils.widgets.dropdown("data_basis", "unvalidated", ["unvalidated", "validated"], "Train on")
+dbutils.widgets.text("metrics_table", "", "Metrics table (blank = from data_basis)")
+dbutils.widgets.text("manifest_table", "", "Manifest table (blank = from data_basis)")
+dbutils.widgets.text("checks_table", "", "Model checks table (blank = from data_basis)")
 dbutils.widgets.text("run_id", "", "Run id (blank = the latest)")
 dbutils.widgets.text("good_r2", "0.7", "R2 considered healthy")
 
@@ -58,9 +54,12 @@ if SRC not in sys.path:
 
 from pyspark.sql import functions as F
 
-METRICS = dbutils.widgets.get("metrics_table").strip()
-MANIFEST = dbutils.widgets.get("manifest_table").strip()
-CHECKS = dbutils.widgets.get("checks_table").strip()
+from tarso_pipeline.paths import output_table  # noqa: E402
+
+BASIS = dbutils.widgets.get("data_basis")
+METRICS = dbutils.widgets.get("metrics_table").strip() or output_table(BASIS, "fit_metrics")
+MANIFEST = dbutils.widgets.get("manifest_table").strip() or output_table(BASIS, "series_manifest")
+CHECKS = dbutils.widgets.get("checks_table").strip() or output_table(BASIS, "model_checks")
 GOOD_R2 = float(dbutils.widgets.get("good_r2"))
 
 requested_run = dbutils.widgets.get("run_id").strip()
@@ -159,7 +158,7 @@ if counts and counts["total"]:
 # MAGIC %md
 # MAGIC ## 3b. Do the fits pass the model checks?
 # MAGIC
-# MAGIC Brakenhoff et al. (2022), one row per check in `pastas_model_checks`. A fit
+# MAGIC Brakenhoff et al. (2022), one row per check in `<prefix>_model_checks`. A fit
 # MAGIC passes only if **every** check passes; `passed` NULL (not evaluable) is a no.
 # MAGIC The checks most often failed are listed first — one check failing everywhere
 # MAGIC says more about the model setup than about the series.
