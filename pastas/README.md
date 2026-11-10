@@ -37,12 +37,18 @@ src/tarso_pipeline/
   forcing_plot.py  annual totals and the check chart
   io.py            load_forcing / read_head_csv
   naming.py        sanitize_name
-  paths.py         repo_root, forcing_path, and the Databricks write targets
+  paths.py         repo_root, forcing_path, the Databricks write targets, per data basis
+  results.py       latest run per series, the family that applies (shared with the app)
 notebooks/
   exploration/explore_meting.py        what is in the source, how much is usable
-  ingestion/build_manifest.py          JOB TASK 1 -> pastas_series_manifest
-  transformation/fit_pastas_models.py  JOB TASK 2 -> pastas_fit_metrics + .pas
+  ingestion/build_manifest.py          JOB TASK 1 -> <prefix>_series_manifest
+  transformation/fit_pastas_models.py  JOB TASK 2 -> <prefix>_fit_metrics + .pas
+  transformation/run_extremes.py       stage 2: return levels -> <prefix>_return_levels
   analysis/inspect_results.py          read the output tables after a run
+  analysis/export_results.py           the latest results into results_export/, for the app
+  analysis/load_family_choice.py       family_choice/*.csv -> <prefix>_family_choice + view
+results_export/    the app's copy of the results (export_results.py; in git)
+family_choice/     the families picked in the app (in git)
 scripts/
   check_knmi.py    refresh the committed forcing (runs locally, not on a cluster)
 tests/             pytest suite (no Spark; -m "not slow" skips the real fits)
@@ -158,11 +164,48 @@ Each notebook has one job. Only two are job tasks; the other two are run by hand
 | Notebook | Purpose | Job task? | Writes |
 |---|---|---|---|
 | `exploration/explore_meting.py` | what is in the source, how many series are fit to model | no | nothing |
-| `ingestion/build_manifest.py` | select every series spanning >= `min_days` (365); quantify duplicate timestamps | **task 1** | `pastas_series_manifest` |
-| `transformation/fit_pastas_models.py` | clean, fit, save `.pas`, record metrics, run the model checks | **task 2** | `pastas_fit_metrics`, `pastas_model_checks`, `.pas` files |
+| `ingestion/build_manifest.py` | select every series spanning >= `min_days` (365); quantify duplicate timestamps | **task 1** | `<prefix>_series_manifest` |
+| `transformation/fit_pastas_models.py` | clean, fit, save `.pas`, record metrics, run the model checks | **task 2** | `<prefix>_fit_metrics`, `<prefix>_model_checks`, `<prefix>_simulations`, `.pas` files |
+| `transformation/run_extremes.py` | synthetic extremes, EVT fits, return levels | by hand | `<prefix>_evt_selection`, `<prefix>_extremes_summary`, `<prefix>_return_levels` |
 | `analysis/inspect_results.py` | did it work, are the fits any good, Tarso vs baseline | no | nothing |
+| `analysis/export_results.py` | the latest run per series, into `results_export/` for the app (until it reads live) | no | CSVs / parquet in the Git folder |
+| `analysis/load_family_choice.py` | the families picked in the app (`family_choice/`) into Delta | no | `<prefix>_family_choice`, view `<prefix>_return_levels_chosen` |
 
 Task 2 depends on task 1: it reads the manifest table task 1 writes.
+
+### Validated or unvalidated data (`data_basis`)
+
+Every notebook has a `data_basis` widget, and everything it reads and writes follows from it
+(`tarso_pipeline.paths.output_table` / `source_table` / `basis_volume`):
+
+| `data_basis` | reads | tables | artefacts |
+|---|---|---|---|
+| `unvalidated` (default) | `gold_prd.hl_grondwaterpeilmeting.meting`, every valued row | `unvalid_pastas_<kind>` | `<volume>/unvalid_pastas/run_yy_mm_dd/` |
+| `validated` | `waterkeringbeheer_prd.jvanruitenbeek.validated_meting`: only the hours approved in the data validation review, with corrections applied (written by `data_validation/.../03_validated_to_delta.py`, same columns as `meting`) | `valid_pastas_<kind>` | `<volume>/valid_pastas/run_yy_mm_dd/` |
+
+The two sets of tables are identical in shape, so the fits compare row for row (the app's
+*Pastas → Gevalideerd vs ongevalideerd*). Run the whole chain once per basis. The validated
+source is hourly means rather than the raw ~55 rows a day; the cleaning resamples to days either
+way.
+
+The tables used to be called `pastas_<kind>` and the run folders sat directly under the volume.
+To keep those runs as the unvalidated history, rename them once:
+
+```sql
+ALTER TABLE waterkeringbeheer_prd.jvanruitenbeek.pastas_fit_metrics  RENAME TO waterkeringbeheer_prd.jvanruitenbeek.unvalid_pastas_fit_metrics;
+ALTER TABLE waterkeringbeheer_prd.jvanruitenbeek.pastas_model_checks RENAME TO waterkeringbeheer_prd.jvanruitenbeek.unvalid_pastas_model_checks;
+-- likewise pastas_series_manifest, pastas_evt_selection, pastas_extremes_summary
+```
+
+### Results in the app, and the family pick
+
+The fit notebook also writes `<prefix>_simulations` (daily observed + simulated head per fit) and
+the extremes notebook `<prefix>_return_levels` (one row per tail x family x return period). The
+app plots those, live through the SQL warehouse or from the export in `results_export/`; see the
+root README, "Pastas results in the app". The statistical family per model and tail is picked in
+the app (*Pastas → Modellen*, locally), saved to `family_choice/<prefix>_family_choice.csv`, and
+taken to Delta by `analysis/load_family_choice.py`. Without a pick, the automatic choice of
+`select_family` applies.
 
 Permission facts live in `src/tarso_pipeline/paths.py`. `gold_prd` is **read-only**;
 all output goes to `waterkeringbeheer_prd.jvanruitenbeek`, and `.pas` files to the
@@ -227,8 +270,9 @@ identifier, because filenames and folder names need something shorter than 64
 characters. It is a label, not a key — the full `meetreeks_id` is on every output
 row, so a join always recovers it.
 
-**`validatie_status` is ignored.** By decision: every row with a `waarde` is used,
-whatever its review status. Revisit once the status values are understood.
+**`validatie_status` is ignored** on the raw source: with `data_basis=unvalidated` every row
+with a `waarde` is used, whatever its status. To train on reviewed data, use
+`data_basis=validated` (above).
 
 **Forcing units.** The fit notebook converts mm to **metres per day** by default
 (`forcing_units=m`), matching the head in metres NAP. The original repo passed

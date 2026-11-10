@@ -7,10 +7,19 @@
 # MAGIC # Build the series manifest
 # MAGIC
 # MAGIC Task 1 of the pipeline. Selects **every trainable series** -- at least
-# MAGIC `min_obs` values spanning at least `min_days` days -- from
-# MAGIC `gold_prd.hl_grondwaterpeilmeting.meting` and writes them to
-# MAGIC `waterkeringbeheer_prd.jvanruitenbeek.pastas_series_manifest`, then quantifies the
+# MAGIC `min_obs` values spanning at least `min_days` days -- from the source of the chosen
+# MAGIC `data_basis` and writes them to `<prefix>_series_manifest`, then quantifies the
 # MAGIC duplicate-timestamp problem before anything is fitted.
+# MAGIC
+# MAGIC ### Validated or unvalidated (`data_basis`)
+# MAGIC
+# MAGIC `unvalidated` reads the raw source `gold_prd.hl_grondwaterpeilmeting.meting`;
+# MAGIC `validated` reads `waterkeringbeheer_prd.jvanruitenbeek.validated_meting`, the hours
+# MAGIC approved in the data validation review with corrections applied (same columns, written
+# MAGIC by `data_validation/databricks_code/notebooks/03_validated_to_delta.py`). Every table
+# MAGIC name follows from it: `unvalid_pastas_<kind>` or `valid_pastas_<kind>`
+# MAGIC (`tarso_pipeline.paths.output_table`). A table widget left blank takes that name; fill
+# MAGIC one in only to override it.
 # MAGIC
 # MAGIC ### Permissions
 # MAGIC
@@ -33,10 +42,9 @@
 
 # COMMAND ----------
 
-dbutils.widgets.text("source_table", "gold_prd.hl_grondwaterpeilmeting.meting", "Source")
-dbutils.widgets.text("manifest_table",
-                     "waterkeringbeheer_prd.jvanruitenbeek.pastas_series_manifest",
-                     "Manifest table")
+dbutils.widgets.dropdown("data_basis", "unvalidated", ["unvalidated", "validated"], "Train on")
+dbutils.widgets.text("source_table", "", "Source (blank = from data_basis)")
+dbutils.widgets.text("manifest_table", "", "Manifest table (blank = from data_basis)")
 dbutils.widgets.text("limit", "0", "Cap on series (0 = every one over min_days)")
 dbutils.widgets.text("min_days", "365", "Minimum span in days")
 dbutils.widgets.text("min_obs", "100", "Minimum measurements")
@@ -70,6 +78,7 @@ if SRC not in sys.path:
 from pyspark.sql import functions as F
 
 from tarso_pipeline.fit_metrics import make_run_id
+from tarso_pipeline.paths import output_table, source_table
 from tarso_pipeline.meting import (
     check_columns,
     duplicate_timestamps_sql,
@@ -77,14 +86,16 @@ from tarso_pipeline.meting import (
     verdict_summary_sql,
 )
 
-SOURCE = dbutils.widgets.get("source_table").strip()
-MANIFEST = dbutils.widgets.get("manifest_table").strip()
+BASIS = dbutils.widgets.get("data_basis")
+SOURCE = dbutils.widgets.get("source_table").strip() or source_table(BASIS)
+MANIFEST = dbutils.widgets.get("manifest_table").strip() or output_table(BASIS, "series_manifest")
 LIMIT = int(dbutils.widgets.get("limit"))
 MIN_DAYS = int(dbutils.widgets.get("min_days"))
 MIN_OBS = int(dbutils.widgets.get("min_obs"))
 RUN_ID = dbutils.widgets.get("run_id").strip() or make_run_id()
 WRITE_MANIFEST = dbutils.widgets.get("write_manifest") == "true"
 
+print(f"basis     {BASIS}")
 print(f"source    {SOURCE}")
 print(f"manifest  {MANIFEST}")
 print(f"run_id    {RUN_ID}")

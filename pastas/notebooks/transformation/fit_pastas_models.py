@@ -10,16 +10,28 @@
 # MAGIC the same volume prefix, plus one Delta row per fit.
 # MAGIC
 # MAGIC ```
-# MAGIC <volume>/run_yy_mm_dd/
+# MAGIC <volume>/<prefix>/run_yy_mm_dd/
 # MAGIC     pas_files/          series_<hash24>_<model>.pas
 # MAGIC     results_files/      series_<hash24>_<model>_results.png
 # MAGIC     diagnostics_files/  series_<hash24>_<model>_diagnostics.png
 # MAGIC ```
 # MAGIC
-# MAGIC Plus one row per fit in
-# MAGIC `waterkeringbeheer_prd.jvanruitenbeek.pastas_fit_metrics`, and one row per
-# MAGIC model check (Brakenhoff et al. 2022) per successful fit in
-# MAGIC `waterkeringbeheer_prd.jvanruitenbeek.pastas_model_checks`.
+# MAGIC Plus one row per fit in `<prefix>_fit_metrics`, one row per model check
+# MAGIC (Brakenhoff et al. 2022) per successful fit in `<prefix>_model_checks`, and the daily
+# MAGIC observed + simulated head of every successful fit in `<prefix>_simulations` (what the
+# MAGIC Streamlit app plots, so it never needs the `.pas` files). `<prefix>` is
+# MAGIC `unvalid_pastas` or `valid_pastas`, from `data_basis`.
+# MAGIC
+# MAGIC #### Validated or unvalidated (`data_basis`)
+# MAGIC
+# MAGIC `unvalidated` reads the raw source `gold_prd.hl_grondwaterpeilmeting.meting`;
+# MAGIC `validated` reads `waterkeringbeheer_prd.jvanruitenbeek.validated_meting`, the hours
+# MAGIC approved in the data validation review with corrections applied (same columns, written
+# MAGIC by `data_validation/databricks_code/notebooks/03_validated_to_delta.py`). Every table
+# MAGIC name follows from it: `unvalid_pastas_<kind>` or `valid_pastas_<kind>`
+# MAGIC (`tarso_pipeline.paths.output_table`). A table widget left blank takes that name; fill
+# MAGIC one in only to override it.
+
 # MAGIC
 # MAGIC Artefacts are grouped by **kind**, not by series, so all 20 `.pas` files sit
 # MAGIC together and all 20 plots sit together. The model type is in the filename
@@ -27,7 +39,7 @@
 # MAGIC across series - without it a `recharge` run would overwrite the `tarso` one.
 # MAGIC
 # MAGIC > Two runs on the **same day** share a run folder and overwrite each other's
-# MAGIC > artefacts, while `pastas_fit_metrics` keeps both rows. Set the `run_folder`
+# MAGIC > artefacts, while `<prefix>_fit_metrics` keeps both rows. Set the `run_folder`
 # MAGIC > widget (e.g. `run_26_10_15_b`) to keep them apart.
 # MAGIC
 # MAGIC Both paths are recorded as columns (`model_path`, `plot_path`), so nothing
@@ -70,8 +82,9 @@
 # MAGIC
 # MAGIC ### `validatie_status` is ignored
 # MAGIC
-# MAGIC By decision, not oversight: every row with a `waarde` is used, whatever its
-# MAGIC review status. Revisit once the status values are understood.
+# MAGIC With `data_basis=unvalidated` every row with a `waarde` is used, whatever its source
+# MAGIC status. To train on reviewed data, use `data_basis=validated`: that table holds only
+# MAGIC the hours a person approved.
 # MAGIC
 # MAGIC ### Failures are rows
 # MAGIC
@@ -82,16 +95,12 @@
 
 dbutils.widgets.text("source_root", "", "Source root (blank = find pyproject.toml)")
 
-dbutils.widgets.text("source_table", "gold_prd.hl_grondwaterpeilmeting.meting", "Source")
-dbutils.widgets.text("manifest_table",
-                     "waterkeringbeheer_prd.jvanruitenbeek.pastas_series_manifest",
-                     "Manifest table")
-dbutils.widgets.text("metrics_table",
-                     "waterkeringbeheer_prd.jvanruitenbeek.pastas_fit_metrics",
-                     "Metrics table")
-dbutils.widgets.text("checks_table",
-                     "waterkeringbeheer_prd.jvanruitenbeek.pastas_model_checks",
-                     "Model checks table")
+dbutils.widgets.dropdown("data_basis", "unvalidated", ["unvalidated", "validated"], "Train on")
+dbutils.widgets.text("source_table", "", "Source (blank = from data_basis)")
+dbutils.widgets.text("manifest_table", "", "Manifest table (blank = from data_basis)")
+dbutils.widgets.text("metrics_table", "", "Metrics table (blank = from data_basis)")
+dbutils.widgets.text("checks_table", "", "Model checks table (blank = from data_basis)")
+dbutils.widgets.text("simulations_table", "", "Simulations table (blank = from data_basis)")
 dbutils.widgets.text("volume_base",
                      "/Volumes/waterkeringbeheer_prd/misc_files/misc_files/pastas_pipeline",
                      "Volume prefix")
@@ -169,12 +178,23 @@ from tarso_pipeline.forcing import check_coverage, forcing_file, load_forcing_pa
 from tarso_pipeline.meting import series_rows_sql
 from tarso_pipeline.model_checks import rows_to_frame as check_rows_to_frame
 from tarso_pipeline.model_checks import spark_schema as checks_spark_schema
-from tarso_pipeline.paths import ARTEFACT_DIRS, artefact_dir, run_dir, series_name_from_id
+from tarso_pipeline.fit import SIMULATION_COLUMNS
+from tarso_pipeline.paths import (
+    ARTEFACT_DIRS,
+    artefact_dir,
+    basis_volume,
+    output_table,
+    run_dir,
+    series_name_from_id,
+    source_table,
+)
 
-SOURCE = dbutils.widgets.get("source_table").strip()
-MANIFEST = dbutils.widgets.get("manifest_table").strip()
-METRICS = dbutils.widgets.get("metrics_table").strip()
-CHECKS = dbutils.widgets.get("checks_table").strip()
+BASIS = dbutils.widgets.get("data_basis")
+SOURCE = dbutils.widgets.get("source_table").strip() or source_table(BASIS)
+MANIFEST = dbutils.widgets.get("manifest_table").strip() or output_table(BASIS, "series_manifest")
+METRICS = dbutils.widgets.get("metrics_table").strip() or output_table(BASIS, "fit_metrics")
+CHECKS = dbutils.widgets.get("checks_table").strip() or output_table(BASIS, "model_checks")
+SIMULATIONS = dbutils.widgets.get("simulations_table").strip() or output_table(BASIS, "simulations")
 VOLUME_BASE = dbutils.widgets.get("volume_base").strip().rstrip("/")
 FORCING_DIR = dbutils.widgets.get("forcing_dir").strip() or f"{VOLUME_BASE}/knmi_forcing"
 
@@ -197,8 +217,10 @@ RUN_ID = (
 )
 
 FORCING_FILE = forcing_file(FORCING_DIR, STATION)
-RUN_DIR = run_dir(VOLUME_BASE, name=dbutils.widgets.get("run_folder").strip() or None)
+# Run folders per data basis, so a validated and an unvalidated run never share one.
+RUN_DIR = run_dir(basis_volume(VOLUME_BASE, BASIS), name=dbutils.widgets.get("run_folder").strip() or None)
 
+print(f"basis        {BASIS}  (source {SOURCE})")
 print(f"run_id       {RUN_ID}")
 print(f"manifest     {MANIFEST}")
 print(f"metrics      {METRICS}")
@@ -302,6 +324,7 @@ display(work)
 
 rows = []
 check_rows = []
+simulation_frames = []
 for item in work.itertuples():
     raw = spark.sql(series_rows_sql(SOURCE, item.meetreeks_id)).toPandas()
     # The hash is the only name available; shortened for readable folders, with
@@ -337,6 +360,7 @@ for item in work.itertuples():
             forcing_units=FORCING_UNITS,
             save_plot=SAVE_PLOTS,
             check_rows=check_rows,
+            simulation_frames=simulation_frames,
         )
         rows.append(row)
         if row["success"]:
@@ -376,7 +400,7 @@ display(
 # MAGIC ## Model checks
 # MAGIC
 # MAGIC Brakenhoff et al. (2022) via `ps.check.checklist`: one row per check per fit
-# MAGIC in `pastas_model_checks`. A fit passes only when **every** check passes; a
+# MAGIC in `<prefix>_model_checks`. A fit passes only when **every** check passes; a
 # MAGIC check that could not be evaluated (`passed` NULL) counts as not passed.
 
 # COMMAND ----------
@@ -422,6 +446,16 @@ else:
             "delta"
         ).mode("append").option("mergeSchema", "true").saveAsTable(CHECKS)
         print(f"appended {len(checks)} rows to {CHECKS} as run {RUN_ID}")
+
+    if simulation_frames:
+        simulations = pd.concat(simulation_frames, ignore_index=True)[SIMULATION_COLUMNS]
+        (spark.createDataFrame(simulations.astype(object).where(pd.notna(simulations), None))
+         .withColumn("datum", F.to_date("datum"))
+         .withColumn("observed", F.col("observed").cast("double"))
+         .withColumn("simulated", F.col("simulated").cast("double"))
+         .write.format("delta").mode("append").option("mergeSchema", "true")
+         .saveAsTable(SIMULATIONS))
+        print(f"appended {len(simulations)} daily rows to {SIMULATIONS} as run {RUN_ID}")
 
     display(
         spark.table(METRICS)
