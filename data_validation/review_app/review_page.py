@@ -5,6 +5,11 @@ opening a series merges the current source into its store (reviewed rows protect
 applies autoflag rule B; edits are written back by timestamp; afgekeurd implies
 gecontroleerd for rows a human edits; notes are capped at `notes_max_len`; saving is
 atomic and only ever writes to the validation store (layer 3).
+
+Correction: a manual offset (`correctie`, m) for a period, e.g. +0.10 m for the months a
+sensor hung lower after maintenance. One action sets it for every hour between a start and
+an end (a box drawn on the plot fills both in), however many rows that is; 0 removes it.
+`raw_data` is never changed; the plot and `03_validated_to_delta` use `raw_data + correctie`.
 """
 
 from __future__ import annotations
@@ -12,7 +17,7 @@ from __future__ import annotations
 import pandas as pd
 import streamlit as st
 
-from local_validation import checks, data_io, stores
+from local_validation import checks, data_io, stores, validation_store
 
 from . import common, plotting
 
@@ -202,6 +207,71 @@ def _bulk(view: pd.DataFrame, g: int, a: int, note: str, max_len: int) -> None:
     _set_store(store.reset_index())
 
 
+def _correction_panel(store: pd.DataFrame, filename: str, rng, max_len: int) -> None:
+    """Set one offset for every hour in a period: the single action for a sensor that hung
+    at the wrong depth for weeks. The plot's box selection fills in the period."""
+    periods = validation_store.correction_periods(store)
+    label = "Correction (offset for a period)" + (f" · {len(periods)} period(s) corrected" if len(periods) else "")
+    with st.expander(label, expanded=bool(rng) or bool(len(periods))):
+        if store.empty:
+            st.caption("No rows to correct.")
+            return
+        t0, t1 = store["timestamp"].min(), store["timestamp"].max()
+        start0, end0 = (rng if rng else (t0, t1))
+        # A box drawn on the plot can reach past the data (e.g. 12:28 after the last hour,
+        # 12:00); the inputs refuse values outside [t0, t1], so keep the period inside it.
+        start0 = min(max(pd.Timestamp(start0), t0), t1)
+        end0 = min(max(pd.Timestamp(end0), start0), t1)
+        key = f"{filename}_{start0}_{end0}"
+        c1, c2, c3 = st.columns([2, 2, 1])
+        start = c1.datetime_input("Correction start", value=start0.to_pydatetime(), min_value=t0.to_pydatetime(),
+                                  max_value=t1.to_pydatetime(), step=3600, format="YYYY-MM-DD",
+                                  key=f"rv_corr_start_{key}")
+        end = c2.datetime_input("Correction end", value=end0.to_pydatetime(), min_value=t0.to_pydatetime(),
+                                max_value=t1.to_pydatetime(), step=3600, format="YYYY-MM-DD",
+                                key=f"rv_corr_end_{key}")
+        offset = c3.number_input("Offset (m)", value=0.10, step=0.01, format="%.3f", key=f"rv_corr_off_{filename}",
+                                 help="Added to raw_data: +0.10 raises the head 10 cm. Sets the value, it does "
+                                      "not add to an earlier correction.")
+        if start is None or end is None or pd.Timestamp(start) > pd.Timestamp(end):
+            st.warning("Pick a start before the end.")
+            return
+        in_period = store["timestamp"].between(pd.Timestamp(start), pd.Timestamp(end))
+        n = int(in_period.sum())
+        other = int((in_period & (store["correctie"].round(6) != round(offset, 6))
+                     & (store["correctie"] != 0)).sum())
+        o1, o2 = st.columns([2, 3])
+        mark = o1.checkbox("Also mark these rows gecontroleerd", value=False, key=f"rv_corr_mark_{filename}",
+                           help="Rejected rows stay rejected.")
+        note = o2.text_input("Note for these rows (optional)", max_chars=max_len, key=f"rv_corr_note_{filename}",
+                             placeholder="sensor verhangen")
+        st.caption(f"**{n}** hours from {pd.Timestamp(start):%Y-%m-%d %H:%M} to {pd.Timestamp(end):%Y-%m-%d %H:%M}"
+                   + (f" · {other} of them already carry a different correction, which this replaces" if other else ""))
+        b1, b2, _ = st.columns([2, 2, 3])
+        if b1.button(f"Apply {offset:+.3f} m to {n} rows", type="primary", disabled=n == 0, width="stretch",
+                     key=f"rv_corr_apply_{key}"):
+            _correct(pd.Timestamp(start), pd.Timestamp(end), offset, mark, note, max_len)
+        if b2.button("Remove correction in period", disabled=n == 0, width="stretch", key=f"rv_corr_clear_{key}"):
+            _correct(pd.Timestamp(start), pd.Timestamp(end), 0.0, False, "", max_len)
+        if len(periods):
+            st.dataframe(periods, hide_index=True, width="stretch", column_config={
+                "start": st.column_config.DatetimeColumn("Start", format="YYYY-MM-DD HH:mm"),
+                "end": st.column_config.DatetimeColumn("End", format="YYYY-MM-DD HH:mm"),
+                "correctie": st.column_config.NumberColumn("Correctie (m)", format="%+.3f"),
+                "rows": st.column_config.NumberColumn("Hours")})
+
+
+def _correct(start: pd.Timestamp, end: pd.Timestamp, offset: float, mark: bool, note: str, max_len: int) -> None:
+    store, _ = validation_store.set_correction(st.session_state.rv_store, start, end, offset)
+    in_period = store["timestamp"].between(start, end)
+    if mark:
+        store.loc[in_period, "gecontroleerd"] = 1
+    if note:
+        store.loc[in_period, "note"] = note[:max_len]
+    _set_store(store)
+    st.rerun()
+
+
 def render() -> None:
     settings = common.settings()
     meta = common.object_data()
@@ -231,6 +301,7 @@ def render() -> None:
         st.info(f"Opened with automatic updates ({what}). They are written on the next save.")
 
     stats_box, plot_box = st.container(), st.container()
+    _correction_panel(store, filename, st.session_state.get("rv_range"), max_len)
 
     # ---- editor first, so its edits show in the plot in this same run ----
     st.subheader("Review points")
@@ -287,15 +358,21 @@ def render() -> None:
 
     table = view_capped.assign(checks=checks_col[view_capped.index],
                                gecontroleerd=view_capped["gecontroleerd"].astype(bool),
-                               afgekeurd=view_capped["afgekeurd"].astype(bool))
-    table = table[["timestamp", "raw_data", "checks", "gecontroleerd", "afgekeurd", "note"]]
+                               afgekeurd=view_capped["afgekeurd"].astype(bool),
+                               corrected=validation_store.corrected(view_capped))
+    table = table[["timestamp", "raw_data", "correctie", "corrected", "checks", "gecontroleerd", "afgekeurd",
+                   "note"]]
     editor_key = f"rv_editor_{filename}_{int(pd.util.hash_pandas_object(table, index=False).sum())}"
     edited = st.data_editor(
         table, key=editor_key, hide_index=True, width="stretch", height=380,
-        disabled=["timestamp", "raw_data", "checks"],
+        disabled=["timestamp", "raw_data", "correctie", "corrected", "checks"],
         column_config={
             "timestamp": st.column_config.DatetimeColumn("Timestamp", format="YYYY-MM-DD HH:mm"),
             "raw_data": st.column_config.NumberColumn("Raw data (m NAP)", format="%.4f"),
+            "correctie": st.column_config.NumberColumn("Correctie (m)", format="%+.3f",
+                                                       help="Set per period under Correction, above"),
+            "corrected": st.column_config.NumberColumn("Corrected (m NAP)", format="%.4f",
+                                                       help="raw_data + correctie: what goes to Delta"),
             "checks": st.column_config.TextColumn("Checks", help="Automated checks that hit this hour"),
             "gecontroleerd": st.column_config.CheckboxColumn("Gecontroleerd"),
             "afgekeurd": st.column_config.CheckboxColumn("Afgekeurd"),

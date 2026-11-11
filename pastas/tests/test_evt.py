@@ -181,3 +181,18 @@ def test_gpd_is_fitted_but_never_recommended():
     for shape in (-0.3, 0.0, 0.3):
         sample = genextreme.rvs(shape, 0, 1, size=704, random_state=5)
         assert select_family(sample, replicates=20).family != "gpd"
+
+
+def test_return_level_rows_are_the_table_in_long_form():
+    import pandas as pd
+
+    from tarso_pipeline.evt_report import RETURN_LEVEL_COLUMNS, return_level_rows
+
+    table = pd.DataFrame({"dr_gev": [-2.1, -2.3], "dr_emp": [-2.0, float("nan")], "wet_exp": [0.5, 0.7]},
+                         index=pd.Index([10, 100], name="return_period"))
+    rows = return_level_rows("id", "series_x", "run", table)
+    assert len(rows) == 6 and list(rows[0]) == RETURN_LEVEL_COLUMNS
+    by_key = {(r["tail"], r["family"], r["return_period"]): r["level"] for r in rows}
+    assert by_key[("dry", "gev", 100)] == -2.3 and by_key[("wet", "exp", 10)] == 0.5
+    assert by_key[("dry", "emp", 100)] is None
+    assert return_level_rows("id", "s", "run", None) == []

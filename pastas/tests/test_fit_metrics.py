@@ -139,12 +139,20 @@ def test_a_real_fit_populates_the_metrics(tmp_path, model_type):
     matplotlib.use("Agg")
     p, e = forcing()
     # Duplicated timestamps on purpose: the fit must survive the dedup path.
+    simulations = []
     row = fit_series(
         "a" * 64, "well", raw("2020-01-01", 1200, per_day=3), p, e, "run",
-        model_type=model_type, run_directory=str(tmp_path),
+        model_type=model_type, run_directory=str(tmp_path), simulation_frames=simulations,
     )
 
     assert row["success"] is True, row["error_message"]
+    # One daily frame per successful fit, for the app: observed next to simulated.
+    (sim,) = simulations
+    from tarso_pipeline.fit import SIMULATION_COLUMNS
+
+    assert list(sim.columns) == SIMULATION_COLUMNS
+    assert sim["observed"].notna().sum() == row["nobs"] and sim["simulated"].notna().all()
+    assert set(sim["model_type"]) == {model_type} and set(sim["meetreeks_id"]) == {"a" * 64}
     assert row["n_duplicate_timestamps"] == 2400
     assert row["nobs"] == 1200
     for field in ("evp", "r2", "rmse", "aicc", "bic", "obj", "nfev"):

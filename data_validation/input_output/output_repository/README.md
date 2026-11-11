@@ -14,15 +14,19 @@ input_output/output_databricks/   layer 1, source copy: read-only, overwritten b
 input_output/output_repository/   layer 3 --push--> Databricks --03--> validated_meting
 ```
 
-Frozen schema, UTF-8 with BOM:
+Frozen schema (plus `correctie`), UTF-8 with BOM:
 
 ```csv
-timestamp,raw_data,gecontroleerd,afgekeurd,note
-2024-01-01 00:00:00,-1.2345,1,0,
-2024-01-01 01:00:00,-0.4000,1,1,sensor spike
-2024-01-01 02:00:00,-4.0200,0,1,auto: rule B
+timestamp,raw_data,gecontroleerd,afgekeurd,note,correctie
+2024-01-01 00:00:00,-1.2345,1,0,,0.0
+2024-01-01 01:00:00,-0.4000,1,1,sensor spike,0.0
+2024-01-01 02:00:00,-4.0200,0,1,auto: rule B,0.0
+2024-03-01 00:00:00,-1.3345,1,0,sensor verhangen,0.1
 ```
 
+- `correctie` (m) is a manual offset, set per period in the review app (*Correction*). The
+  validated head is `raw_data + correctie`; `raw_data` itself is never changed. Stores saved
+  before the column existed load with `correctie = 0`.
 - `gecontroleerd = 1`: a human reviewed the row. `afgekeurd = 1`: the row is rejected.
 - `afgekeurd = 1` with `gecontroleerd = 0` is an autoflag rejection that no human has
   confirmed yet (note `auto: ...`).

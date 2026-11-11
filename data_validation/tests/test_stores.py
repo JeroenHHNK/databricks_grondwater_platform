@@ -13,7 +13,7 @@ from review_app.geo import rd_to_wgs84  # noqa: E402
 
 
 def store_df(rows):
-    return vs.ensure_columns(pd.DataFrame(rows, columns=vs.COLUMNS))
+    return vs.ensure_columns(pd.DataFrame(rows, columns=vs.COLUMNS[:len(rows[0])]))
 
 
 def raw_df(rows):
@@ -48,6 +48,31 @@ def test_ensure_columns_accepts_legacy_shapes():
     assert list(out.columns) == vs.COLUMNS
     assert len(out) == 2 and out["timestamp"].is_monotonic_increasing      # bad row dropped, sorted
     assert out["gecontroleerd"].max() == 1 and out["note"].tolist() == ["", ""]  # clipped, filled
+
+
+def test_store_without_correctie_loads_with_zero(tmp_path):
+    path = tmp_path / "old.csv"
+    path.write_text("timestamp,raw_data,gecontroleerd,afgekeurd,note\n2024-01-01 00:00:00,1.0,1,0,\n",
+                    encoding="utf-8-sig")
+    out = vs.load(path)
+    assert list(out.columns) == vs.COLUMNS and out["correctie"].tolist() == [0.0]
+
+
+def test_set_correction_sets_a_period_and_survives_merge():
+    store = store_df([(f"2024-01-01 {h:02d}:00", 1.0, 1, 0, "") for h in range(6)])
+    out, n = vs.set_correction(store, "2024-01-01 02:00", "2024-01-01 04:00", 0.10)
+    assert n == 3 and out["correctie"].tolist() == [0, 0, 0.1, 0.1, 0.1, 0]
+    assert vs.corrected(out).round(3).tolist() == [1.0, 1.0, 1.1, 1.1, 1.1, 1.0]
+    out, _ = vs.set_correction(out, "2024-01-01 02:00", "2024-01-01 04:00", 0.10)   # sets, not adds
+    assert out["correctie"].max() == 0.1
+    assert vs.correction_periods(out).to_dict("records") == [{
+        "start": pd.Timestamp("2024-01-01 02:00"), "end": pd.Timestamp("2024-01-01 04:00"),
+        "correctie": 0.1, "rows": 3}]
+    # a new export keeps the correction; new hours come in uncorrected
+    merged = vs.merge_new_raw(out, raw_df([("2024-01-01 03:00", 9.0), ("2024-01-01 06:00", 2.0)]))
+    assert merged.set_index("timestamp")["correctie"].tolist() == [0, 0, 0.1, 0.1, 0.1, 0, 0]
+    out, _ = vs.set_correction(merged, "2024-01-01 00:00", "2024-01-01 06:00", 0)  # 0 removes
+    assert vs.correction_periods(out).empty
 
 
 def test_normalize_raw_averages_duplicates():

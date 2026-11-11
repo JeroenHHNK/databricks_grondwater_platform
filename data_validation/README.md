@@ -18,7 +18,7 @@ GitHub ──pull──► local IDE  input_output/output_databricks/
    └──── input_output/output_repository/  (reviewed copies, frozen store schema)
    │  ⑤ pull into Databricks, build validated table          databricks_code/notebooks/03
    ▼
-waterkeringbeheer_prd.jvanruitenbeek.validated_meting  → further analysis / Tarso
+waterkeringbeheer_prd.jvanruitenbeek.validated_meting  → Pastas (data_basis=validated)
 ```
 
 The design follows the Pipeline Handover §8. Constraints and grants are in
@@ -32,7 +32,7 @@ The design follows the Pipeline Handover §8. Constraints and grants are in
 |---|---|---|---|---|
 | **1. Source copy** | `input_output/output_databricks/` | tracked | exact per-series copy of Databricks (`time_series_data/<filename>.csv` + `metadata/object_data.csv`) | the Databricks export **only** |
 | **2. Derived** | `output_data/validated/`, `output_data/validation_summary.csv` | ignored | automated flags v1–v4 / rules A,B per hour; disposable | `local_validation/validate.ipynb` |
-| **3. Validation store** | `input_output/output_repository/<filename>.csv` | tracked | human review decisions, **the asset**; frozen schema `timestamp,raw_data,gecontroleerd,afgekeurd,note` | review app + autoflag, merge-only |
+| **3. Validation store** | `input_output/output_repository/<filename>.csv` | tracked | human review decisions, **the asset**; frozen schema `timestamp,raw_data,gecontroleerd,afgekeurd,note` plus `correctie` (m, manual offset) | review app + autoflag, merge-only |
 
 A new export overwrites layer 1, layer 2 is rebuilt, and layer 3 is **merged into, never
 replaced**: reviewed rows keep their value, verdict and note; new hours arrive unreviewed.
@@ -101,6 +101,18 @@ a human has reviewed.
   characters), or approve / reject / reset all visible rows. Filter it by status or by
   check, or drag a box on the plot to limit it to a period. **Save** writes the store
   atomically; switching series with unsaved edits asks you to save or discard first.
+- **Correction** (on the Review page): one offset in metres for every hour between a start and
+  an end, e.g. +0.10 m for the two months a sensor hung lower after maintenance. Drag a box on
+  the plot to fill in the period, set the offset and apply: one action, however many rows. It is
+  stored per hour in the store's `correctie` column; `raw_data` is never changed. The plot and
+  the table show the corrected head (the raw line stays visible, dotted, where a correction
+  applies), and `03_validated_to_delta` writes `raw_data + correctie`. Applying again replaces
+  the offset (it does not add); *Remove correction in period* sets it back to 0. Note the
+  automated checks (v1–v4, rules A/B) still run on the raw source values.
+- **Data sources**: per series, which fields come from the API (`hl_grondwaterpeilmeting`,
+  blue) and which from `hl_cs_objecten.meetlocatie` (green), with how many series are linked
+  and by which key. An empty green cell is what still has to be linked; filter on *Not linked*
+  for the work list.
 - **Overview**: progress per vendor (TOTAL recomputed from sums) and per series, with the
   automated-check counts from the last notebook run.
 
@@ -119,7 +131,8 @@ python -m pytest tests              # validation logic tests
 jupyter lab local_validation/validate.ipynb   # automated flags + store sync
 streamlit run streamlit_app.py      # map + manual review -> input_output/output_repository/
 git add input_output/output_repository && git commit -m "review" && git push
-# Databricks: pull, run 03_validated_to_delta -> validated_meting
+# Databricks: pull, run 03_validated_to_delta -> validated_meting (same columns as meting;
+#             waarde = raw + correction), then the Pastas notebooks with data_basis=validated
 ```
 
 See [`databricks_code/README.md`](databricks_code/README.md) for the full run order and the

@@ -1,0 +1,148 @@
+"""Reading the results back: the latest run per series, and the family that applies.
+
+Shared by the Databricks notebooks (export, family choice) and the Streamlit app, so the
+app and Databricks agree on what "the result for this series" is. Pure SQL strings and
+pandas; no Spark, no Pastas.
+
+Tables accumulate one set of rows per run (``run_id``, a sortable UTC timestamp). The
+result for a series is the **latest run that produced a row for it**, per model type:
+``latest_run_sql``.
+
+The family per tail is the one a person picked (``<prefix>_family_choice``, kept in git as
+``family_choice/<prefix>_family_choice.csv``) or, without a pick, the automatic choice in
+``<prefix>_evt_selection``: ``effective_family`` / ``chosen_levels``.
+"""
+
+from __future__ import annotations
+
+import re
+from pathlib import Path
+
+import pandas as pd
+
+from tarso_pipeline.paths import TABLE_PREFIX, check_basis
+
+EXPORT_DIRNAME = "results_export"
+FAMILY_CHOICE_DIRNAME = "family_choice"
+# What the app needs, and the file each is exported to (export_results.py).
+EXPORT_FILES = {
+    "fit_metrics": "fit_metrics.csv",
+    "model_checks": "model_checks.csv",
+    "evt_selection": "evt_selection.csv",
+    "return_levels": "return_levels.csv",
+    "simulations": "simulations.parquet",
+}
+FAMILIES = ("gev", "exp", "gpd", "emp")
+FAMILY_LABELS = {"gev": "GEV", "exp": "exponentieel (Gumbel)", "gpd": "GPD", "emp": "empirisch"}
+TAIL_LABELS = {"dry": "droog (laagste standen)", "wet": "nat (hoogste standen)"}
+FAMILY_CHOICE_COLUMNS = ["meetreeks_id", "series_name", "model_type", "tail", "family", "note",
+                         "chosen_by", "chosen_at"]
+GEKOZEN, AUTOMATISCH = "gekozen", "automatisch"
+
+_TABLE = re.compile(r"^[A-Za-z_][A-Za-z0-9_]*(\.[A-Za-z_][A-Za-z0-9_]*){2}$")
+_ID = re.compile(r"^[A-Za-z0-9_-]{1,128}$")
+
+
+def _check_table(table: str) -> str:
+    if not _TABLE.fullmatch(table):
+        raise ValueError(f"not a three-part table name: {table!r}")
+    return table
+
+
+def latest_run_sql(table: str, keys: tuple[str, ...] = ("meetreeks_id", "model_type"),
+                   meetreeks_id: str | None = None) -> str:
+    """Every row of the latest run per ``keys`` (optionally for one series only)."""
+    _check_table(table)
+    where = ""
+    if meetreeks_id is not None:
+        if not _ID.fullmatch(meetreeks_id):
+            raise ValueError(f"meetreeks_id must be a plain hash, got {meetreeks_id!r}")
+        where = f"WHERE meetreeks_id = '{meetreeks_id}'"
+    on = " AND ".join(f"t.{k} = l.{k}" for k in (*keys, "run_id"))
+    cols = ", ".join(keys)
+    return f"""
+        SELECT t.* FROM {table} t
+        JOIN (SELECT {cols}, max(run_id) AS run_id FROM {table} {where} GROUP BY {cols}) l
+          ON {on}
+    """
+
+
+def latest_rows(frame: pd.DataFrame, keys: tuple[str, ...] = ("meetreeks_id", "model_type")) -> pd.DataFrame:
+    """``latest_run_sql`` for a frame already in pandas."""
+    if frame.empty:
+        return frame
+    latest = frame.groupby(list(keys))["run_id"].transform("max")
+    return frame[frame["run_id"] == latest].reset_index(drop=True)
+
+
+def export_dir(root: str | Path, basis: str) -> Path:
+    """``<pastas>/results_export/<prefix>/``, the copy the app reads without live access."""
+    return Path(root) / EXPORT_DIRNAME / TABLE_PREFIX[check_basis(basis)]
+
+
+def family_choice_path(root: str | Path, basis: str) -> Path:
+    """``<pastas>/family_choice/<prefix>_family_choice.csv``, written by the app, in git."""
+    return Path(root) / FAMILY_CHOICE_DIRNAME / f"{TABLE_PREFIX[check_basis(basis)]}_family_choice.csv"
+
+
+def read_family_choice(path: str | Path) -> pd.DataFrame:
+    path = Path(path)
+    if not path.is_file():
+        return pd.DataFrame(columns=FAMILY_CHOICE_COLUMNS)
+    frame = pd.read_csv(path, dtype=str, keep_default_na=False, encoding="utf-8-sig")
+    for column in FAMILY_CHOICE_COLUMNS:
+        if column not in frame:
+            frame[column] = ""
+    return frame[FAMILY_CHOICE_COLUMNS]
+
+
+def set_family_choice(choice: pd.DataFrame, *, meetreeks_id: str, series_name: str, model_type: str,
+                      tail: str, family: str | None, note: str = "", chosen_by: str = "",
+                      chosen_at: str = "") -> pd.DataFrame:
+    """One pick per (meetreeks_id, model_type, tail); ``family=None`` removes it (back to automatic)."""
+    if family is not None and family not in FAMILIES:
+        raise ValueError(f"family must be one of {FAMILIES}, got {family!r}")
+    if tail not in TAIL_LABELS:
+        raise ValueError(f"tail must be one of {tuple(TAIL_LABELS)}, got {tail!r}")
+    same = ((choice["meetreeks_id"] == meetreeks_id) & (choice["model_type"] == model_type)
+            & (choice["tail"] == tail))
+    out = choice[~same]
+    if family is not None:
+        out = pd.concat([out, pd.DataFrame([{
+            "meetreeks_id": meetreeks_id, "series_name": series_name, "model_type": model_type,
+            "tail": tail, "family": family, "note": note, "chosen_by": chosen_by, "chosen_at": chosen_at,
+        }])], ignore_index=True)
+    return out.sort_values(["meetreeks_id", "model_type", "tail"]).reset_index(drop=True)[FAMILY_CHOICE_COLUMNS]
+
+
+def write_family_choice(path: str | Path, choice: pd.DataFrame) -> None:
+    path = Path(path)
+    path.parent.mkdir(parents=True, exist_ok=True)
+    tmp = path.with_suffix(".tmp")
+    choice[FAMILY_CHOICE_COLUMNS].to_csv(tmp, index=False, encoding="utf-8-sig")
+    tmp.replace(path)
+
+
+def effective_family(selection: pd.DataFrame, choice: pd.DataFrame) -> pd.DataFrame:
+    """Per (meetreeks_id, model_type, tail): the family that applies and where it came from.
+
+    ``selection`` is ``<prefix>_evt_selection`` (latest run), ``choice`` the picks. A pick
+    wins; otherwise the automatic ``chosen_family``, which is empty for a tail the
+    selection could not fit (degenerate, insufficient), so that tail has no family.
+    """
+    keys = ["meetreeks_id", "model_type", "tail"]
+    auto = selection[[*keys, "chosen_family", "verdict"]].rename(columns={"chosen_family": "auto_family"})
+    picks = choice[[*keys, "family"]].rename(columns={"family": "picked"})
+    out = auto.merge(picks, on=keys, how="outer")
+    picked = out["picked"].notna() & (out["picked"] != "")
+    out["family"] = out["picked"].where(picked, out["auto_family"])
+    out["family_source"] = pd.Series(AUTOMATISCH, index=out.index).where(~picked, GEKOZEN)
+    out.loc[out["family"].isna() | (out["family"] == ""), "family_source"] = None
+    return out[[*keys, "family", "family_source", "auto_family", "verdict"]]
+
+
+def chosen_levels(levels: pd.DataFrame, selection: pd.DataFrame, choice: pd.DataFrame) -> pd.DataFrame:
+    """The return levels of the family that applies per tail (``effective_family``)."""
+    fam = effective_family(selection, choice).dropna(subset=["family"])
+    keys = ["meetreeks_id", "model_type", "tail", "family"]
+    return levels.merge(fam[[*keys, "family_source"]], on=keys, how="inner")

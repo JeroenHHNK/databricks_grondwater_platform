@@ -219,7 +219,7 @@ def _toon_profiel(rij: pd.Series, versie: tuple[float, str], bron: databricks_re
     if st.session_state.get("_centrale_app"):
         from platform_app import nav
         from platform_app.stijghoogtes import PROFIEL_PARAM, PROJECT_PARAM
-        st.page_link(nav.PER_DWARSPROFIEL, label="Stijghoogtes van dit dwarsprofiel", icon=":material/show_chart:",
+        st.page_link(nav.PER_DWARSPROFIEL, label="Peilbuizen van dit dwarsprofiel", icon=":material/show_chart:",
                      query_params={PROJECT_PARAM: project, PROFIEL_PARAM: profiel_id})
 
     tab_plot, tab_peilbuizen = st.tabs(["Profiel", "Peilbuizen"])
@@ -236,6 +236,10 @@ def _toon_profiel(rij: pd.Series, versie: tuple[float, str], bron: databricks_re
         if figuren is not None:
             if figuren.ontbrekend:
                 st.warning(f"Geen stijghoogtes voor: {', '.join(figuren.ontbrekend)}. Die staan niet in de plot.")
+            if st.session_state.get("_centrale_app"):
+                # Return levels from the Pastas models of these wells (a copy; the cache keeps its figure).
+                from platform_app import herhalingstijden
+                figuren = herhalingstijden.in_profiel(figuren, project, profiel_id)
             html: str = figuren.als_html()
             st.download_button(
                 "Download als HTML",

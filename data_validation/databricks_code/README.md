@@ -29,7 +29,7 @@ jobs/workflow_config.json  job: 00 -> 01 -> 02
 |---|---|---|
 | `source_copy_meetreeks` | `01` | one row per series: all `meetreeks` columns + `matched`, `match_key`, `cs_*`, coordinates |
 | `source_copy_meting` | `01` | hourly `meetreeks_id, vendor, timestamp, head` |
-| `validated_meting` | `03` | approved hours after human review |
+| `validated_meting` | `03` | approved hours after human review, **shaped like `meting`**: `meetreeks_id, tijdstempel, tijdstempel_utc, waarde` (= raw + `correctie`), `validatie_status` (2), plus `waarde_ruw, correctie, note, vendor, filename, run_id`; overwritten each run (Delta history keeps the old ones) |
 
 ### The `hl_cs_objecten` match
 

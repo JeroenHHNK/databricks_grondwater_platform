@@ -122,3 +122,20 @@ def test_the_three_artefact_folders():
 def test_an_unknown_artefact_kind_is_rejected():
     with pytest.raises(ValueError, match="Unknown artefact kind"):
         artefact_dir("/Volumes/a/run_26_10_15", "random_files")
+
+
+def test_both_data_bases_write_the_same_tables_under_their_own_prefix():
+    from tarso_pipeline import paths
+
+    for kind in paths.TABLE_KINDS:
+        valid = paths.output_table(paths.VALIDATED, kind)
+        unvalid = paths.output_table(paths.UNVALIDATED, kind)
+        assert valid == f"waterkeringbeheer_prd.jvanruitenbeek.valid_pastas_{kind}"
+        assert unvalid == f"waterkeringbeheer_prd.jvanruitenbeek.unvalid_pastas_{kind}"
+    assert paths.source_table(paths.UNVALIDATED) == paths.SOURCE_TABLE
+    assert paths.source_table(paths.VALIDATED).endswith(".validated_meting")
+    assert paths.basis_volume("/Volumes/x/", paths.VALIDATED) == "/Volumes/x/valid_pastas"
+    with pytest.raises(ValueError):
+        paths.output_table("raw", "fit_metrics")
+    with pytest.raises(ValueError):
+        paths.output_table(paths.VALIDATED, "nonsense")

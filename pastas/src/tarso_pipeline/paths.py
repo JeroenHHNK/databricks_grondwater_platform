@@ -79,6 +79,62 @@ MANIFEST_TABLE = f"{OUTPUT_CATALOG}.{OUTPUT_SCHEMA}.pastas_series_manifest"
 METRICS_TABLE = f"{OUTPUT_CATALOG}.{OUTPUT_SCHEMA}.pastas_fit_metrics"
 CHECKS_TABLE = f"{OUTPUT_CATALOG}.{OUTPUT_SCHEMA}.pastas_model_checks"
 
+# --- validated vs. unvalidated: two identical sets of outputs -----------------
+#
+# The pipeline trains on either the raw source (`unvalidated`) or on the hours a human
+# approved in the data validation review, with corrections applied (`validated`; written
+# by data_validation/databricks_code/notebooks/03_validated_to_delta.py). Both runs write
+# the same tables under their own prefix, so the two are compared row for row:
+#
+#   unvalid_pastas_fit_metrics   valid_pastas_fit_metrics
+#   unvalid_pastas_model_checks  valid_pastas_model_checks   ... (TABLE_KINDS)
+#
+# and their artefacts go to their own volume folder (<volume>/<prefix>/run_yy_mm_dd), so a
+# validated and an unvalidated run on the same day never overwrite each other's .pas files.
+
+UNVALIDATED = "unvalidated"
+VALIDATED = "validated"
+DATA_BASES = (UNVALIDATED, VALIDATED)
+TABLE_PREFIX = {UNVALIDATED: "unvalid_pastas", VALIDATED: "valid_pastas"}
+VALIDATED_TABLE = f"{OUTPUT_CATALOG}.{OUTPUT_SCHEMA}.validated_meting"
+SOURCE_TABLES = {UNVALIDATED: SOURCE_TABLE, VALIDATED: VALIDATED_TABLE}
+
+TABLE_KINDS = (
+    "series_manifest",   # task 1: the work list
+    "fit_metrics",       # task 2: one row per fit
+    "model_checks",      # task 2: Brakenhoff (2022) checks per fit
+    "simulations",       # task 2: daily observed + simulated head per fit (for the app)
+    "evt_selection",     # stage 2: the automatic family per tail
+    "extremes_summary",  # stage 2: one row per model
+    "return_levels",     # stage 2: level per tail x family x return period (long)
+    "family_choice",     # the family a person picked per model and tail (from git)
+)
+
+
+def check_basis(basis: str) -> str:
+    if basis not in DATA_BASES:
+        raise ValueError(f"data_basis must be one of {DATA_BASES}, got {basis!r}")
+    return basis
+
+
+def output_table(basis: str, kind: str, catalog: str = OUTPUT_CATALOG,
+                 schema: str = OUTPUT_SCHEMA) -> str:
+    """``<catalog>.<schema>.<prefix>_<kind>``, e.g. ``...valid_pastas_fit_metrics``."""
+    if kind not in TABLE_KINDS:
+        raise ValueError(f"Unknown table kind {kind!r}; use one of {TABLE_KINDS}")
+    return f"{catalog}.{schema}.{TABLE_PREFIX[check_basis(basis)]}_{kind}"
+
+
+def source_table(basis: str) -> str:
+    """Where the heads come from: the raw source, or validated_meting (same columns)."""
+    return SOURCE_TABLES[check_basis(basis)]
+
+
+def basis_volume(base: str, basis: str) -> str:
+    """The volume folder of one data basis: ``<base>/<prefix>``; run folders go inside."""
+    return f"{str(base).rstrip('/')}/{TABLE_PREFIX[check_basis(basis)]}"
+
+
 # WRITE VOLUME here is a separate grant from the table write that was tested;
 # confirm it once with a throwaway file before a batch run.
 MODEL_VOLUME_BASE = (

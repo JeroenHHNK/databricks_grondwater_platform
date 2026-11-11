@@ -1,15 +1,15 @@
 """
-The Stijghoogtes section: groundwater heads per well, per cross section and per zone.
+Two pages of the Peilbuizen section: groundwater heads per cross section and per zone.
 
-Three pages on the same data as Boxplots (daily means of the series Boxplots picks per
-well; live when DATABRICKS_WAREHOUSE_ID is set, otherwise the export):
+On the same data as Boxplots (daily means of the series Boxplots picks per well; live when
+DATABRICKS_WAREHOUSE_ID is set, otherwise the export):
 
-- Eén peilbuis: one series with its daily min–max, filter levels and invalid days;
 - Per dwarsprofiel: all wells of one cross section, coloured by zone;
 - Zone vergelijken: one zone (e.g. BIKR) across cross sections.
 
-The chosen well or cross section is in the URL, so Boxplots can link here and a view can
-be shared.
+The section's first page, Kaart (one series at a time, every series Databricks has), is in
+peilbuizen.py. The chosen cross section or zone is in the URL, so Boxplots can link here and
+a view can be shared.
 """
 
 from __future__ import annotations
@@ -96,84 +96,6 @@ def _links(project: str, dwarsprofiel: str, zonder_profiel: bool = False) -> Non
         kolommen[1].page_link(nav.PER_DWARSPROFIEL, label="Alle peilbuizen van dit dwarsprofiel",
                               icon=":material/view_column:",
                               query_params={PROJECT_PARAM: project, PROFIEL_PARAM: dwarsprofiel})
-
-
-# --- Eén peilbuis -------------------------------------------------------------------------------
-
-def render_reeks() -> None:
-    st.title("Stijghoogte per peilbuis")
-    geladen = _laad()
-    if geladen is None:
-        return
-    b, cat = geladen
-    met = cat.dropna(subset=["meetreeks_id"]).drop_duplicates(["project", "peilbuis"])
-    labels: dict[str, str] = {f"{r.project}|{r.peilbuis}": data.label(r) for r in met.itertuples()}
-    st.caption(f"{len(labels)} peilbuizen met een meetreeks · stijghoogtes {bron_module.herkomst(b)} · "
-               "daggemiddelden van de reeks die Boxplots per peilbuis kiest")
-
-    gevraagd = f"{st.query_params.get(PROJECT_PARAM, '')}|{st.query_params.get(PEILBUIS_PARAM, '')}"
-    sleutel = _kies(list(labels), gevraagd, "Peilbuis", labels.get)
-    if sleutel is None:
-        st.info("Kies een peilbuis. Zoeken kan op naam, zone (BIKR), dwarsprofiel of project.")
-        return
-    project, peilbuis = sleutel.split("|", 1)
-    st.query_params.update({PROJECT_PARAM: project, PEILBUIS_PARAM: peilbuis})
-    st.query_params.pop(PROFIEL_PARAM, None)
-    rij = met[(met["project"] == project) & (met["peilbuis"] == peilbuis)].iloc[0]
-    dag = data.dagwaarden(b, [rij["meetreeks_id"]])
-
-    o1, o2, o3 = st.columns(3)
-    band = o1.toggle("Dagelijkse min–max", value="min" in dag, disabled="min" not in dag)
-    niveaus = o2.toggle("Filter en bovenkant peilbuis", value=True)
-    invalide = o3.toggle("Dagen met invalide metingen", value="n_status_1" in dag,
-                         disabled="n_status_1" not in dag,
-                         help="Dagen waarop de bron minstens één meting als invalide (validatie_status 1) markeert.")
-
-    if dag.empty:
-        st.info("Deze meetreeks heeft geen daggemiddelden.")
-        return
-    s = data.samenvatting(DataFrame([rij]), dag).iloc[0]
-    m = st.columns(4)
-    m[0].metric("Dagen", f"{int(s['dagen'])}", help=f"{s['van']:%d-%m-%Y} t/m {s['tot']:%d-%m-%Y}")
-    m[1].metric("Gemiddeld", f"{s['gemiddeld']:.2f} m NAP")
-    m[2].metric("Laagste daggemiddelde", f"{s['laagste']:.2f} m NAP")
-    m[3].metric("Hoogste daggemiddelde", f"{s['hoogste']:.2f} m NAP")
-    st.caption(f"Van {s['van']:%d-%m-%Y} t/m {s['tot']:%d-%m-%Y}")
-
-    fig = go.Figure()
-    if band:
-        fig.add_trace(go.Scatter(x=dag["datum"], y=dag["min"], line={"width": 0}, hoverinfo="skip",
-                                 showlegend=False, name="min"))
-        fig.add_trace(go.Scatter(x=dag["datum"], y=dag["max"], line={"width": 0}, fill="tonexty",
-                                 fillcolor="rgba(42,120,214,0.18)", name="dagelijkse min–max",
-                                 customdata=dag["min"],
-                                 hovertemplate="min %{customdata:.3f} · max %{y:.3f}<extra></extra>"))
-    fig.add_trace(go.Scatter(x=dag["datum"], y=dag["gem"], name="daggemiddelde",
-                             line={"color": REEKS_KLEUR, "width": 2},
-                             hovertemplate="%{x|%d-%m-%Y}: %{y:.3f} m NAP<extra></extra>"))
-    if invalide:
-        slecht = dag[dag["n_status_1"].fillna(0) > 0]
-        if not slecht.empty:
-            fig.add_trace(go.Scatter(x=slecht["datum"], y=slecht["gem"], mode="markers", name="invalide metingen",
-                                     marker={"color": INVALIDE_KLEUR, "size": 8, "symbol": "x"},
-                                     customdata=slecht["n_status_1"],
-                                     hovertemplate="%{x|%d-%m-%Y}: %{customdata} invalide<extra></extra>"))
-    if niveaus:
-        for waarde, naam, streep in ((rij["bk_peilbuis"], "bovenkant peilbuis", "dot"),
-                                     (rij["bk_filter"], "bovenkant filter", "dash"),
-                                     (rij["ok_filter"], "onderkant filter", "dash")):
-            if pd.notna(waarde):
-                fig.add_hline(y=waarde, line={"color": HULPLIJN_KLEUR, "width": 1, "dash": streep},
-                              annotation_text=f"{naam} {waarde:.2f}", annotation_position="top left",
-                              annotation_font_color=HULPLIJN_KLEUR)
-    _tijdas(fig)
-    fig.update_layout(hovermode="x unified", title_text=data.label(rij))
-    st.plotly_chart(fig, config={"displaylogo": False})
-
-    st.caption(f"Code `{rij['code']}` · zone {rij['zone']} ({data.ZONE_UITLEG.get(rij['zone'], '')}) · "
-               f"keuze meetreeks: {rij['keuze']}")
-    _links(project, rij["dwarsprofiel"])
-    _download(dag.set_index("datum").drop(columns="meetreeks_id"), f"stijghoogte_{project}_{peilbuis}")
 
 
 # --- Per dwarsprofiel ---------------------------------------------------------------------------

@@ -4,6 +4,9 @@ Status colours: afgekeurd by a human -> RED, afgekeurd by a rule but not yet
 confirmed -> PINK, gecontroleerd -> GREEN, else GRAY. The automated checks (v1-v4, rule
 A) are drawn as open hint markers; they never change the store. The filter bottom (with
 the v3 band) and the top of the well are drawn as reference lines.
+
+Everything is drawn at the corrected head (`raw_data + correctie`); where a correction
+applies, the uncorrected raw value is drawn as a thin dotted line, so the shift is visible.
 """
 
 from __future__ import annotations
@@ -14,6 +17,7 @@ import plotly.graph_objects as go
 
 from local_validation import checks
 from local_validation.stores import store_status
+from local_validation.validation_store import corrected
 
 STATUS_STYLE = {   # status -> (colour, legend label)
     "unreviewed": ("#999999", "Unreviewed"),
@@ -48,11 +52,22 @@ def build_figure(store: pd.DataFrame, hints: pd.DataFrame | None = None, *, titl
                  show_hints: tuple[str, ...] = tuple(HINT_STYLE),
                  x_range: tuple[pd.Timestamp, pd.Timestamp] | None = None) -> go.Figure:
     scatter_cls = go.Scattergl if len(store) > GL_THRESHOLD else go.Scatter
+    raw_store = store
+    correction = store["correctie"].fillna(0.0) if "correctie" in store else pd.Series(0.0, index=store.index)
+    # Plot the corrected head; every trace below reads `raw_data`, so swap it in once.
+    store = store.assign(raw_data=corrected(store.assign(correctie=correction)), correctie=correction)
     fig = go.Figure()
     fig.add_trace(scatter_cls(
         x=store["timestamp"], y=store["raw_data"], mode="lines",
         line=dict(color="rgba(120,120,120,0.35)", width=1),
         hoverinfo="skip", showlegend=False, name="raw_data"))
+    if (correction != 0).any():
+        # The raw value where a correction applies; NaN elsewhere breaks the line.
+        before = raw_store["raw_data"].where(correction != 0)
+        fig.add_trace(scatter_cls(
+            x=raw_store["timestamp"], y=before, mode="lines", name="Raw, before correction",
+            line=dict(color="#9467BD", width=1, dash="dot"), connectgaps=False,
+            hovertemplate="%{x|%Y-%m-%d %H:%M}<br>raw: %{y:.4f} m<extra></extra>"))
 
     daily = store.set_index("timestamp")["raw_data"].resample("1D").mean().dropna()
     if not daily.empty:
@@ -69,8 +84,11 @@ def build_figure(store: pd.DataFrame, hints: pd.DataFrame | None = None, *, titl
         fig.add_trace(scatter_cls(
             x=sub["timestamp"], y=sub["raw_data"], mode="markers", name=label,
             marker=dict(color=colour, size=6),
-            customdata=np.stack([sub["note"].fillna("").to_numpy()], axis=-1),
+            # object dtype keeps the correction a number (np.stack would turn it into text)
+            customdata=np.column_stack([sub["note"].fillna("").to_numpy(dtype=object),
+                                        sub["correctie"].to_numpy(dtype=object)]),
             hovertemplate="%{x|%Y-%m-%d %H:%M}<br>head: %{y:.4f} m<br>"
+                          "correctie: %{customdata[1]:+.3f} m<br>"
                           "note: %{customdata[0]}<extra></extra>"))
 
     if hints is not None and not hints.empty:
