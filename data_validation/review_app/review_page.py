@@ -218,6 +218,10 @@ def _correction_panel(store: pd.DataFrame, filename: str, rng, max_len: int) -> 
             return
         t0, t1 = store["timestamp"].min(), store["timestamp"].max()
         start0, end0 = (rng if rng else (t0, t1))
+        # A box drawn on the plot can reach past the data (e.g. 12:28 after the last hour,
+        # 12:00); the inputs refuse values outside [t0, t1], so keep the period inside it.
+        start0 = min(max(pd.Timestamp(start0), t0), t1)
+        end0 = min(max(pd.Timestamp(end0), start0), t1)
         key = f"{filename}_{start0}_{end0}"
         c1, c2, c3 = st.columns([2, 2, 1])
         start = c1.datetime_input("Correction start", value=start0.to_pydatetime(), min_value=t0.to_pydatetime(),
