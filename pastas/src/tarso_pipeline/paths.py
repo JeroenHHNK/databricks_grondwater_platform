@@ -107,6 +107,8 @@ TABLE_KINDS = (
     "evt_selection",     # stage 2: the automatic family per tail
     "extremes_summary",  # stage 2: one row per model
     "return_levels",     # stage 2: level per tail x family x return period (long)
+    "shape_uncertainty",  # explore: Hessian vs bootstrap shape SE and family, per tail
+    "return_level_ci",   # explore: GEV level with its 95% bootstrap band, per tail x T
     "family_choice",     # the family a person picked per model and tail (from git)
 )
 
@@ -230,7 +232,8 @@ def artefact_dir(run_directory: str, kind: str) -> str:
 #       used_extremes/        used_extremes_<series>.csv
 #       return_plots_fitted/  <series>_return_periods.png
 #       qq_plots/             <series>_qq_{min,max}.png
-#       confidence_plots/     <series>_return_level_{min,max}.png
+#       confidence_plots/     <series>_return_level.png   (explore_shape_and_uncertainty)
+#       shape_uncertainty.csv, return_level_ci.csv          (explore_shape_and_uncertainty)
 #       evt_selection.csv
 #       tail_parameters.csv
 #       <run>_extremes_summary.csv
