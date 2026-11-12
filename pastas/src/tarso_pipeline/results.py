@@ -16,13 +16,29 @@ The family per tail is the one a person picked (``<prefix>_family_choice``, kept
 from __future__ import annotations
 
 import re
+import shutil
 from pathlib import Path
 
 import pandas as pd
 
-from tarso_pipeline.paths import TABLE_PREFIX, check_basis
+from tarso_pipeline.paths import (
+    CONFIDENCE_PLOTS_DIR,
+    QQ_PLOTS_DIR,
+    RETURN_PLOTS_DIR,
+    TABLE_PREFIX,
+    check_basis,
+)
 
 EXPORT_DIRNAME = "results_export"
+# The extremes figures, copied from the run folders into results_export/<prefix>/plots/
+# as <series_name>_<kind>.png: one file per model and kind, from the most recent run.
+PLOTS_DIRNAME = "plots"
+PLOT_KINDS = {
+    # kind:          (folder in the run folder, suffix of the file run_extremes writes)
+    "return_periods": (RETURN_PLOTS_DIR, "_return_periods.png"),
+    "qq": (QQ_PLOTS_DIR, "_qq.png"),
+    "confidence": (CONFIDENCE_PLOTS_DIR, "_return_level.png"),  # explore_shape_and_uncertainty
+}
 FAMILY_CHOICE_DIRNAME = "family_choice"
 # What the app needs, and the file each is exported to (export_results.py).
 EXPORT_FILES = {
@@ -78,6 +94,62 @@ def latest_rows(frame: pd.DataFrame, keys: tuple[str, ...] = ("meetreeks_id", "m
 def export_dir(root: str | Path, basis: str) -> Path:
     """``<pastas>/results_export/<prefix>/``, the copy the app reads without live access."""
     return Path(root) / EXPORT_DIRNAME / TABLE_PREFIX[check_basis(basis)]
+
+
+def plots_dir(root: str | Path, basis: str) -> Path:
+    """``<pastas>/results_export/<prefix>/plots/``."""
+    return export_dir(root, basis) / PLOTS_DIRNAME
+
+
+def plot_path(root: str | Path, basis: str, series_name: str, kind: str) -> Path:
+    """Where the exported ``kind`` figure of one model lives (it may not exist)."""
+    if kind not in PLOT_KINDS:
+        raise ValueError(f"kind must be one of {tuple(PLOT_KINDS)}, got {kind!r}")
+    return plots_dir(root, basis) / f"{series_name}_{kind}.png"
+
+
+def latest_plots(basis_volume_dir: str | Path) -> dict[tuple[str, str], Path]:
+    """The newest figure per (series_name, kind) over every run folder of one data basis.
+
+    Newest by modification time, not by folder name, so a run folder with a custom name
+    (``run_folder`` widget) counts too.
+    """
+    found: dict[tuple[str, str], Path] = {}
+    base = Path(basis_volume_dir)
+    if not base.is_dir():
+        return found
+    for kind, (folder, suffix) in PLOT_KINDS.items():
+        for path in base.glob(f"*/{folder}/*{suffix}"):
+            key = (path.name[: -len(suffix)], kind)
+            if key not in found or path.stat().st_mtime > found[key].stat().st_mtime:
+                found[key] = path
+    return found
+
+
+def sync_plots(basis_volume_dir: str | Path, target: str | Path) -> dict[str, int]:
+    """Mirror :func:`latest_plots` into ``target``: one PNG per model and kind.
+
+    A file whose bytes did not change is left alone (no churn in git); a PNG in
+    ``target`` that no run folder has any more is removed. Returns the counts.
+    """
+    target = Path(target)
+    target.mkdir(parents=True, exist_ok=True)
+    wanted = {f"{series}_{kind}.png": source
+              for (series, kind), source in latest_plots(basis_volume_dir).items()}
+    counts = {"copied": 0, "unchanged": 0, "removed": 0}
+    for name, source in sorted(wanted.items()):
+        dest = target / name
+        if dest.is_file() and dest.stat().st_size == source.stat().st_size \
+                and dest.read_bytes() == source.read_bytes():
+            counts["unchanged"] += 1
+            continue
+        shutil.copyfile(source, dest)
+        counts["copied"] += 1
+    for stale in target.glob("*.png"):
+        if stale.name not in wanted:
+            stale.unlink()
+            counts["removed"] += 1
+    return counts
 
 
 def family_choice_path(root: str | Path, basis: str) -> Path:

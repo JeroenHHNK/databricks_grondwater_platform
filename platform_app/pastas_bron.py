@@ -78,5 +78,15 @@ def prefix(basis: str) -> str:
     return TABLE_PREFIX[basis]
 
 
+def plot(basis: str, series_name: str, kind: str) -> Path | None:
+    """The exported extremes figure of one model (`results.PLOT_KINDS`), or None.
+
+    Always from git (`results_export/<prefix>/plots/`): the figures live on the volume,
+    which the app cannot read.
+    """
+    pad = results.plot_path(PASTAS, basis, series_name, kind)
+    return pad if pad.is_file() else None
+
+
 __all__ = ["BASIS_LABEL", "DATA_BASES", "EXPORT", "GEEN", "LIVE", "Resultaat", "keuze_pad", "lees",
-           "lees_keuze", "prefix"]
+           "lees_keuze", "plot", "prefix"]

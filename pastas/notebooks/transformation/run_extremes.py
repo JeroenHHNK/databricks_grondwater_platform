@@ -56,6 +56,18 @@
 # MAGIC
 # MAGIC > **With 450 trimmed, lam = 0.361 and the smallest computable return period is
 # MAGIC > T = 2.77.** T=2 is reported as null, not as a wrong number.
+# MAGIC
+# MAGIC ### Family choice, and what is not here
+# MAGIC
+# MAGIC A tail is `exp` when the GEV shape is within 2 standard errors of zero, else `gev`.
+# MAGIC That SE comes from the curvature of the likelihood (`shape_se_method=hessian`,
+# MAGIC milliseconds per tail). The bootstrap (`bootstrap`, `bootstrap_replicates` refits per
+# MAGIC tail) is the slow alternative, and the automatic fallback where the Hessian is unusable;
+# MAGIC `evt_selection.shape_se_method` records which one a tail got.
+# MAGIC
+# MAGIC The **confidence plots** and the bootstrap check of the SE are **not** made here. Run
+# MAGIC `analysis/explore_shape_and_uncertainty` after this notebook (same `data_basis` and
+# MAGIC `run_folder`) when you want them; it reads the `pooled_extremes/` written below.
 
 # COMMAND ----------
 
@@ -74,8 +86,10 @@ dbutils.widgets.text("exclude_first", "450", "Least-extreme values trimmed per t
 dbutils.widgets.text("t_list", "2 5 10 25 50 100 250 500 1000", "Return periods")
 dbutils.widgets.text("limit_models", "0", "Max models (0 = all)")
 
-dbutils.widgets.text("bootstrap_replicates", "200", "Shape bootstrap (family choice)")
-dbutils.widgets.text("confidence_replicates", "500", "Bootstrap for confidence_plots")
+dbutils.widgets.dropdown("shape_se_method", "hessian", ["hessian", "bootstrap"],
+                         "Shape SE for the family choice")
+dbutils.widgets.text("bootstrap_replicates", "200",
+                     "Shape bootstrap (only for bootstrap, or as Hessian fallback)")
 dbutils.widgets.dropdown("make_plots", "true", ["true", "false"], "Make plots?")
 dbutils.widgets.dropdown("write_tables", "true", ["true", "false"], "Write Delta tables?")
 dbutils.widgets.text("output_catalog", "waterkeringbeheer_prd", "Output catalog")
@@ -152,8 +166,8 @@ EXCLUDE_FIRST = int(dbutils.widgets.get("exclude_first"))
 T_LIST = tuple(int(t) for t in dbutils.widgets.get("t_list").split())
 LIMIT_MODELS = int(dbutils.widgets.get("limit_models"))
 
+SE_METHOD = dbutils.widgets.get("shape_se_method")
 REPLICATES = int(dbutils.widgets.get("bootstrap_replicates"))
-CONFIDENCE_REPLICATES = int(dbutils.widgets.get("confidence_replicates"))
 MAKE_PLOTS = dbutils.widgets.get("make_plots") == "true"
 WRITE_TABLES = dbutils.widgets.get("write_tables") == "true"
 CATALOG = dbutils.widgets.get("output_catalog").strip()
@@ -175,6 +189,7 @@ print(f"run folder    {RUN_DIR}")
 print(f"imprex        {IMPREX_DIR}  ({LOCATION})")
 print(f"units         {UNITS}   warmup {WARMUP_YEARS}y   trim {EXCLUDE_FIRST}")
 print(f"T list        {T_LIST}")
+print(f"shape SE      {SE_METHOD}" + (f" ({REPLICATES} replicates)" if SE_METHOD == "bootstrap" else ""))
 print(f"pastas        {ps.__version__}")
 
 # COMMAND ----------
@@ -250,8 +265,8 @@ for item in models.itertuples():
         exclude_first=EXCLUDE_FIRST,
         t_list=T_LIST,
         replicates=REPLICATES,
-        confidence_replicates=CONFIDENCE_REPLICATES,
         make_plots=MAKE_PLOTS,
+        se_method=SE_METHOD,
     )
     summaries.append(result.summary)
     selections.extend(result.selection)

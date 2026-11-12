@@ -28,10 +28,11 @@ src/tarso_pipeline/
   imprex.py        discover + load the bias-corrected IMPREX ensemble
   simulate.py      replace a Tarso model's stresses and simulate
   extremes.py      hydrological-year block extremes, pooled across members
-  evt.py           GEV/exp/GPD fits, return levels, family selection
+  evt.py           GEV/exp/GPD fits, return levels, family selection (Hessian shape SE)
   evt_report.py    the return-period table and the run roll-ups
   evt_plots.py     return_plots_fitted / qq_plots / confidence_plots
   extremes_run.py  run_model: simulate -> pool -> fit -> artefacts
+  uncertainty.py   the GEV bootstrap: shape SE check + 95% return-level band
   knmi.py          KNMI forcing download (precipitation + Makkink)
   forcing.py       load the forcing CSV (units, station) + warmup coverage
   forcing_plot.py  annual totals and the check chart
@@ -44,6 +45,7 @@ notebooks/
   ingestion/build_manifest.py          JOB TASK 1 -> <prefix>_series_manifest
   transformation/fit_pastas_models.py  JOB TASK 2 -> <prefix>_fit_metrics + .pas
   transformation/run_extremes.py       stage 2: return levels -> <prefix>_return_levels
+  analysis/explore_shape_and_uncertainty.py  optional: bootstrap SE + confidence bands
   analysis/inspect_results.py          read the output tables after a run
   analysis/export_results.py           the latest results into results_export/, for the app
   analysis/load_family_choice.py       family_choice/*.csv -> <prefix>_family_choice + view
@@ -166,12 +168,24 @@ Each notebook has one job. Only two are job tasks; the other two are run by hand
 | `exploration/explore_meting.py` | what is in the source, how many series are fit to model | no | nothing |
 | `ingestion/build_manifest.py` | select every series spanning >= `min_days` (365); quantify duplicate timestamps | **task 1** | `<prefix>_series_manifest` |
 | `transformation/fit_pastas_models.py` | clean, fit, save `.pas`, record metrics, run the model checks | **task 2** | `<prefix>_fit_metrics`, `<prefix>_model_checks`, `<prefix>_simulations`, `.pas` files |
-| `transformation/run_extremes.py` | synthetic extremes, EVT fits, return levels | by hand | `<prefix>_evt_selection`, `<prefix>_extremes_summary`, `<prefix>_return_levels` |
+| `transformation/run_extremes.py` | synthetic extremes, EVT fits, family choice (Hessian shape SE), return levels | by hand | `<prefix>_evt_selection`, `<prefix>_extremes_summary`, `<prefix>_return_levels` |
+| `analysis/explore_shape_and_uncertainty.py` | optional, after `run_extremes`: bootstrap shape SE vs the Hessian one (`families_agree`), 95% band per return level, `confidence_plots/` | optional task | `<prefix>_shape_uncertainty`, `<prefix>_return_level_ci` |
 | `analysis/inspect_results.py` | did it work, are the fits any good, Tarso vs baseline | no | nothing |
-| `analysis/export_results.py` | the latest run per series, into `results_export/` for the app (until it reads live) | no | CSVs / parquet in the Git folder |
+| `analysis/export_results.py` | the latest run per series, into `results_export/` for the app (until it reads live), plus the newest extremes plots per model | no | CSVs / parquet / `plots/*.png` in the Git folder |
 | `analysis/load_family_choice.py` | the families picked in the app (`family_choice/`) into Delta | no | `<prefix>_family_choice`, view `<prefix>_return_levels_chosen` |
 
 Task 2 depends on task 1: it reads the manifest table task 1 writes.
+
+As one job: `03_validated_to_delta -> build_manifest -> fit_pastas_models -> run_extremes ->
+export_results`, with `explore_shape_and_uncertainty` as an optional branch off
+`run_extremes`. Give every task the same `data_basis` and `run_folder`: the run folder
+defaults to today's date, so a job that crosses midnight would otherwise split.
+
+`run_extremes` picks a tail's family with the shape SE from the curvature of the GEV
+likelihood (milliseconds). The bootstrap it used to run (200 refits per tail, plus 500 per
+tail for the confidence band) now lives in `explore_shape_and_uncertainty`, which reads
+the pooled extremes and needs no new simulation. Set `shape_se_method=bootstrap` on
+`run_extremes` to choose families the old way.
 
 ### Validated or unvalidated data (`data_basis`)
 

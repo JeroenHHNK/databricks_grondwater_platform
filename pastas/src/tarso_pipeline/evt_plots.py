@@ -6,7 +6,9 @@
 ``qq_plots``             empirical against theoretical quantiles per family --
                          the cleanest view of *where* a family fails.
 ``confidence_plots``     GEV return-level curve with a 95% bootstrap interval.
-                         The interval is the honest width of the answer.
+                         The interval is the honest width of the answer. Drawn by
+                         ``explore_shape_and_uncertainty``, not by the extremes
+                         run: the band costs hundreds of refits.
 
 Everything is drawn on the light surface with the validated two-hue palette, and
 every figure is closed explicitly: pyplot keeps them all alive otherwise, and a
@@ -20,8 +22,7 @@ import pandas as pd
 
 from tarso_pipeline.evt import (
     FAMILIES,
-    empirical_points,
-    fit_family,
+    bootstrap_gev_params,
     from_maxima,
     return_level,
     trim_tail,
@@ -177,15 +178,21 @@ def confidence_plot(
     replicates: int = 500,
     seed: int = 0,
     exclude_first: int = 0,
+    resamples: dict | None = None,
 ) -> str | None:
     """GEV return-level curve with a 95% bootstrap interval.
 
     The interval is the point: a return level without one invites more confidence
     than 704 blocks support, especially past T=100.
+
+    ``resamples`` maps a tail to its array of bootstrap GEV fits
+    (:func:`tarso_pipeline.evt.bootstrap_gev_params`); a tail without one is
+    bootstrapped here with ``replicates``.
     """
+    from tarso_pipeline.uncertainty import gev_band, gev_levels
+
     try:
         fig, axes = _new_axes()
-        rng = np.random.default_rng(seed)
         for ax, tail, colour in ((axes[0], "dry", DRY), (axes[1], "wet", WET)):
             if tail not in per_tail:
                 ax.set_visible(False)
@@ -198,25 +205,18 @@ def confidence_plot(
             kept, lam = trim_tail(data["maxima"], exclude_first)
 
             grid = plot_periods(lam)
-            curves = []
-            for _ in range(replicates):
-                sample = rng.choice(kept, size=len(kept), replace=True)
-                try:
-                    params = fit_family(sample, "gev")
-                except Exception:
-                    continue
-                curves.append([return_level(params, "gev", T, lam) for T in grid])
-            central = np.array(
-                [return_level(info["params"], "gev", T, info["lam"]) for T in grid]
-            )
+            fits = (resamples or {}).get(tail)
+            if fits is None:
+                fits = bootstrap_gev_params(kept, replicates=replicates, seed=seed,
+                                            start=info["params"])
+            central = gev_levels(info["params"], grid, info["lam"])
 
-            if curves:
-                stacked = np.array(curves)
-                low = from_maxima(np.nanpercentile(stacked, 2.5, axis=0), tail)
-                high = from_maxima(np.nanpercentile(stacked, 97.5, axis=0), tail)
+            if len(fits):
+                low, high = gev_band(fits, grid, lam)
                 ax.fill_between(
-                    grid, low, high, color=colour, alpha=0.18, linewidth=0,
-                    label=f"95% CI ({len(curves)} resamples)",
+                    grid, from_maxima(low, tail), from_maxima(high, tail),
+                    color=colour, alpha=0.18, linewidth=0,
+                    label=f"95% CI ({len(fits)} resamples)",
                 )
             ax.plot(grid, from_maxima(central, tail), color=colour,
                     linewidth=1.8, label="GEV", zorder=4)

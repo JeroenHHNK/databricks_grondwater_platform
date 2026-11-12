@@ -193,6 +193,29 @@ def _familiekeuze(basis: str, rij, selectie: DataFrame, levels: DataFrame) -> No
                    "`pastas/notebooks/analysis/load_family_choice.py`.")
 
 
+PLOT_TITELS = {
+    "return_periods": "Herhalingstijden: empirisch en de drie families",
+    "qq": "QQ-plot per familie",
+    "confidence": "GEV met 95%-betrouwbaarheidsband",
+}
+
+
+def _extremenplots(basis: str, rij) -> None:
+    """The figures run_extremes drew for this model, from the export in git."""
+    plots = {k: bron.plot(basis, rij.series_name, k) for k in PLOT_TITELS}
+    if not any(plots.values()):
+        st.caption("Geen extremenplots in de export voor dit model (`export_results.py` kopieert ze uit de "
+                   "run-mappen naar `pastas/results_export/<prefix>/plots/`).")
+        return
+    hoofd = plots["return_periods"] or next(p for p in plots.values() if p)
+    st.image(str(hoofd), caption=PLOT_TITELS["return_periods"] if plots["return_periods"] else None)
+    rest = [(k, p) for k, p in plots.items() if p and p != hoofd]
+    if rest:
+        with st.expander("Meer plots: " + ", ".join(PLOT_TITELS[k].split(":")[0].lower() for k, _ in rest)):
+            for k, p in rest:
+                st.image(str(p), caption=PLOT_TITELS[k])
+
+
 def _detail(basis: str, rij) -> None:
     st.subheader(_label(rij))
     if not bool(rij.success):
@@ -211,6 +234,7 @@ def _detail(basis: str, rij) -> None:
     with tab_sim:
         _plot_simulatie(basis, rij)
     with tab_herh:
+        _extremenplots(basis, rij)
         selectie = _lees(basis, "evt_selection").data
         levels = _lees(basis, "return_levels", rij.meetreeks_id).data
         if selectie.empty or levels.empty:

@@ -57,8 +57,14 @@ def tail_tables(
     t_list=DEFAULT_T_LIST,
     replicates: int = 200,
     seed: int = 0,
+    se_method: str = "hessian",
 ) -> dict:
-    """Everything for one tail: levels, parameters, selection, empirical points."""
+    """Everything for one tail: levels, parameters, selection, empirical points.
+
+    ``se_method`` picks the shape SE behind the family choice (see
+    :func:`tarso_pipeline.evt.select_family`); ``replicates`` only matters for
+    ``bootstrap``, or when the Hessian is unusable.
+    """
     maxima = as_maxima(values, tail)
     parameters, levels_maxima = fit_all_families(maxima, exclude_first, t_list)
     points = empirical_points(maxima, exclude_first)
@@ -73,7 +79,7 @@ def tail_tables(
 
     selection = select_family(
         maxima, exclude_first=exclude_first, replicates=replicates, seed=seed,
-        spread_reference=maxima,
+        spread_reference=maxima, se_method=se_method,
     )
     return {
         "levels": levels,

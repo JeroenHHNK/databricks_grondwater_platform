@@ -11,7 +11,13 @@
 # MAGIC pastas/results_export/<prefix>/
 # MAGIC     fit_metrics.csv      model_checks.csv    evt_selection.csv
 # MAGIC     return_levels.csv    simulations.parquet (daily observed + simulated head)
+# MAGIC     plots/<series_name>_{return_periods,qq,confidence}.png
 # MAGIC ```
+# MAGIC
+# MAGIC The plots are the figures `run_extremes` (and, for `confidence`,
+# MAGIC `explore_shape_and_uncertainty`) drew in the run folders on the volume: per model and
+# MAGIC kind the newest one, so `plots/` holds exactly one PNG per model and kind. An unchanged
+# MAGIC figure is not rewritten, so git only sees what really changed.
 # MAGIC
 # MAGIC Then commit and push `pastas/results_export/` from the Git folder UI and redeploy the
 # MAGIC app (or pull locally). Same route as the Boxplots export.
@@ -24,6 +30,10 @@ dbutils.widgets.dropdown("data_basis", "unvalidated", ["unvalidated", "validated
 dbutils.widgets.text("output_catalog", "waterkeringbeheer_prd", "Output catalog")
 dbutils.widgets.text("output_schema", "jvanruitenbeek", "Output schema")
 dbutils.widgets.text("model_types", "tarso", "Model types to export (comma-separated)")
+dbutils.widgets.text("volume_base",
+                     "/Volumes/waterkeringbeheer_prd/misc_files/misc_files/pastas_pipeline",
+                     "Volume prefix (for the plots)")
+dbutils.widgets.dropdown("export_plots", "true", ["true", "false"], "Export the extremes plots?")
 
 # COMMAND ----------
 
@@ -46,13 +56,21 @@ ROOT = _repo_root()
 if os.path.join(ROOT, "src") not in sys.path:
     sys.path.insert(0, os.path.join(ROOT, "src"))
 
-from tarso_pipeline.paths import output_table  # noqa: E402
-from tarso_pipeline.results import EXPORT_FILES, export_dir, latest_run_sql  # noqa: E402
+from tarso_pipeline.paths import basis_volume, output_table  # noqa: E402
+from tarso_pipeline.results import (  # noqa: E402
+    EXPORT_FILES,
+    export_dir,
+    latest_run_sql,
+    plots_dir,
+    sync_plots,
+)
 
 BASIS = dbutils.widgets.get("data_basis")
 CATALOG = dbutils.widgets.get("output_catalog").strip()
 SCHEMA = dbutils.widgets.get("output_schema").strip()
 MODEL_TYPES = [m.strip() for m in dbutils.widgets.get("model_types").split(",") if m.strip()]
+VOLUME_BASE = dbutils.widgets.get("volume_base").strip().rstrip("/")
+EXPORT_PLOTS = dbutils.widgets.get("export_plots") == "true"
 OUT = export_dir(ROOT, BASIS)
 OUT.mkdir(parents=True, exist_ok=True)
 print(f"basis {BASIS} -> {OUT}")
@@ -68,6 +86,10 @@ for kind, filename in EXPORT_FILES.items():
         print(f"skip {kind}: {table} does not exist (has that stage run for this basis?)")
         continue
     frame = spark.sql(f"SELECT * FROM ({latest_run_sql(table)}) WHERE model_type IN ({quoted})").toPandas()
+    # On serverless, toPandas() leaves the query's PlanMetrics in frame.attrs, and
+    # to_parquet stores attrs as JSON in the file metadata: "PlanMetrics is not JSON
+    # serializable". The metrics are of no use in the export.
+    frame.attrs = {}
     path = OUT / filename
     if filename.endswith(".parquet"):
         frame.to_parquet(path, index=False)
@@ -75,5 +97,22 @@ for kind, filename in EXPORT_FILES.items():
         frame.to_csv(path, index=False)
     print(f"{kind:15} {len(frame):>8,} rows, {frame['meetreeks_id'].nunique():>4} series -> {path.name} "
           f"({path.stat().st_size / 1e6:.1f} MB)")
+
+# COMMAND ----------
+
+# MAGIC %md
+# MAGIC ## The extremes plots
+
+# COMMAND ----------
+
+if EXPORT_PLOTS:
+    source = basis_volume(VOLUME_BASE, BASIS)
+    counts = sync_plots(source, plots_dir(ROOT, BASIS))
+    print(f"plots from {source}/*/ -> {plots_dir(ROOT, BASIS)}: "
+          f"{counts['copied']} copied, {counts['unchanged']} unchanged, {counts['removed']} removed")
+    if not any(counts.values()):
+        print("  no plots found: has run_extremes run (with make_plots=true) for this basis?")
+else:
+    print("export_plots=false; plots left as they are")
 
 print("\nNow commit and push pastas/results_export/ from the Git folder UI.")

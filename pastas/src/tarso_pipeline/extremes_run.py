@@ -3,6 +3,11 @@
 ``run_model`` is the unit of work: load the `.pas`, simulate all members, pool
 the extremes, fit, and write every artefact. It **never raises**.
 
+The family choice uses the Hessian SE of the GEV shape, so a model costs a
+handful of fits. The bootstrap (the SE check and the 95% band of the
+``confidence_plots``) runs separately, from the pooled extremes written here:
+``tarso_pipeline.uncertainty`` and ``notebooks/analysis/explore_shape_and_uncertainty.py``.
+
 Failures are per (model, member): a member that fails is recorded and the rest
 continue, because a model that loses some members still fits on the remainder. A
 model that loses all of them gets a status row and no outputs.
@@ -17,7 +22,7 @@ from pathlib import Path
 import pandas as pd
 
 from tarso_pipeline.evt import DEFAULT_T_LIST
-from tarso_pipeline.evt_plots import confidence_plot, qq_plot, return_period_plot
+from tarso_pipeline.evt_plots import qq_plot, return_period_plot
 from tarso_pipeline.evt_report import (
     TAILS,
     VALUE_COLUMN,
@@ -31,7 +36,6 @@ from tarso_pipeline.evt_report import (
 from tarso_pipeline.extremes import annual_extremes, pool_members
 from tarso_pipeline.imprex import Member, load_member
 from tarso_pipeline.paths import (
-    CONFIDENCE_PLOTS_DIR,
     POOLED_EXTREMES_DIR,
     QQ_PLOTS_DIR,
     RETURN_CSV_DIR,
@@ -70,9 +74,9 @@ def run_model(
     exclude_first: int = 0,
     t_list=DEFAULT_T_LIST,
     replicates: int = 200,
-    confidence_replicates: int = 500,
     make_plots: bool = True,
     seed: int = 0,
+    se_method: str = "hessian",
 ) -> ModelResult:
     """Simulate, pool, fit and write everything for one model. Never raises."""
     failures: list[tuple[str, str]] = []
@@ -120,7 +124,7 @@ def run_model(
             per_tail[tail] = tail_tables(
                 frame[VALUE_COLUMN[tail]].to_numpy(), tail,
                 exclude_first=exclude_first, t_list=t_list,
-                replicates=replicates, seed=seed,
+                replicates=replicates, seed=seed, se_method=se_method,
             )
         except Exception as exc:  # noqa: BLE001
             failures.append((f"{tail}-fit", f"{type(exc).__name__}: {exc}"))
@@ -170,21 +174,12 @@ def run_model(
                 Path(extremes_dir(run_directory, QQ_PLOTS_DIR)) / f"{series_name}_qq.png",
                 f"QQ - {series_name}",
             )
-            result.paths["confidence_plot"] = confidence_plot(
-                per_tail,
-                Path(extremes_dir(run_directory, CONFIDENCE_PLOTS_DIR))
-                / f"{series_name}_return_level.png",
-                f"Return level with 95% CI - {series_name}",
-                replicates=confidence_replicates, seed=seed,
-                exclude_first=exclude_first,
-            )
     except Exception as exc:  # noqa: BLE001 - artefacts must not lose the fit
         result.summary["failure_detail"] = "; ".join(
             filter(None, [result.summary.get("failure_detail"), f"artefacts: {exc}"])
         )
 
-    for key in ("return_periods", "return_plot", "qq_plot", "confidence_plot",
-                "used_extremes"):
+    for key in ("return_periods", "return_plot", "qq_plot", "used_extremes"):
         result.summary[f"{key}_path"] = result.paths.get(key)
     return result
 

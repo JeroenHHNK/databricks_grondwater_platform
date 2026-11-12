@@ -72,3 +72,58 @@ def test_a_pick_wins_and_removing_it_goes_back_to_automatic(tmp_path):
     with pytest.raises(ValueError):
         results.set_family_choice(choice, meetreeks_id="a", series_name="s", model_type="tarso",
                                   tail="wet", family="normal")
+
+
+# --- the extremes plots in the export -------------------------------------------
+
+
+def _png(path, payload: bytes, mtime: float):
+    import os
+
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_bytes(payload)
+    os.utime(path, (mtime, mtime))
+    return path
+
+
+def test_the_newest_plot_per_model_and_kind_wins(tmp_path):
+    from tarso_pipeline.results import latest_plots
+
+    old = _png(tmp_path / "run_26_11_01" / "return_plots_fitted" / "series_a_return_periods.png", b"old", 1000)
+    new = _png(tmp_path / "run_26_11_12" / "return_plots_fitted" / "series_a_return_periods.png", b"new", 2000)
+    qq = _png(tmp_path / "run_26_11_01" / "qq_plots" / "series_a_qq.png", b"qq", 1000)
+    _png(tmp_path / "run_26_11_12" / "pas_files" / "series_a_tarso.png", b"not a plot", 3000)
+    found = latest_plots(tmp_path)
+    assert found == {("series_a", "return_periods"): new, ("series_a", "qq"): qq}
+    assert old not in found.values()
+
+
+def test_sync_keeps_one_png_per_model_and_kind_and_leaves_unchanged_files(tmp_path):
+    from tarso_pipeline.results import plot_path, plots_dir, sync_plots
+
+    volume, repo = tmp_path / "volume", tmp_path / "repo"
+    _png(volume / "run_1" / "return_plots_fitted" / "series_a_return_periods.png", b"a1", 1000)
+    _png(volume / "run_2" / "return_plots_fitted" / "series_a_return_periods.png", b"a2", 2000)
+    _png(volume / "run_1" / "confidence_plots" / "series_b_return_level.png", b"b", 1000)
+    target = plots_dir(repo, "validated")
+    _png(target / "series_gone_qq.png", b"stale", 500)
+
+    assert sync_plots(volume, target) == {"copied": 2, "unchanged": 0, "removed": 1}
+    assert plot_path(repo, "validated", "series_a", "return_periods").read_bytes() == b"a2"
+    assert plot_path(repo, "validated", "series_b", "confidence").read_bytes() == b"b"
+    assert sorted(p.name for p in target.glob("*.png")) == [
+        "series_a_return_periods.png", "series_b_confidence.png"]
+    assert sync_plots(volume, target) == {"copied": 0, "unchanged": 2, "removed": 0}
+
+
+def test_a_missing_volume_folder_exports_nothing(tmp_path):
+    from tarso_pipeline.results import latest_plots
+
+    assert latest_plots(tmp_path / "nope") == {}
+
+
+def test_plot_path_rejects_an_unknown_kind(tmp_path):
+    from tarso_pipeline.results import plot_path
+
+    with pytest.raises(ValueError, match="kind"):
+        plot_path(tmp_path, "validated", "series_a", "histogram")
