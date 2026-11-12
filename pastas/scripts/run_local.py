@@ -163,7 +163,7 @@ def main() -> None:
         print("extremes")
         tables.update(extremes_all(fits, run_directory, run_id, args))
         tables["evt_selection"].to_csv(run_directory / EVT_SELECTION_FILE, index=False)
-        tables["extremes_summary"].to_csv(extremes_summary_file(str(run_directory)), index=False)
+        tables["extremes_summary"].to_csv(extremes_summary_file(run_directory.as_posix()), index=False)
         tables["return_levels"].to_csv(run_directory / "return_levels.csv", index=False)
     fits.to_csv(run_directory / "fit_metrics.csv", index=False)
 
