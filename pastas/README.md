@@ -28,18 +28,18 @@ src/tarso_pipeline/
   imprex.py        discover + load the bias-corrected IMPREX ensemble
   simulate.py      replace a Tarso model's stresses and simulate
   extremes.py      hydrological-year block extremes, pooled across members
-  evt.py           GEV/exp/GPD fits, return levels, family selection (Hessian shape SE)
+  evt.py           empirical levels, GPD/exp above a threshold, GEV for comparison, threshold scan
   evt_report.py    the return-period table and the run roll-ups
   evt_plots.py     return_plots_fitted / qq_plots / confidence_plots
   extremes_run.py  run_model: simulate -> pool -> fit -> artefacts
-  uncertainty.py   the GEV bootstrap: shape SE check + 95% return-level band
+  uncertainty.py   the bootstrap: GPD shape SE + 95% bands of GPD / exponential
   knmi.py          KNMI forcing download (precipitation + Makkink)
   forcing.py       load the forcing CSV (units, station) + warmup coverage
   forcing_plot.py  annual totals and the check chart
   io.py            load_forcing / read_head_csv
   naming.py        sanitize_name
   paths.py         repo_root, forcing_path, the Databricks write targets, per data basis
-  results.py       latest run per series, the family that applies (shared with the app)
+  results.py       latest run per series, the levels that apply per pick (shared with the app)
 notebooks/
   exploration/explore_meting.py        what is in the source, how much is usable
   ingestion/build_manifest.py          JOB TASK 1 -> <prefix>_series_manifest
@@ -49,6 +49,7 @@ notebooks/
   analysis/inspect_results.py          read the output tables after a run
   analysis/export_results.py           the latest results into results_export/, for the app
   analysis/load_family_choice.py       family_choice/*.csv -> <prefix>_family_choice + view
+scripts/run_local.py                   the validated chain locally: fit (+ extremes) -> export
 results_export/    the app's copy of the results (export_results.py; in git)
 family_choice/     the families picked in the app (in git)
 scripts/
@@ -168,7 +169,7 @@ Each notebook has one job. Only two are job tasks; the other two are run by hand
 | `exploration/explore_meting.py` | what is in the source, how many series are fit to model | no | nothing |
 | `ingestion/build_manifest.py` | select every series spanning >= `min_days` (365); quantify duplicate timestamps | **task 1** | `<prefix>_series_manifest` |
 | `transformation/fit_pastas_models.py` | clean, fit, save `.pas`, record metrics, run the model checks | **task 2** | `<prefix>_fit_metrics`, `<prefix>_model_checks`, `<prefix>_simulations`, `.pas` files |
-| `transformation/run_extremes.py` | synthetic extremes, EVT fits, family choice (Hessian shape SE), return levels | by hand | `<prefix>_evt_selection`, `<prefix>_extremes_summary`, `<prefix>_return_levels` |
+| `transformation/run_extremes.py` | synthetic extremes; empirical levels, GPD/exp per threshold, GEV for comparison; return-period and threshold plots | by hand | `<prefix>_evt_selection`, `<prefix>_extremes_summary`, `<prefix>_return_levels` |
 | `analysis/explore_shape_and_uncertainty.py` | optional, after `run_extremes`: bootstrap shape SE vs the Hessian one (`families_agree`), 95% band per return level, `confidence_plots/` | optional task | `<prefix>_shape_uncertainty`, `<prefix>_return_level_ci` |
 | `analysis/inspect_results.py` | did it work, are the fits any good, Tarso vs baseline | no | nothing |
 | `analysis/export_results.py` | the latest run per series, into `results_export/` for the app (until it reads live), plus the newest extremes plots per model | no | CSVs / parquet / `plots/*.png` in the Git folder |
@@ -181,11 +182,34 @@ export_results`, with `explore_shape_and_uncertainty` as an optional branch off
 `run_extremes`. Give every task the same `data_basis` and `run_folder`: the run folder
 defaults to today's date, so a job that crosses midnight would otherwise split.
 
-`run_extremes` picks a tail's family with the shape SE from the curvature of the GEV
-likelihood (milliseconds). The bootstrap it used to run (200 refits per tail, plus 500 per
-tail for the confidence band) now lives in `explore_shape_and_uncertainty`, which reads
-the pooled extremes and needs no new simulation. Set `shape_se_method=bootstrap` on
-`run_extremes` to choose families the old way.
+### Return levels: what is used where
+
+| T | level |
+|---|---|
+| <= 100 | **empirical**, from the ~704 pooled synthetic years (~7 exceedances at T=100): no distribution needed |
+| 250-500 | the **picked family** above the **picked threshold**: `gpd` (the tail flattens off) or `exp` (it does not) |
+| 1000 | the same, but extrapolation whatever the family: **indicative** |
+
+The GPD and exponential are fitted to the years above a threshold, with their lower bound at
+that threshold (the coherent model for values above a threshold); the GEV only to all years,
+as a comparison - fitted to the top part it overstates T=1000 by decimetres to metres. Nothing
+is chosen automatically: per tail a person picks the family and the threshold in the app
+(*Pastas → Familie kiezen*), from the return-period plot and the threshold plot (GPD shape and
+T=1000 per number of years kept; where they stop changing, the threshold is high enough).
+
+None of these numbers contains the uncertainty of the Tarso model itself, calibrated on a few
+years of heads and taken as exact here; that is probably larger than the difference between
+families. The bootstrap bands of `explore_shape_and_uncertainty` cover only the sampling of
+the pooled years.
+
+### Running it locally
+
+`python scripts/run_local.py` fits every validated series from the review files in
+`data_validation/input_output/output_repository/` (needs the `pastas` extra). With
+`--imprex-dir <folder with the IMPREX member CSVs>` it also runs the extremes, or with
+`--pooled-dir <a pooled_extremes folder>` it refits pooled extremes of an earlier run;
+`--export` writes the results to `results_export/valid_pastas/` for the app. Run folders go
+to `local_runs/` (git-ignored).
 
 ### Validated or unvalidated data (`data_basis`)
 
@@ -216,10 +240,9 @@ ALTER TABLE waterkeringbeheer_prd.jvanruitenbeek.pastas_model_checks RENAME TO w
 The fit notebook also writes `<prefix>_simulations` (daily observed + simulated head per fit) and
 the extremes notebook `<prefix>_return_levels` (one row per tail x family x return period). The
 app plots those, live through the SQL warehouse or from the export in `results_export/`; see the
-root README, "Pastas results in the app". The statistical family per model and tail is picked in
-the app (*Pastas → Modellen*, locally), saved to `family_choice/<prefix>_family_choice.csv`, and
-taken to Delta by `analysis/load_family_choice.py`. Without a pick, the automatic choice of
-`select_family` applies.
+root README, "Pastas results in the app". The family and threshold per model and tail are picked
+in the app (*Pastas → Familie kiezen*, locally), saved to `family_choice/<prefix>_family_choice.csv`,
+and taken to Delta by `analysis/load_family_choice.py`. A tail without a pick has no levels.
 
 Permission facts live in `src/tarso_pipeline/paths.py`. `gold_prd` is **read-only**;
 all output goes to `waterkeringbeheer_prd.jvanruitenbeek`, and `.pas` files to the

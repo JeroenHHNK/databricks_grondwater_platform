@@ -27,6 +27,7 @@ from pandas import DataFrame
 
 from review_app import common
 from tarso_pipeline import results
+from tarso_pipeline.evt import EMPIRICAL_MAX_T, INDICATIVE_MIN_T
 from tarso_pipeline.paths import DATA_BASES, UNVALIDATED, VALIDATED
 
 from . import pastas_bron as bron
@@ -34,7 +35,7 @@ from .stijghoogtes import _tijdas
 
 MODEL_PARAM, BASIS_PARAM = "model", "basis"
 KLEUR = {"observed": "#4a4a4a", "simulated": "#2a78d6", "ander": "#eb6834"}
-FAMILIE_KLEUR = {"gev": "#2a78d6", "exp": "#1baf7a", "gpd": "#eda100", "emp": "#8a8984"}
+FAMILIE_KLEUR = {"gpd": "#2a78d6", "exp": "#eb6834", "gev": "#8a8984", "emp": "#0b0b0b"}
 STAART_KLEUR = {"dry": "#eb6834", "wet": "#2a78d6"}
 GEEN = "geen"  # no pick: the tail gets no return levels
 
@@ -131,43 +132,70 @@ def _plot_simulatie(basis: str, rij) -> None:
     st.plotly_chart(fig, config={"displaylogo": False})
 
 
-def _plot_herhaling(levels: DataFrame, staart: str, familie: str | None) -> go.Figure:
+def _drempels(levels: DataFrame, staart: str) -> tuple[list[int], int | None]:
+    """The thresholds (n_kept) the extremes run fitted for this tail, and its default one."""
+    if "n_kept" not in levels:
+        return [], None
+    deel = levels[(levels["tail"] == staart) & levels["family"].isin(results.PICKABLE)]
+    opties = sorted(int(k) for k in pd.to_numeric(deel["n_kept"], errors="coerce").dropna().unique())
+    standaard = deel[deel["default_kept"].astype(str).str.lower().eq("true")]["n_kept"] if "default_kept" in deel else []
+    return opties, (int(standaard.iloc[0]) if len(standaard) else (opties[len(opties) // 2] if opties else None))
+
+
+def _curve(levels: DataFrame, staart: str, familie: str, n_kept: int | None) -> DataFrame:
+    deel = levels[(levels["tail"] == staart) & (levels["family"] == familie)]
+    if n_kept is not None and "n_kept" in deel and familie in results.PICKABLE:
+        deel = deel[pd.to_numeric(deel["n_kept"], errors="coerce") == n_kept]
+    return deel.sort_values("return_period")
+
+
+def _plot_herhaling(levels: DataFrame, staart: str, familie: str | None, n_kept: int | None = None) -> go.Figure:
+    """Empirical up to T=100 (shaded: that is what is used there), the GPD and exponential at
+    the threshold ``n_kept`` past it, the GEV on all years for comparison; the pick in bold."""
     fig = go.Figure()
-    deel = levels[levels["tail"] == staart]
-    for fam, g in deel.groupby("family"):
-        g = g.sort_values("return_period")
+    fig.add_vrect(x0=2, x1=EMPIRICAL_MAX_T, fillcolor="#efeeeb", opacity=0.6, line_width=0, layer="below",
+                  annotation_text=f"T ≤ {EMPIRICAL_MAX_T}: empirisch", annotation_position="top left",
+                  annotation_font_size=10)
+    fig.add_vline(x=INDICATIVE_MIN_T, line_color="#c3c2b7", line_width=1, annotation_text="indicatief",
+                  annotation_position="top left", annotation_font_size=10)
+    for fam in ("emp", "gev", *results.PICKABLE):
+        g = _curve(levels, staart, fam, n_kept).dropna(subset=["level"])
+        if g.empty:
+            continue
         gekozen = fam == familie
         fig.add_trace(go.Scatter(
             x=g["return_period"], y=g["level"], mode="lines+markers",
-            name=results.FAMILY_LABELS.get(fam, fam) + (" ◀" if gekozen else ""),
-            line={"color": FAMILIE_KLEUR.get(fam, "#7f7f7f"), "width": 3.5 if gekozen else 1.2,
-                  "dash": "solid" if gekozen else "dot"},
+            name=results.FAMILY_LABELS.get(fam, fam) + (" ◀ gekozen" if gekozen else ""),
+            line={"color": FAMILIE_KLEUR.get(fam, "#7f7f7f"), "width": 3.5 if gekozen else 1.4,
+                  "dash": {"emp": "solid", "gev": "dot"}.get(fam, "solid" if gekozen else "dash")},
             hovertemplate="T=%{x}: %{y:.3f} m NAP<extra>" + fam + "</extra>"))
     fig.update_xaxes(type="log", title="herhalingstijd T (jaar)")
     fig.update_yaxes(title="stijghoogte (m NAP)")
-    fig.update_layout(height=380, margin={"l": 10, "r": 10, "t": 40, "b": 10},
+    fig.update_layout(height=400, margin={"l": 10, "r": 10, "t": 40, "b": 10},
                       title={"text": results.TAIL_LABELS[staart], "x": 0, "font": {"size": 14}},
                       legend={"orientation": "h", "y": -0.3})
     return fig
 
 
 def _bewaar_keuze(basis: str, meetreeks_id: str, series_name: str, model_type: str, staart: str,
-                  sleutel_familie: str, sleutel_notitie: str) -> None:
-    """on_change of the pick (or its note): write it to the family_choice CSV straight away."""
+                  sleutel_familie: str, sleutel_drempel: str, sleutel_notitie: str) -> None:
+    """on_change of the pick, its threshold or its note: write it to the family_choice CSV straight away."""
     familie = st.session_state[sleutel_familie]
+    n_kept = st.session_state.get(sleutel_drempel)
     nieuw = results.set_family_choice(
         _keuze(basis), meetreeks_id=meetreeks_id, series_name=series_name, model_type=model_type, tail=staart,
-        family=None if familie == GEEN else familie, note=st.session_state.get(sleutel_notitie, ""),
-        chosen_by=getpass.getuser(),
+        family=None if familie == GEEN else familie, n_kept=None if familie == GEEN else n_kept,
+        note=st.session_state.get(sleutel_notitie, ""), chosen_by=getpass.getuser(),
         chosen_at=datetime.now(ZoneInfo("Europe/Amsterdam")).isoformat(timespec="seconds"))
     results.write_family_choice(bron.keuze_pad(basis), nieuw)
     st.toast(f"{results.TAIL_LABELS[staart].split(' ')[0].capitalize()}: "
-             f"{'geen keuze' if familie == GEEN else results.FAMILY_LABELS[familie]} · opgeslagen in "
+             f"{'geen keuze' if familie == GEEN else results.FAMILY_LABELS[familie]}"
+             f"{'' if familie == GEEN or n_kept is None else f' · {n_kept} jaren boven de drempel'} · opgeslagen in "
              f"{bron.keuze_pad(basis).relative_to(bron.ROOT).as_posix()}")
 
 
 def _familiekeuze(basis: str, rij, levels: DataFrame) -> None:
-    """Per tail: the levels of every family, and the pick, saved as soon as it changes."""
+    """Per tail: the curves, and the pick (family + threshold), saved as soon as it changes."""
     keuze = _keuze(basis)
     eigen = keuze[(keuze["meetreeks_id"] == rij.meetreeks_id) & (keuze["model_type"] == rij.model_type)]
     gekozen = {r.tail: r for r in eigen.itertuples() if r.family}
@@ -175,28 +203,49 @@ def _familiekeuze(basis: str, rij, levels: DataFrame) -> None:
     for kolom, staart in zip(st.columns(2), ("dry", "wet")):
         with kolom:
             pick = gekozen.get(staart)
-            familie = pick.family if pick is not None else GEEN
             if levels[levels["tail"] == staart].empty:
                 st.caption(f"{results.TAIL_LABELS[staart]}: geen herhalingstijden.")
                 continue
-            st.plotly_chart(_plot_herhaling(levels, staart, None if familie == GEEN else familie),
-                            config={"displaylogo": False}, key=f"pa_herh_{rij.meetreeks_id}_{staart}")
+            oud = pick is not None and pick.family not in results.PICKABLE
+            familie = pick.family if pick is not None and not oud else GEEN
+            opties, standaard = _drempels(levels, staart)
+            gekozen_kept = pd.to_numeric(getattr(pick, "n_kept", ""), errors="coerce") if pick is not None else None
+            n_kept = int(gekozen_kept) if gekozen_kept is not None and pd.notna(gekozen_kept) else standaard
+
             sleutel = f"pa_fam_{basis}_{rij.meetreeks_id}_{rij.model_type}_{staart}"
+            sleutel_drempel = f"pa_drempel_{basis}_{rij.meetreeks_id}_{rij.model_type}_{staart}"
             sleutel_notitie = f"pa_not_{basis}_{rij.meetreeks_id}_{rij.model_type}_{staart}"
             # The widgets follow the file: a save elsewhere (other page, git pull) shows up here.
             st.session_state[sleutel] = familie
+            if opties:
+                st.session_state[sleutel_drempel] = n_kept if n_kept in opties else standaard
             st.session_state.setdefault(sleutel_notitie, pick.note if pick is not None else "")
             opslaan = {"on_change": _bewaar_keuze, "disabled": alleen_lezen,
                        "args": (basis, rij.meetreeks_id, rij.series_name, rij.model_type, staart, sleutel,
-                                sleutel_notitie)}
-            st.radio(f"Familie {results.TAIL_LABELS[staart]}", [GEEN, *results.FAMILIES], horizontal=True,
-                     key=sleutel, format_func=lambda o: "geen keuze" if o == GEEN else results.FAMILY_LABELS[o],
-                     **opslaan)
+                                sleutel_drempel, sleutel_notitie)}
+
+            st.plotly_chart(_plot_herhaling(levels, staart, None if familie == GEEN else familie,
+                                            st.session_state.get(sleutel_drempel, standaard)),
+                            config={"displaylogo": False}, key=f"pa_herh_{rij.meetreeks_id}_{staart}")
+            st.radio(f"Na T={EMPIRICAL_MAX_T}: {results.TAIL_LABELS[staart]}", [GEEN, *results.PICKABLE],
+                     horizontal=True, key=sleutel,
+                     format_func=lambda o: "geen keuze" if o == GEEN else results.FAMILY_LABELS[o], **opslaan)
+            if opties:
+                st.select_slider("Jaren boven de drempel (n_kept)", opties, key=sleutel_drempel,
+                                 help="Kies waar de GPD-vorm in de drempelplot niet meer verandert. Meer jaren = "
+                                      "lagere drempel: zekerder, maar minder strikt de staart.", **opslaan)
             st.text_input("Notitie", max_chars=80, key=sleutel_notitie, **opslaan)
-            if pick is not None:
-                st.caption(f"Gekozen: **{results.FAMILY_LABELS[pick.family]}** · {pick.chosen_by} · {pick.chosen_at}")
+            if oud:
+                st.warning(f"Eerdere keuze **{pick.family}** kan niet meer: kies GPD of exponentieel.")
+            elif pick is not None:
+                st.caption(f"T ≤ {EMPIRICAL_MAX_T}: empirisch · daarna **{results.FAMILY_LABELS[pick.family]}**"
+                           f"{f' met {n_kept} jaren boven de drempel' if n_kept else ''} · "
+                           f"{pick.chosen_by} · {pick.chosen_at}")
             else:
                 st.caption("Nog geen keuze: deze staart krijgt geen herhalingstijden in de Boxplots.")
+    st.caption(f"T=1000 is extrapolatie en indicatief. Geen van deze getallen bevat de onzekerheid van het "
+               "Tarso-model zelf: het is op een paar jaar metingen gekalibreerd en wordt hier als exact genomen. "
+               "Die onzekerheid is waarschijnlijk groter dan het verschil tussen de families.")
     if alleen_lezen:
         st.caption("Kiezen kan hier niet opslaan (de bestanden van een Databricks App blijven niet bewaard). "
                    "Kies lokaal (`uv run streamlit run app.py`) en push `pastas/family_choice/`.")
@@ -206,9 +255,10 @@ def _familiekeuze(basis: str, rij, levels: DataFrame) -> None:
 
 
 PLOT_TITELS = {
-    "return_periods": "Herhalingstijden: empirisch en de drie families",
+    "return_periods": "Herhalingstijden: empirisch, GPD en exponentieel boven de drempel, GEV ter vergelijking",
+    "threshold": "Drempelkeuze: GPD-vorm en T=1000 per drempel",
     "qq": "QQ-plot per familie",
-    "confidence": "GEV met 95%-betrouwbaarheidsband",
+    "confidence": "GPD en exponentieel met 95%-band",
 }
 
 
@@ -219,13 +269,29 @@ def _extremenplots(basis: str, rij) -> None:
         st.caption("Geen extremenplots in de export voor dit model (`export_results.py` kopieert ze uit de "
                    "run-mappen naar `pastas/results_export/<prefix>/plots/`).")
         return
-    hoofd = plots["return_periods"] or next(p for p in plots.values() if p)
-    st.image(str(hoofd), caption=PLOT_TITELS["return_periods"] if plots["return_periods"] else None)
-    rest = [(k, p) for k, p in plots.items() if p and p != hoofd]
+    hoofd = [k for k in ("return_periods", "threshold") if plots[k]] or [next(k for k, p in plots.items() if p)]
+    for k in hoofd:
+        st.image(str(plots[k]), caption=PLOT_TITELS[k])
+    rest = [(k, p) for k, p in plots.items() if p and k not in hoofd]
     if rest:
         with st.expander("Meer plots: " + ", ".join(PLOT_TITELS[k].split(":")[0].lower() for k, _ in rest)):
             for k, p in rest:
                 st.image(str(p), caption=PLOT_TITELS[k])
+
+
+def _fitplots(basis: str, rij) -> None:
+    """ml.plots.results() (and diagnostics) of the fit, from the export in git."""
+    resultaten = bron.plot(basis, rij.series_name, "results")
+    diagnostiek = bron.plot(basis, rij.series_name, "diagnostics")
+    if resultaten is None and diagnostiek is None:
+        st.caption("Geen ml.plots.results() in de export voor dit model (`export_results.py` met `results` in "
+                   "`plot_kinds`).")
+        return
+    if resultaten is not None:
+        st.image(str(resultaten), caption="ml.plots.results()")
+    if diagnostiek is not None:
+        with st.expander("Diagnostiek van de residuen (ml.plots.diagnostics())"):
+            st.image(str(diagnostiek), caption="ml.plots.diagnostics()")
 
 
 def _detail(basis: str, rij) -> None:
@@ -245,6 +311,7 @@ def _detail(basis: str, rij) -> None:
     tab_sim, tab_herh, tab_checks = st.tabs(["Gemeten en gesimuleerd", "Herhalingstijden en familie", "Modelchecks"])
     with tab_sim:
         _plot_simulatie(basis, rij)
+        _fitplots(basis, rij)
     with tab_herh:
         _extremenplots(basis, rij)
         levels = _lees(basis, "return_levels", rij.meetreeks_id).data

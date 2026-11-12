@@ -22,6 +22,7 @@ import pandas as pd
 import streamlit as st
 
 from tarso_pipeline import results
+from tarso_pipeline.evt import EMPIRICAL_MAX_T
 from tarso_pipeline.paths import DATA_BASES, VALIDATED
 
 from . import pastas_bron as bron
@@ -33,8 +34,8 @@ STATUS = {0: "open", 1: "half", 2: "klaar"}
 
 
 def _status(keuze: pd.DataFrame) -> pd.DataFrame:
-    """Per (meetreeks_id, model_type): how many tails have a picked family (0, 1 or 2)."""
-    gekozen = keuze[keuze["family"].fillna("") != ""].drop_duplicates(["meetreeks_id", "model_type", "tail"])
+    """Per (meetreeks_id, model_type): how many tails have a valid picked family (0, 1 or 2)."""
+    gekozen = keuze[keuze["family"].isin(results.PICKABLE)].drop_duplicates(["meetreeks_id", "model_type", "tail"])
     return gekozen.groupby(["meetreeks_id", "model_type"]).size().rename("gekozen").reset_index()
 
 
@@ -48,14 +49,18 @@ def overzicht(tabel: pd.DataFrame, keuze: pd.DataFrame) -> pd.DataFrame:
     gekozen = keuze[keuze["family"].fillna("") != ""].drop_duplicates([*keys, "tail"], keep="last")
     uit = tabel[[*keys, "series_name", *[c for c in ("code", "cs_naam") if c in tabel]]].copy()
     for staart, naam in (("dry", "droog"), ("wet", "nat")):
-        deel = gekozen[gekozen["tail"] == staart][[*keys, "family", "note", "chosen_by", "chosen_at"]].rename(
-            columns={"family": naam, "note": f"notitie {naam}", "chosen_by": f"door {naam}",
-                     "chosen_at": f"op {naam}"})
+        deel = gekozen[gekozen["tail"] == staart][[*keys, "family", "n_kept", "note", "chosen_by",
+                                                    "chosen_at"]].rename(
+            columns={"family": naam, "n_kept": f"drempel {naam}", "note": f"notitie {naam}",
+                     "chosen_by": f"door {naam}", "chosen_at": f"op {naam}"})
         uit = uit.merge(deel, on=keys, how="left")
-    n = uit[["droog", "nat"]].notna().sum(axis=1)
+    n = sum(uit[naam].isin(results.PICKABLE).astype(int) for naam in ("droog", "nat"))
     uit.insert(0, "status", n.map(STATUS))
     for naam in ("droog", "nat"):
-        uit[naam] = uit[naam].map(results.FAMILY_LABELS).fillna("–")
+        uit[naam] = uit[naam].map(lambda f: "–" if not isinstance(f, str) else results.FAMILY_LABELS[f]
+                                  if f in results.PICKABLE else f"{f} (opnieuw kiezen)")
+        uit[f"drempel {naam}"] = uit[f"drempel {naam}"].fillna("").replace("", "standaard").where(
+            uit[naam] != "–", "")
         uit[f"notitie {naam}"] = uit[f"notitie {naam}"].fillna("")
         uit[f"door {naam}"] = uit[f"door {naam}"].fillna("")
         uit[f"op {naam}"] = uit[f"op {naam}"].fillna("").str[:16].str.replace("T", " ")
@@ -78,7 +83,8 @@ def _overzichtstabel(zicht: pd.DataFrame, keuze: pd.DataFrame, basis: str) -> No
     titel = (f"Overzicht · {telling.get('klaar', 0)} klaar, {telling.get('half', 0)} half, "
              f"{telling.get('open', 0)} open")
     with st.expander(titel, expanded=True):
-        kolommen = [c for c in ("status", "code", "cs_naam", "series_name", "droog", "nat", "notitie droog",
+        kolommen = [c for c in ("status", "code", "cs_naam", "series_name", "droog", "drempel droog", "nat",
+                                "drempel nat", "notitie droog",
                                 "notitie nat", "door droog", "door nat", "op droog", "op nat") if c in tab]
         st.dataframe(tab[kolommen], hide_index=True, width="stretch", height=min(38 + 35 * len(tab), 330),
                      on_select=_naar_rij, selection_mode="single-row", key=TABEL_KEY, column_config={
@@ -164,18 +170,20 @@ def render() -> None:
         with st.expander("Diagnostiek van de residuen (ml.plots.diagnostics())"):
             _figuur(basis, rij, "diagnostics", "ml.plots.diagnostics()")
 
-    st.markdown("#### Herhalingstijden")
-    if not _figuur(basis, rij, "return_periods", "Empirisch (punten) tegen de exp-, gpd- en gev-curve, "
-                                                 "links droog, rechts nat"):
+    st.markdown("#### Herhalingstijden en drempel")
+    if not _figuur(basis, rij, "return_periods", "Links droog, rechts nat. Grijs vlak: tot T=100 geldt het "
+                                                 "empirische niveau; daarna de gekozen familie."):
         st.caption("Geen herhalingstijdenplot in de export voor dit model.")
-    extra = [(k, t) for k, t in (("qq", "QQ-plot per familie"), ("confidence", "GEV met 95%-band"))
+    _figuur(basis, rij, "threshold", "Drempelkeuze: waar de GPD-vorm (boven) niet meer verandert, is de drempel "
+                                     "hoog genoeg. Onder: het T=1000-niveau per drempel.")
+    extra = [(k, t) for k, t in (("qq", "QQ-plot per familie"), ("confidence", "GPD en exponentieel met 95%-band"))
              if bron.plot(basis, rij.series_name, k)]
     if extra:
         with st.expander("Meer: " + ", ".join(t for _, t in extra)):
             for k, t in extra:
                 _figuur(basis, rij, k, t)
 
-    st.markdown("#### Familie per staart")
+    st.markdown(f"#### Familie per staart (na T={EMPIRICAL_MAX_T})")
     levels = _lees(basis, "return_levels", rij.meetreeks_id).data
     if levels.empty:
         st.info("Nog geen herhalingstijden voor dit model: draai `run_extremes.py` en `export_results.py` met "

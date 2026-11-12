@@ -17,26 +17,25 @@
 # MAGIC ```
 # MAGIC
 # MAGIC It reads `pooled_extremes/<series>_{dry,wet}.csv` from the run folder (nothing is
-# MAGIC simulated again) and bootstraps the GEV fit of each tail `replicates` times. That one
-# MAGIC array of resampled fits gives:
+# MAGIC simulated again) and bootstraps the GPD and the exponential above the threshold
+# MAGIC `replicates` times per tail. That gives:
 # MAGIC
-# MAGIC 1. **The bootstrap SE of the shape**, next to the Hessian SE that `run_extremes` used
-# MAGIC    for the family choice, and the family each would pick. `families_agree = false`
-# MAGIC    marks a tail whose `exp`/`gev` choice hinges on how the SE is estimated: look at it
-# MAGIC    in the app and pick by hand if needed.
-# MAGIC 2. **The 95% band of the GEV return level** per return period, and the
+# MAGIC 1. **The bootstrap SE of the GPD shape**, next to the asymptotic one the threshold plot
+# MAGIC    draws.
+# MAGIC 2. **The 95% band of the GPD and exponential return levels** per return period, and the
 # MAGIC    `confidence_plots/<series>_return_level.png` figure.
+# MAGIC
+# MAGIC Neither band contains the uncertainty of the Tarso model itself (its parameters are taken
+# MAGIC as exact), which is probably the larger part.
 # MAGIC
 # MAGIC Writes, per data basis, `<prefix>_shape_uncertainty` (one row per model x tail) and
 # MAGIC `<prefix>_return_level_ci` (one row per model x tail x T), appended with the `run_id`
 # MAGIC of the extremes run they belong to, plus `shape_uncertainty.csv` and
 # MAGIC `return_level_ci.csv` in the run folder.
 # MAGIC
-# MAGIC It installs the same pastas pin as `run_extremes`, so scipy, and with it every GEV
-# MAGIC fit, is the same version.
-# MAGIC
-# MAGIC Cost: about `2 x replicates` GEV fits per model (warm-started, so roughly 1 s per
-# MAGIC 100 replicates per tail). Use `limit_models` to try it on a few first.
+# MAGIC It installs the same pastas pin as `run_extremes`, so scipy, and with it every fit,
+# MAGIC is the same version. Cost: a few seconds per model at 500 replicates. Use
+# MAGIC `limit_models` to try it on a few first.
 
 # COMMAND ----------
 
@@ -144,7 +143,7 @@ if not os.path.isdir(POOLED_DIR):
 # MAGIC ## What the extremes run did
 # MAGIC
 # MAGIC Its `evt_selection.csv` gives the full `meetreeks_id`, its `run_id` (so the rows here
-# MAGIC join to `<prefix>_evt_selection` and `<prefix>_return_levels`) and the family it chose.
+# MAGIC join to `<prefix>_evt_selection` and `<prefix>_return_levels`).
 # MAGIC Its summary gives the `exclude_first` it trimmed with, which is used unless set above.
 
 # COMMAND ----------
@@ -209,10 +208,8 @@ for item in models.itertuples():
     level_rows.extend(levels)
 
     for row in shapes:
-        print(f"{item.series_name}  {row['tail']:4} shape={row['shape']:+.3f}  "
-              f"SE hessian={row['shape_se_hessian']:.3f} bootstrap={row['shape_se_bootstrap']:.3f}  "
-              f"{row['family_hessian']}/{row['family_bootstrap']}"
-              + ("" if row["families_agree"] else "   <- families differ"))
+        print(f"{item.series_name}  {row['tail']:4} GPD shape={row['gpd_shape']:+.3f}  "
+              f"SE asymptotic={row['gpd_shape_se_asymptotic']:.3f} bootstrap={row['gpd_shape_se_bootstrap']:.3f}")
 
     if MAKE_PLOTS and per_tail:
         # The figure needs the fit and the empirical points too; refitting those is cheap.
@@ -225,43 +222,38 @@ for item in models.itertuples():
             Path(extremes_dir(RUN_DIR, CONFIDENCE_PLOTS_DIR))
             / f"{item.series_name}_return_level.png",
             f"Return level with 95% CI - {item.series_name}",
-            exclude_first=EXCLUDE_FIRST,
             resamples={tail: result["resamples"] for tail, result in per_tail.items()},
         )
 
 shape_frame = pd.DataFrame(shape_rows, columns=SHAPE_UNCERTAINTY_COLUMNS)
 ci_frame = pd.DataFrame(level_rows, columns=RETURN_LEVEL_CI_COLUMNS)
-print(f"\n{shape_frame['series_name'].nunique()} model(s), {len(shape_frame)} tail(s); "
-      f"{int((~shape_frame['families_agree'].astype(bool)).sum())} with a different family "
-      f"under the bootstrap SE")
+print(f"\n{shape_frame['series_name'].nunique()} model(s), {len(shape_frame)} tail(s)")
 
 # COMMAND ----------
 
 # MAGIC %md
-# MAGIC ## Tails where the SE estimate changes the family
+# MAGIC ## The GPD shape and how sure it is
 # MAGIC
-# MAGIC `se_ratio` = Hessian SE / bootstrap SE. Near 1 the two agree; the family only differs
-# MAGIC when the shape sits close to the `2 x SE` boundary.
+# MAGIC Below 0 the tail flattens off (GPD), around 0 it does not (exponential). The two SEs
+# MAGIC should be close; a shape within about 2 SE of 0 cannot tell the two apart.
 
 # COMMAND ----------
 
-display(shape_frame[~shape_frame["families_agree"].astype(bool)]
-        if not shape_frame.empty else shape_frame)
-display(shape_frame[["series_name", "tail", "shape", "shape_se_hessian", "shape_se_bootstrap",
-                     "se_ratio", "family_hessian", "family_bootstrap", "families_agree"]])
+display(shape_frame[["series_name", "tail", "n_kept", "gpd_shape", "gpd_shape_se_asymptotic",
+                     "gpd_shape_se_bootstrap"]])
 
 # COMMAND ----------
 
 # MAGIC %md
 # MAGIC ## The width of the answer
 # MAGIC
-# MAGIC The 95% band of the GEV level, in metres. T=10 should be a few centimetres, T=100
-# MAGIC about a decimetre; T=1000 is extrapolation whatever the band says.
+# MAGIC The 95% band of the GPD and exponential levels, in metres. T=1000 is extrapolation
+# MAGIC whatever the band says.
 
 # COMMAND ----------
 
 if not ci_frame.empty:
-    display(ci_frame.pivot_table(index=["series_name", "tail"], columns="return_period",
+    display(ci_frame.pivot_table(index=["series_name", "tail", "family"], columns="return_period",
                                  values="ci_width").round(3))
 
 # COMMAND ----------

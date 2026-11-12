@@ -231,7 +231,8 @@ def artefact_dir(run_directory: str, kind: str) -> str:
 #       pooled_extremes/      <series>_{dry,wet}.csv
 #       used_extremes/        used_extremes_<series>.csv
 #       return_plots_fitted/  <series>_return_periods.png
-#       qq_plots/             <series>_qq_{min,max}.png
+#       qq_plots/             <series>_qq.png
+#       threshold_plots/      <series>_threshold.png      (GPD shape / T=1000 per threshold)
 #       confidence_plots/     <series>_return_level.png   (explore_shape_and_uncertainty)
 #       shape_uncertainty.csv, return_level_ci.csv          (explore_shape_and_uncertainty)
 #       evt_selection.csv
@@ -243,6 +244,7 @@ POOLED_EXTREMES_DIR = "pooled_extremes"
 USED_EXTREMES_DIR = "used_extremes"
 RETURN_PLOTS_DIR = "return_plots_fitted"
 QQ_PLOTS_DIR = "qq_plots"
+THRESHOLD_PLOTS_DIR = "threshold_plots"
 CONFIDENCE_PLOTS_DIR = "confidence_plots"
 
 EXTREMES_DIRS = (
@@ -251,6 +253,7 @@ EXTREMES_DIRS = (
     USED_EXTREMES_DIR,
     RETURN_PLOTS_DIR,
     QQ_PLOTS_DIR,
+    THRESHOLD_PLOTS_DIR,
     CONFIDENCE_PLOTS_DIR,
 )
 

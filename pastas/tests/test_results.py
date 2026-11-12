@@ -36,31 +36,65 @@ def test_latest_rows_keeps_the_last_run_per_series():
     assert sorted(zip(out["meetreeks_id"], out["r2"])) == [("a", 0.8), ("b", 0.7)]
 
 
-def test_only_a_pick_gives_levels_and_removing_it_leaves_none(tmp_path):
+def test_picks_are_saved_with_their_threshold_and_replaced_not_added(tmp_path):
     choice = results.read_family_choice(tmp_path / "none.csv")
     assert choice.empty and list(choice.columns) == results.FAMILY_CHOICE_COLUMNS
     choice = results.set_family_choice(choice, meetreeks_id="a", series_name="s", model_type="tarso",
-                                       tail="wet", family="gpd", note="langere staart")
+                                       tail="wet", family="gpd", n_kept=200, note="vlakt af")
     choice = results.set_family_choice(choice, meetreeks_id="a", series_name="s", model_type="tarso",
-                                       tail="wet", family="gev")   # replaces, not adds
-    assert len(choice) == 1
-
+                                       tail="wet", family="exp")       # replaces, not adds
+    assert len(choice) == 1 and choice["n_kept"].iloc[0] == ""
     path = results.family_choice_path(tmp_path, "validated")
     assert path.name == "valid_pastas_family_choice.csv"
     results.write_family_choice(path, choice)
-    choice = results.read_family_choice(path)
-
-    levels = pd.DataFrame({"meetreeks_id": "a", "model_type": "tarso", "tail": ["wet"] * 4 + ["dry"],
-                           "family": ["gev", "exp", "gpd", "emp", "gev"], "return_period": 10,
-                           "level": [1.0, 2.0, 3.0, 4.0, 5.0]})
-    assert results.chosen_levels(levels, choice)["level"].tolist() == [1.0]   # dry: no pick, no level
-
+    assert results.read_family_choice(path)["family"].tolist() == ["exp"]
+    with pytest.raises(ValueError):            # only gpd / exp can be picked
+        results.set_family_choice(choice, meetreeks_id="a", series_name="s", model_type="tarso",
+                                  tail="wet", family="gev")
     choice = results.set_family_choice(choice, meetreeks_id="a", series_name="s", model_type="tarso",
                                        tail="wet", family=None)
-    assert results.chosen_levels(levels, choice).empty                         # no automatic fallback
-    with pytest.raises(ValueError):
-        results.set_family_choice(choice, meetreeks_id="a", series_name="s", model_type="tarso",
-                                  tail="wet", family="normal")
+    assert choice.empty
+
+
+def _levels():
+    rows = []
+    for T in (10, 100, 1000):
+        rows.append({"family": "emp", "return_period": T, "level": T * 0.001, "n_kept": 704, "default_kept": True})
+        rows.append({"family": "gev", "return_period": T, "level": T * 0.002, "n_kept": 704, "default_kept": True})
+        for kept in (100, 254):
+            for family, factor in (("gpd", 0.003), ("exp", 0.004)):
+                rows.append({"family": family, "return_period": T, "level": T * factor + kept * 1e-6,
+                             "n_kept": kept, "default_kept": kept == 254})
+    return pd.DataFrame(rows).assign(meetreeks_id="a", model_type="tarso", tail="wet")
+
+
+def _pick(family, n_kept=""):
+    return pd.DataFrame([{"meetreeks_id": "a", "series_name": "s", "model_type": "tarso", "tail": "wet",
+                          "family": family, "n_kept": n_kept, "note": "", "chosen_by": "", "chosen_at": ""}])
+
+
+def test_up_to_t100_the_empirical_level_applies_past_it_the_picked_family():
+    uit = results.chosen_levels(_levels(), _pick("gpd")).set_index("return_period")
+    assert uit.loc[10, "family"] == "emp" and uit.loc[100, "family"] == "emp"
+    assert uit.loc[1000, "family"] == "gpd" and uit.loc[1000, "n_kept"] == 254   # the default threshold
+    assert uit["bron"].to_dict() == {10: results.EMPIRISCH, 100: results.EMPIRISCH, 1000: results.FAMILIE}
+
+
+def test_a_picked_threshold_selects_its_levels():
+    uit = results.chosen_levels(_levels(), _pick("exp", "100"))
+    assert uit[uit["return_period"] == 1000][["family", "n_kept"]].values.tolist() == [["exp", 100]]
+
+
+def test_no_pick_or_an_old_gev_pick_gives_nothing():
+    assert results.chosen_levels(_levels(), _pick("gev")).empty
+    assert results.chosen_levels(_levels(), results.read_family_choice("missing.csv")).empty
+
+
+def test_levels_without_a_threshold_column_still_work():
+    old = _levels()
+    old = old[old["default_kept"]].drop(columns=["n_kept", "default_kept"])
+    uit = results.chosen_levels(old, _pick("gpd"))
+    assert sorted(uit["return_period"]) == [10, 100, 1000]
 
 
 # --- the extremes plots in the export -------------------------------------------

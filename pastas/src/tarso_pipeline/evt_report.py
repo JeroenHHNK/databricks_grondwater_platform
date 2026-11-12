@@ -1,13 +1,17 @@
 """Assembling the extremes stage's tables (handoff section 6).
 
-Four mandatory artefacts plus two recommended ones:
-
-``csv/<series>_return_periods.csv``   the deliverable: T x tail x family levels
-``evt_selection.csv``                 which family was chosen per tail, and why
+``csv/<series>_return_periods.csv``   T x tail x family levels at the default threshold
+``evt_selection.csv``                 per tail: is it fit to read (flag), threshold, shapes
 ``<run>_extremes_summary.csv``        the run's report card, one row per model
 ``pooled_extremes/<series>_{dry,wet}.csv``  every pooled extreme, re-fittable
-``tail_parameters.csv``               shape/loc/scale per family per tail
-``used_extremes/used_extremes_<series>.csv``  which extremes the fit actually saw
+``tail_parameters.csv``               parameters per family per tail
+``used_extremes/used_extremes_<series>.csv``  which extremes the trimmed fit saw
+``<prefix>_return_levels`` (Delta)    level per tail x family x T, and for ``gpd``/``exp``
+                                      per threshold (``n_kept``) of the scan
+
+No family is chosen here: a person picks ``gpd`` or ``exp`` per tail, and a threshold,
+from the plots (``family_choice``). ``evt_selection`` keeps its name for continuity but
+holds diagnostics only.
 
 All levels are reported in **head units (metres NAP)**, not the maxima space the
 fitting happens in: the dry tail is flipped back on the way out.
@@ -19,35 +23,25 @@ import numpy as np
 import pandas as pd
 
 from tarso_pipeline.evt import (
+    DEFAULT_KEPT_GRID,
     DEFAULT_T_LIST,
     FAMILIES,
+    TRIMMED_FAMILIES,
     as_maxima,
+    diagnose,
+    empirical_level,
     empirical_points,
     fit_all_families,
     from_maxima,
-    select_family,
-    trim_tail,
+    snap_exclude_first,
+    tail_threshold,
+    threshold_scan,
 )
 
 TAILS = ("dry", "wet")
 TAIL_PREFIX = {"dry": "dr", "wet": "wet"}
 VALUE_COLUMN = {"dry": "head_min", "wet": "head_max"}
-
-
-def empirical_level(points: pd.DataFrame, return_period: float) -> float:
-    """Empirical level at T, interpolated on the plotting positions.
-
-    NaN outside the range the sample reaches -- 704 blocks reach T~705, so a
-    1000-year empirical level does not exist and is not invented.
-    """
-    if points.empty:
-        return float("nan")
-    ordered = points.sort_values("return_period")
-    periods = ordered["return_period"].to_numpy()
-    values = ordered["value"].to_numpy()
-    if return_period < periods[0] or return_period > periods[-1]:
-        return float("nan")
-    return float(np.interp(return_period, periods, values))
+LEVEL_FAMILIES = (*FAMILIES, "emp")
 
 
 def tail_tables(
@@ -55,99 +49,119 @@ def tail_tables(
     tail: str,
     exclude_first: int = 0,
     t_list=DEFAULT_T_LIST,
-    replicates: int = 200,
-    seed: int = 0,
-    se_method: str = "hessian",
+    kept_grid=DEFAULT_KEPT_GRID,
 ) -> dict:
-    """Everything for one tail: levels, parameters, selection, empirical points.
+    """Everything for one tail: levels, parameters, the threshold scan, diagnostics.
 
-    ``se_method`` picks the shape SE behind the family choice (see
-    :func:`tarso_pipeline.evt.select_family`); ``replicates`` only matters for
-    ``bootstrap``, or when the Hessian is unusable.
+    ``levels`` are in head units at the default threshold: ``exclude_first`` snapped to
+    the nearest ``n_kept`` of ``kept_grid`` (:func:`snap_exclude_first`), so the default
+    is one of the scan's thresholds. The scan repeats ``gpd``/``exp`` for every ``n_kept``.
     """
     maxima = as_maxima(values, tail)
+    n_total = len(maxima)
+    exclude_first = snap_exclude_first(n_total, exclude_first, kept_grid)
     parameters, levels_maxima = fit_all_families(maxima, exclude_first, t_list)
-    points = empirical_points(maxima, exclude_first)
+    points = empirical_points(maxima, 0)
 
-    # Back into head units; for the dry tail that flips the sign.
     levels = pd.DataFrame(index=levels_maxima.index)
     for family in FAMILIES:
         levels[family] = from_maxima(levels_maxima[family].to_numpy(), tail)
-    levels["emp"] = from_maxima(
-        np.array([empirical_level(points, T) for T in t_list]), tail
-    )
+    levels["emp"] = from_maxima(np.array([empirical_level(points, T) for T in t_list]), tail)
 
-    selection = select_family(
-        maxima, exclude_first=exclude_first, replicates=replicates, seed=seed,
-        spread_reference=maxima, se_method=se_method,
-    )
+    n_kept_default = n_total - exclude_first
+    scan = threshold_scan(maxima, (*kept_grid, n_kept_default), t_list)
     return {
         "levels": levels,
         "parameters": parameters,
-        "selection": selection,
         "points": points,
         "maxima": maxima,
+        "scan": scan,
+        "diagnosis": diagnose(maxima, exclude_first),
+        "exclude_first": exclude_first,
+        "n_kept_default": n_kept_default,
+        "threshold": float(from_maxima(tail_threshold(maxima, exclude_first), tail)),
     }
 
 
 def return_period_table(per_tail: dict, t_list=DEFAULT_T_LIST) -> pd.DataFrame:
-    """``T x {dr_,wet_} x {exp,gpd,gev,emp}`` -- the deliverable."""
+    """``T x {dr_,wet_} x {gpd,exp,gev,emp}`` at the default threshold."""
     out = pd.DataFrame(index=pd.Index(t_list, name="return_period"))
     for tail in TAILS:
         if tail not in per_tail:
             continue
         prefix = TAIL_PREFIX[tail]
         levels = per_tail[tail]["levels"]
-        for family in (*FAMILIES, "emp"):
+        for family in LEVEL_FAMILIES:
             out[f"{prefix}_{family}"] = levels[family]
     return out
 
 
 RETURN_LEVEL_COLUMNS = ["run_id", "meetreeks_id", "series_name", "model_type", "tail", "family",
-                        "return_period", "level"]
+                        "return_period", "level", "n_kept", "default_kept"]
+
+
+def _level(value) -> float | None:
+    return None if value is None or pd.isna(value) else float(value)
 
 
 def return_level_rows(
-    meetreeks_id: str, series_name: str, run_id: str, table: pd.DataFrame | None,
+    meetreeks_id: str, series_name: str, run_id: str, per_tail: dict,
     model_type: str = "tarso",
 ) -> list[dict]:
-    """``return_period_table`` in long form: one row per tail x family x T.
-
-    The shape of the ``<prefix>_return_levels`` Delta table, so a reader picks the
-    family it wants (the chosen one, or the automatic one) with a WHERE rather than a
-    column name. Levels are head units (m NAP); NaN levels are kept as None.
+    """The ``<prefix>_return_levels`` rows: one per tail x family x T, and for ``gpd`` /
+    ``exp`` per threshold of the scan (``n_kept``). ``emp`` and ``gev`` use every value,
+    so their ``n_kept`` is the number of blocks. ``default_kept`` marks the default
+    threshold. Levels in head units (m NAP); NaN kept as None.
     """
-    if table is None or table.empty:
-        return []
-    prefixes = {prefix: tail for tail, prefix in TAIL_PREFIX.items()}
-    rows = []
-    for column in table.columns:
-        prefix, family = column.split("_", 1)
-        for period, level in table[column].items():
-            rows.append({
-                "run_id": run_id, "meetreeks_id": meetreeks_id, "series_name": series_name,
-                "model_type": model_type, "tail": prefixes[prefix], "family": family,
-                "return_period": int(period),
-                "level": None if pd.isna(level) else float(level),
-            })
-    return rows
-
-
-def selection_rows(meetreeks_id: str, series_name: str, run_id: str, per_tail: dict) -> list[dict]:
-    """One row per tail for ``evt_selection.csv``."""
     rows = []
     for tail in TAILS:
         if tail not in per_tail:
             continue
-        row = {
-            "run_id": run_id,
-            "meetreeks_id": meetreeks_id,
-            "series_name": series_name,
-            "model_type": "tarso",
-            "tail": tail,
-        }
-        row.update(per_tail[tail]["selection"].as_row())
-        rows.append(row)
+        data = per_tail[tail]
+        n_total = len(data["maxima"])
+        base = {"run_id": run_id, "meetreeks_id": meetreeks_id, "series_name": series_name,
+                "model_type": model_type, "tail": tail}
+        for family in ("emp", "gev"):
+            for period, level in data["levels"][family].items():
+                rows.append({**base, "family": family, "return_period": int(period), "level": _level(level),
+                             "n_kept": n_total, "default_kept": True})
+        for scan_row in data["scan"].to_dict("records"):
+            for family in TRIMMED_FAMILIES:
+                for period in data["levels"].index:
+                    value = scan_row.get(f"{family}_T{int(period)}")
+                    rows.append({**base, "family": family, "return_period": int(period),
+                                 "level": _level(None if value is None else float(from_maxima(value, tail))),
+                                 "n_kept": int(scan_row["n_kept"]),
+                                 "default_kept": int(scan_row["n_kept"]) == data["n_kept_default"]})
+    return rows
+
+
+DIAGNOSTIC_COLUMNS = ["run_id", "meetreeks_id", "series_name", "model_type", "tail", "n_blocks",
+                      "spread_m", "flag", "reason", "review_flag", "exclude_first", "n_kept",
+                      "threshold", "gpd_shape", "gpd_shape_se", "gev_shape"]
+
+
+def selection_rows(meetreeks_id: str, series_name: str, run_id: str, per_tail: dict) -> list[dict]:
+    """One row per tail for ``evt_selection.csv``: diagnostics, no family choice."""
+    rows = []
+    for tail in TAILS:
+        if tail not in per_tail:
+            continue
+        data = per_tail[tail]
+        gpd = data["parameters"].get("gpd")
+        gev = data["parameters"].get("gev")
+        default = data["scan"][data["scan"]["n_kept"] == data["n_kept_default"]]
+        rows.append({
+            "run_id": run_id, "meetreeks_id": meetreeks_id, "series_name": series_name,
+            "model_type": "tarso", "tail": tail,
+            **data["diagnosis"],
+            "review_flag": bool(data["diagnosis"]["flag"]),
+            "exclude_first": data["exclude_first"], "n_kept": data["n_kept_default"],
+            "threshold": data["threshold"],
+            "gpd_shape": gpd["params"][0] if gpd else None,
+            "gpd_shape_se": float(default["gpd_shape_se"].iloc[0]) if len(default) else None,
+            "gev_shape": gev["params"][0] if gev else None,
+        })
     return rows
 
 
@@ -170,7 +184,7 @@ def tail_parameter_rows(
             if info is None:
                 base.update(
                     {"shape": None, "loc": None, "scale": None, "n_total": None,
-                     "n_fitted": None, "exceedance_rate": None, "fit_ok": False}
+                     "n_fitted": None, "exceedance_rate": None, "threshold": None, "fit_ok": False}
                 )
             else:
                 params = info["params"]
@@ -181,7 +195,8 @@ def tail_parameter_rows(
                     {
                         "shape": shape, "loc": loc, "scale": scale,
                         "n_total": info["n_total"], "n_fitted": info["n_fitted"],
-                        "exceedance_rate": info["exceedance_rate"], "fit_ok": True,
+                        "exceedance_rate": info["exceedance_rate"],
+                        "threshold": info.get("threshold"), "fit_ok": True,
                     }
                 )
             rows.append(base)
@@ -256,29 +271,25 @@ def summary_row(
 
     for tail in TAILS:
         prefix = TAIL_PREFIX[tail]
-        if tail not in per_tail:
-            row.update({f"{prefix}_family": None, f"{prefix}_verdict": None,
-                        f"{prefix}_shape": None, f"{prefix}_shape_se": None,
-                        f"{prefix}_review_flag": None})
-            for T in (10, 100, 1000):
-                row[f"{prefix}_gev_T{T}"] = None
-            continue
-        selection = per_tail[tail]["selection"]
-        levels = per_tail[tail]["levels"]
-        row.update(
-            {
-                f"{prefix}_family": selection.family,
-                f"{prefix}_verdict": selection.verdict,
-                f"{prefix}_shape": selection.shape,
-                f"{prefix}_shape_se": selection.shape_se,
-                f"{prefix}_review_flag": selection.review_flag,
-            }
-        )
-        for T in (10, 100, 1000):
-            value = levels["gev"].get(T, float("nan")) if T in levels.index else float("nan")
-            row[f"{prefix}_gev_T{T}"] = None if pd.isna(value) else float(value)
+        data = per_tail.get(tail)
+        levels = data["levels"] if data else None
+        gpd = data["parameters"].get("gpd") if data else None
+
+        def at(family: str, T: int, levels=levels):
+            if levels is None or T not in levels.index:
+                return None
+            return _level(levels.loc[T, family])
+
+        row.update({
+            f"{prefix}_flag": data["diagnosis"]["flag"] if data else None,
+            f"{prefix}_gpd_shape": gpd["params"][0] if gpd else None,
+            f"{prefix}_emp_T10": at("emp", 10),
+            f"{prefix}_emp_T100": at("emp", 100),
+            f"{prefix}_gpd_T1000": at("gpd", 1000),
+            f"{prefix}_exp_T1000": at("exp", 1000),
+        })
 
     row["review_flag"] = bool(
-        any(per_tail[t]["selection"].review_flag for t in per_tail)
+        any(per_tail[t]["diagnosis"]["flag"] for t in per_tail)
     ) if per_tail else True
     return row

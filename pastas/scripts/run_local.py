@@ -1,0 +1,186 @@
+"""Run the Pastas pipeline locally on the validated review files, without Databricks.
+
+    python scripts/run_local.py [--imprex-dir DIR | --pooled-dir DIR] [--limit N] [--export]
+
+The same steps and defaults as the Databricks chain, in one process:
+
+1. **validated heads** from ``data_validation/input_output/output_repository/*.csv``: the
+   approved hours (``gecontroleerd == 1`` and ``afgekeurd != 1``), ``raw_data + correctie``,
+   matched to their ``meetreeks_id`` through ``object_data.csv`` -- the same rule as
+   ``03_validated_to_delta``;
+2. **fit** every series spanning ``--min-days`` (365) with ``fit_series``, on the KNMI
+   forcing in ``data/forcing/`` (``fit_pastas_models``);
+3. **extremes** (``run_extremes``), either by simulating the IMPREX ensemble
+   (``--imprex-dir``: the ``imprex_<location>_ens*_daily_*.csv`` files of the volume's
+   ``knmi_forcing`` folder) or by refitting pooled extremes written by an earlier run
+   (``--pooled-dir``: a ``pooled_extremes`` folder, e.g. downloaded from the volume);
+4. with ``--export``: write the results to ``results_export/valid_pastas/`` the way
+   ``export_results`` does, so the app shows them.
+
+Everything else lands in ``local_runs/valid_pastas/<run>/`` (git-ignored), in the same
+layout as a run folder on the volume. Needs the ``pastas`` extra.
+"""
+
+from __future__ import annotations
+
+import argparse
+import datetime as dt
+import sys
+from pathlib import Path
+
+import pandas as pd
+
+PASTAS = Path(__file__).resolve().parents[1]
+REPO = PASTAS.parent
+sys.path.insert(0, str(PASTAS / "src"))
+
+from tarso_pipeline import results  # noqa: E402
+from tarso_pipeline.evt import DEFAULT_KEPT_GRID, DEFAULT_T_LIST  # noqa: E402
+from tarso_pipeline.evt_report import RETURN_LEVEL_COLUMNS, VALUE_COLUMN  # noqa: E402
+from tarso_pipeline.extremes_run import fit_pooled, run_model  # noqa: E402
+from tarso_pipeline.fit import fit_series  # noqa: E402
+from tarso_pipeline.forcing import forcing_file, load_forcing_pair  # noqa: E402
+from tarso_pipeline.paths import (  # noqa: E402
+    EVT_SELECTION_FILE,
+    TABLE_PREFIX,
+    VALIDATED,
+    extremes_summary_file,
+    series_name_from_id,
+)
+
+REVIEWS = REPO / "data_validation" / "input_output" / "output_repository"
+OBJECT_DATA = REPO / "data_validation" / "input_output" / "output_databricks" / "metadata" / "object_data.csv"
+LOCAL_RUNS = PASTAS / "local_runs"
+
+
+def validated_heads(reviews: Path = REVIEWS, object_data: Path = OBJECT_DATA) -> dict[str, pd.DataFrame]:
+    """``meetreeks_id -> frame(tijdstempel, waarde)`` of the approved, corrected hours."""
+    ids = pd.read_csv(object_data, usecols=["filename", "meetreeks_id"]).drop_duplicates("filename")
+    by_file = dict(zip(ids["filename"], ids["meetreeks_id"]))
+    out = {}
+    for path in sorted(reviews.glob("*.csv")):
+        meetreeks_id = by_file.get(path.stem)
+        if meetreeks_id is None:
+            print(f"  skip {path.name}: not in object_data.csv")
+            continue
+        frame = pd.read_csv(path, encoding="utf-8-sig")
+        for column in ("gecontroleerd", "afgekeurd"):
+            frame[column] = pd.to_numeric(frame[column], errors="coerce").fillna(0).astype(int)
+        frame["correctie"] = pd.to_numeric(frame.get("correctie", 0.0), errors="coerce").fillna(0.0)
+        frame = frame[(frame["gecontroleerd"] == 1) & (frame["afgekeurd"] != 1)]
+        # The review store keys on UTC; the source's tijdstempel is the Amsterdam wall clock.
+        stamps = pd.to_datetime(frame["timestamp"], utc=True).dt.tz_convert("Europe/Amsterdam").dt.tz_localize(None)
+        out[meetreeks_id] = pd.DataFrame({"tijdstempel": stamps.to_numpy(),
+                                          "waarde": (frame["raw_data"] + frame["correctie"]).to_numpy()})
+    return out
+
+
+def fit_all(heads: dict, run_directory: Path, run_id: str, args) -> tuple[pd.DataFrame, list, list]:
+    precipitation, evaporation = load_forcing_pair(forcing_file(str(PASTAS / "data" / "forcing"), args.station),
+                                                   units="m")
+    rows, check_rows, simulations = [], [], []
+    for meetreeks_id, raw in heads.items():
+        series_name = series_name_from_id(meetreeks_id)
+        row = fit_series(
+            meetreeks_id=meetreeks_id, series_name=series_name, raw=raw,
+            precipitation=precipitation, evaporation=evaporation, run_id=run_id, model_type="tarso",
+            run_directory=str(run_directory), min_days=args.min_days, min_obs=100, warmup_days=3650,
+            forcing_station=str(args.station), forcing_units="m", save_plot=True,
+            check_rows=check_rows, simulation_frames=simulations,
+        )
+        rows.append(row)
+        status = (f"EVP={row['evp']:.1f}%  R2={row['r2']:.3f}  nobs={row['nobs']}" if row["success"]
+                  else f"skipped: {row['error_message']}")
+        print(f"  {series_name}  {status}")
+    return pd.DataFrame(rows), check_rows, simulations
+
+
+def extremes_all(fits: pd.DataFrame, run_directory: Path, run_id: str, args) -> dict[str, pd.DataFrame]:
+    selections, summaries, levels = [], [], []
+    ok = fits[fits["success"].astype(bool)]
+    members, forcing = [], None
+    if args.imprex_dir:
+        from tarso_pipeline.imprex import discover_members, load_member
+
+        members = discover_members(str(args.imprex_dir), args.location)
+        print(f"  {len(members)} IMPREX member(s) in {args.imprex_dir}")
+        forcing = {m.member: load_member(m, units="m") for m in members}
+    for item in ok.itertuples():
+        if args.imprex_dir:
+            result = run_model(item.model_path, item.meetreeks_id, item.series_name, members,
+                               str(run_directory), run_id, exclude_first=args.exclude_first,
+                               t_list=DEFAULT_T_LIST, kept_grid=DEFAULT_KEPT_GRID, forcing=forcing)
+        else:
+            pooled = {}
+            for tail in ("dry", "wet"):
+                path = Path(args.pooled_dir) / f"{item.series_name}_{tail}.csv"
+                if path.is_file():
+                    pooled[tail] = pd.read_csv(path, index_col=0)
+            if not pooled:
+                print(f"  {item.series_name}: no pooled extremes in {args.pooled_dir}")
+                continue
+            n_members = int(pd.concat(pooled.values())["member"].nunique()) if "member" in next(iter(pooled.values())) else 16
+            result = fit_pooled(pooled, item.meetreeks_id, item.series_name, str(run_directory), run_id,
+                                n_members, exclude_first=args.exclude_first)
+        selections.extend(result.selection)
+        summaries.append(result.summary)
+        levels.extend(result.levels)
+        s = result.summary
+        print(f"  {item.series_name}  {s['status']}  emp T100 dry={s.get('dr_emp_T100')} wet={s.get('wet_emp_T100')}")
+    return {"evt_selection": pd.DataFrame(selections), "extremes_summary": pd.DataFrame(summaries),
+            "return_levels": pd.DataFrame(levels, columns=RETURN_LEVEL_COLUMNS)}
+
+
+def main() -> None:
+    parser = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
+    source = parser.add_mutually_exclusive_group()
+    source.add_argument("--imprex-dir", type=Path, help="folder with the IMPREX member CSVs")
+    source.add_argument("--pooled-dir", type=Path, help="a pooled_extremes folder to refit")
+    parser.add_argument("--location", default="berkhout")
+    parser.add_argument("--station", default="249")
+    parser.add_argument("--min-days", type=int, default=365)
+    parser.add_argument("--exclude-first", type=int, default=450)
+    parser.add_argument("--limit", type=int, default=0, help="first N series only")
+    parser.add_argument("--run-folder", default=None)
+    parser.add_argument("--export", action="store_true", help="write to results_export/valid_pastas/")
+    args = parser.parse_args()
+
+    run_id = dt.datetime.now(dt.timezone.utc).strftime("%Y%m%dT%H%M%SZ")
+    base = LOCAL_RUNS / TABLE_PREFIX[VALIDATED]
+    run_directory = base / (args.run_folder or f"run_local_{dt.date.today():%y_%m_%d}")
+    run_directory.mkdir(parents=True, exist_ok=True)
+    print(f"run {run_id} -> {run_directory}")
+
+    heads = validated_heads()
+    if args.limit:
+        heads = dict(list(heads.items())[: args.limit])
+    print(f"{len(heads)} validated series")
+    fits, check_rows, simulations = fit_all(heads, run_directory, run_id, args)
+    tables = {"fit_metrics": fits, "model_checks": pd.DataFrame(check_rows),
+              "simulations": pd.concat(simulations, ignore_index=True) if simulations else pd.DataFrame()}
+
+    if args.imprex_dir or args.pooled_dir:
+        print("extremes")
+        tables.update(extremes_all(fits, run_directory, run_id, args))
+        tables["evt_selection"].to_csv(run_directory / EVT_SELECTION_FILE, index=False)
+        tables["extremes_summary"].to_csv(extremes_summary_file(str(run_directory)), index=False)
+        tables["return_levels"].to_csv(run_directory / "return_levels.csv", index=False)
+    fits.to_csv(run_directory / "fit_metrics.csv", index=False)
+
+    if args.export:
+        out = results.export_dir(PASTAS, VALIDATED)
+        out.mkdir(parents=True, exist_ok=True)
+        for kind, filename in results.EXPORT_FILES.items():
+            frame = tables.get(kind)
+            if frame is None or frame.empty:
+                print(f"  export: no {kind}, {filename} left as it is")
+                continue
+            path = out / filename
+            frame.to_parquet(path, index=False) if filename.endswith(".parquet") else frame.to_csv(path, index=False)
+            print(f"  export: {kind} -> {path.relative_to(REPO).as_posix()} ({len(frame)} rows)")
+        counts = results.sync_plots(base, results.plots_dir(PASTAS, VALIDATED))
+        print(f"  export: plots {counts}")
+
+
+if __name__ == "__main__":
+    main()

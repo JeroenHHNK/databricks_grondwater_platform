@@ -222,10 +222,12 @@ def test_the_family_overview_shows_per_model_what_is_picked():
                           "series_name": ["sa", "sb", "sc"], "code": ["A", "B", "C"]})
     keuze = pd.DataFrame({"meetreeks_id": ["a", "a", "b"], "series_name": ["sa", "sa", "sb"],
                           "model_type": "tarso", "tail": ["dry", "wet", "wet"], "family": ["gpd", "exp", "gev"],
-                          "note": ["lang", "", ""], "chosen_by": "jeroen",
+                          "n_kept": ["200", "", ""], "note": ["lang", "", ""], "chosen_by": "jeroen",
                           "chosen_at": "2026-11-12T15:09:09+01:00"})
     uit = overzicht(tabel, keuze).set_index("series_name")
-    assert uit["status"].to_dict() == {"sa": "klaar", "sb": "half", "sc": "open"}
-    assert uit.loc["sa", ["droog", "nat", "notitie droog"]].tolist() == ["GPD", "exponentieel (Gumbel)", "lang"]
-    assert uit.loc["sb", "droog"] == "–" and uit.loc["sc", "door nat"] == ""
+    # b's only pick is an old gev one, which no longer counts.
+    assert uit["status"].to_dict() == {"sa": "klaar", "sb": "open", "sc": "open"}
+    assert uit.loc["sa", ["droog", "drempel droog", "drempel nat", "notitie droog"]].tolist() == [
+        "GPD (staart vlakt af)", "200", "standaard", "lang"]
+    assert uit.loc["sb", "nat"] == "gev (opnieuw kiezen)" and uit.loc["sb", "droog"] == "–"
     assert uit.loc["sa", "op droog"] == "2026-11-12 15:09"

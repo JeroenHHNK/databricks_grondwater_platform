@@ -48,26 +48,38 @@
 # MAGIC Expect **704 blocks per tail**: 16 members x 44 years, 1956-1999. 800 means the
 # MAGIC partial-block filter is not running; 16 440 means the members were concatenated.
 # MAGIC
-# MAGIC ### Trimming
+# MAGIC ### What is fitted, and what is quoted
 # MAGIC
-# MAGIC `exclude_first` defaults to **450**, leaving 254 of 704. Trimming changes what the
-# MAGIC distribution *is*: what remains is conditional on clearing a threshold, so a
-# MAGIC T-year event is the `1/(lam*T)` quantile, not `1/T`. That correction is applied.
+# MAGIC | | on | used for |
+# MAGIC |---|---|---|
+# MAGIC | `emp` | all ~704 years (plotting position) | **T <= 100**: ~7 exceedances at T=100, no distribution needed |
+# MAGIC | `gpd` | the years above a threshold, lower bound at the threshold | **T > 100** if picked: a tail that flattens off |
+# MAGIC | `exp` | the same, shape 0 | **T > 100** if picked: a tail that does not flatten off |
+# MAGIC | `gev` | all years | comparison only |
 # MAGIC
-# MAGIC > **With 450 trimmed, lam = 0.361 and the smallest computable return period is
-# MAGIC > T = 2.77.** T=2 is reported as null, not as a wrong number.
+# MAGIC Nothing is chosen here. A person picks `gpd` or `exp` per tail, and a threshold, in the
+# MAGIC app (*Pastas -> Familie kiezen*), from the return-period and threshold plots.
 # MAGIC
-# MAGIC ### Family choice, and what is not here
+# MAGIC ### The threshold
 # MAGIC
-# MAGIC A tail is `exp` when the GEV shape is within 2 standard errors of zero, else `gev`.
-# MAGIC That SE comes from the curvature of the likelihood (`shape_se_method=hessian`,
-# MAGIC milliseconds per tail). The bootstrap (`bootstrap`, `bootstrap_replicates` refits per
-# MAGIC tail) is the slow alternative, and the automatic fallback where the Hessian is unusable;
-# MAGIC `evt_selection.shape_se_method` records which one a tail got.
+# MAGIC `exclude_first` (default **450**, snapped to the nearest `kept_grid` value: 250 of 704 kept)
+# MAGIC sets the default threshold, midway
+# MAGIC between the last dropped and the first kept year. Above it a T-year event is the
+# MAGIC `1/(lam*T)` quantile of the fit (lam = 250/704), not `1/T`; T=2 sits below the threshold
+# MAGIC and is null. The GPD and exponential are also fitted for every `n_kept` of `kept_grid`
+# MAGIC (`<prefix>_return_levels.n_kept`), and `threshold_plots/` shows the GPD shape and the
+# MAGIC T=1000 level per threshold: where they stop changing, the threshold is high enough.
 # MAGIC
-# MAGIC The **confidence plots** and the bootstrap check of the SE are **not** made here. Run
+# MAGIC ### What the numbers do not contain
+# MAGIC
+# MAGIC T=1000 is extrapolation whatever the family: report it as indicative. And every level
+# MAGIC here takes the Tarso model as exact, while it was calibrated on a few years of heads;
+# MAGIC that model uncertainty is not in any band (it would need simulations with sampled
+# MAGIC parameters) and is probably larger than the difference between families.
+# MAGIC
+# MAGIC The **confidence plots** (bootstrap bands of GPD and exponential) are made by
 # MAGIC `analysis/explore_shape_and_uncertainty` after this notebook (same `data_basis` and
-# MAGIC `run_folder`) when you want them; it reads the `pooled_extremes/` written below.
+# MAGIC `run_folder`); it reads the `pooled_extremes/` written below.
 
 # COMMAND ----------
 
@@ -86,10 +98,8 @@ dbutils.widgets.text("exclude_first", "450", "Least-extreme values trimmed per t
 dbutils.widgets.text("t_list", "2 5 10 25 50 100 250 500 1000", "Return periods")
 dbutils.widgets.text("limit_models", "0", "Max models (0 = all)")
 
-dbutils.widgets.dropdown("shape_se_method", "hessian", ["hessian", "bootstrap"],
-                         "Shape SE for the family choice")
-dbutils.widgets.text("bootstrap_replicates", "200",
-                     "Shape bootstrap (only for bootstrap, or as Hessian fallback)")
+dbutils.widgets.text("kept_grid", "100 150 200 250 300 350 400",
+                     "Years above the threshold to scan (n_kept)")
 dbutils.widgets.dropdown("make_plots", "true", ["true", "false"], "Make plots?")
 dbutils.widgets.dropdown("write_tables", "true", ["true", "false"], "Write Delta tables?")
 dbutils.widgets.text("output_catalog", "waterkeringbeheer_prd", "Output catalog")
@@ -138,7 +148,7 @@ import pandas as pd
 import pastas as ps
 from pyspark.sql import functions as F
 
-from tarso_pipeline.evt_report import RETURN_LEVEL_COLUMNS, TAILS, return_level_rows
+from tarso_pipeline.evt_report import RETURN_LEVEL_COLUMNS, TAILS
 from tarso_pipeline.extremes_run import discover_models, run_model
 from tarso_pipeline.imprex import discover_members
 from tarso_pipeline.paths import (
@@ -166,8 +176,7 @@ EXCLUDE_FIRST = int(dbutils.widgets.get("exclude_first"))
 T_LIST = tuple(int(t) for t in dbutils.widgets.get("t_list").split())
 LIMIT_MODELS = int(dbutils.widgets.get("limit_models"))
 
-SE_METHOD = dbutils.widgets.get("shape_se_method")
-REPLICATES = int(dbutils.widgets.get("bootstrap_replicates"))
+KEPT_GRID = tuple(int(k) for k in dbutils.widgets.get("kept_grid").split())
 MAKE_PLOTS = dbutils.widgets.get("make_plots") == "true"
 WRITE_TABLES = dbutils.widgets.get("write_tables") == "true"
 CATALOG = dbutils.widgets.get("output_catalog").strip()
@@ -189,7 +198,7 @@ print(f"run folder    {RUN_DIR}")
 print(f"imprex        {IMPREX_DIR}  ({LOCATION})")
 print(f"units         {UNITS}   warmup {WARMUP_YEARS}y   trim {EXCLUDE_FIRST}")
 print(f"T list        {T_LIST}")
-print(f"shape SE      {SE_METHOD}" + (f" ({REPLICATES} replicates)" if SE_METHOD == "bootstrap" else ""))
+print(f"threshold     default {EXCLUDE_FIRST} trimmed; scan n_kept {KEPT_GRID}")
 print(f"pastas        {ps.__version__}")
 
 # COMMAND ----------
@@ -235,6 +244,10 @@ if not members:
 if len(members) < 16:
     print(f"NOTE: {len(members)} members, not 16 - the pooled sample will be "
           f"~{len(members) * 44} blocks per tail, not 704.")
+# The ensemble is read once, not once per model.
+from tarso_pipeline.imprex import load_member  # noqa: E402
+
+FORCING = {m.member: load_member(m, units=UNITS) for m in members}
 for kind in EXTREMES_DIRS:
     os.makedirs(extremes_dir(RUN_DIR, kind), exist_ok=True)
 print(f"\nartefact folders ready under {RUN_DIR}")
@@ -264,25 +277,24 @@ for item in models.itertuples():
         warmup_years=WARMUP_YEARS,
         exclude_first=EXCLUDE_FIRST,
         t_list=T_LIST,
-        replicates=REPLICATES,
+        kept_grid=KEPT_GRID,
         make_plots=MAKE_PLOTS,
-        se_method=SE_METHOD,
+        forcing=FORCING,
     )
     summaries.append(result.summary)
     selections.extend(result.selection)
     parameters.extend(result.parameters)
-    levels.extend(return_level_rows(item.meetreeks_id, item.series_name, RUN_ID, result.return_table))
+    levels.extend(result.levels)
 
     s = result.summary
     print(f"   status={s['status']}  members={s['n_members']}  "
           f"dry={s['n_dry']} wet={s['n_wet']}  years {s['first_year']}..{s['last_year']}")
     for prefix, tail in (("dr", "dry"), ("wet", "wet")):
-        if s.get(f"{prefix}_family"):
-            print(f"   {tail:4} {s[f'{prefix}_family']:<4} {s[f'{prefix}_verdict']:<20}"
-                  f"shape={s[f'{prefix}_shape']:+.3f}+-{s[f'{prefix}_shape_se']:.3f}  "
-                  f"T100={s[f'{prefix}_gev_T100']}")
-        else:
-            print(f"   {tail:4} no family: {s.get(f'{prefix}_verdict')}")
+        shape = s.get(f"{prefix}_gpd_shape")
+        print(f"   {tail:4} GPD shape={'-' if shape is None else f'{shape:+.3f}'}  "
+              f"emp T100={s.get(f'{prefix}_emp_T100')}  "
+              f"T1000 gpd={s.get(f'{prefix}_gpd_T1000')} exp={s.get(f'{prefix}_exp_T1000')}"
+              + (f"  [{s[f'{prefix}_flag']}]" if s.get(f"{prefix}_flag") else ""))
     if s["failure_detail"]:
         print(f"   failures: {s['failure_detail'][:160]}")
 
@@ -298,8 +310,9 @@ print(f"\n{len(summary_frame)} model(s): "
 # MAGIC %md
 # MAGIC ## Run-level roll-ups
 # MAGIC
-# MAGIC `evt_selection` is what tells anyone **which column of the return table to
-# MAGIC read**; without it the choice is unauditable.
+# MAGIC `evt_selection` (name kept for continuity) holds per tail the diagnostics: a flag when
+# MAGIC a tail is not fit to read (too few years, a capped head, a very heavy tail), the
+# MAGIC threshold and the shapes. It chooses nothing.
 
 # COMMAND ----------
 
@@ -320,9 +333,9 @@ display(selection_frame)
 
 display(
     summary_frame[
-        ["series_name", "status", "n_members", "n_dry", "n_wet",
-         "first_year", "last_year", "dr_family", "dr_verdict", "dr_gev_T100",
-         "wet_family", "wet_verdict", "wet_gev_T100", "review_flag"]
+        ["series_name", "status", "n_members", "n_dry", "n_wet", "first_year", "last_year",
+         "dr_flag", "dr_gpd_shape", "dr_emp_T100", "dr_gpd_T1000", "dr_exp_T1000",
+         "wet_flag", "wet_gpd_shape", "wet_emp_T100", "wet_gpd_T1000", "wet_exp_T1000", "review_flag"]
     ]
 )
 
@@ -359,31 +372,20 @@ else:
 # MAGIC %md
 # MAGIC ## What to quote
 # MAGIC
-# MAGIC **T=10** is stable to a couple of centimetres. **T=100** to about 0.1 m. Quote
-# MAGIC those two.
+# MAGIC **T <= 100: the empirical level** of the pooled years. **T = 250-500: the picked
+# MAGIC family** at the picked threshold. **T=1000 is extrapolation regardless** - 704 years
+# MAGIC reach an empirical return period of ~705 - so treat it as indicative, and remember the
+# MAGIC Tarso model's own uncertainty is in none of these numbers.
 # MAGIC
-# MAGIC **T=1000 is extrapolation regardless** - 704 blocks reach an empirical return
-# MAGIC period of ~705 years, so a 1000-year level is beyond anything in the pool and the
-# MAGIC three families disagree by a median 0.30 m and sometimes far more. Treat it as
-# MAGIC indicative.
-# MAGIC
-# MAGIC A `degenerate` verdict on a wet tail means the model's `dmax` ceiling is capping
-# MAGIC the head, not that the fit failed.
+# MAGIC A `degenerate` flag on a wet tail means the model's `dmax` ceiling is capping the head,
+# MAGIC not that the fit failed.
 
 # COMMAND ----------
 
-flagged = summary_frame[summary_frame["review_flag"].astype(bool)]
+flagged = selection_frame[selection_frame["review_flag"].astype(bool)] if not selection_frame.empty else selection_frame
 if flagged.empty:
-    print("no tails flagged for review")
+    print("no tails flagged")
 else:
-    print(f"{len(flagged)} model(s) flagged for review:")
+    print(f"{len(flagged)} tail(s) flagged:")
     for row in flagged.itertuples():
-        for prefix, tail in (("dr", "dry"), ("wet", "wet")):
-            verdict = getattr(row, f"{prefix}_verdict", None)
-            if getattr(row, f"{prefix}_review_flag", False):
-                print(f"  {row.series_name} [{tail}]: {verdict}")
-
-print("\nverdict distribution:")
-for prefix, tail in (("dr", "dry"), ("wet", "wet")):
-    counts = summary_frame[f"{prefix}_verdict"].value_counts().to_dict()
-    print(f"  {tail}: {counts}")
+        print(f"  {row.series_name} [{row.tail}] {row.flag}: {row.reason}")

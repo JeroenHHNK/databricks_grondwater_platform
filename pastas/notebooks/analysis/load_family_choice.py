@@ -11,7 +11,7 @@
 # MAGIC | object | what |
 # MAGIC |---|---|
 # MAGIC | `<prefix>_family_choice` | the picks, one row per series x model type x tail (overwrite) |
-# MAGIC | `<prefix>_return_levels_chosen` (view) | the latest return levels in the family picked per tail; a tail without a pick has none (the automatic `chosen_family` of `<prefix>_evt_selection` is not used) |
+# MAGIC | `<prefix>_return_levels_chosen` (view) | the latest return levels that apply per picked tail: up to T=100 the empirical level (`bron='empirisch'`), past it the picked family at the picked threshold `n_kept` (`bron='familie'`; blank `n_kept` = the default threshold). A tail without a pick has none |
 # MAGIC
 # MAGIC Boxplots draws the same levels per well in the cross sections.
 
@@ -44,6 +44,7 @@ if os.path.join(ROOT, "src") not in sys.path:
 
 from pyspark.sql import functions as F  # noqa: E402
 
+from tarso_pipeline.evt import EMPIRICAL_MAX_T  # noqa: E402
 from tarso_pipeline.paths import output_table  # noqa: E402
 from tarso_pipeline.results import family_choice_path, latest_run_sql, read_family_choice  # noqa: E402
 
@@ -74,14 +75,20 @@ if not spark.catalog.tableExists(LEVELS_TABLE):
 
 spark.sql(f"""
     CREATE OR REPLACE VIEW {VIEW} AS
-    WITH lv AS ({latest_run_sql(LEVELS_TABLE)})
-    SELECT lv.*, c.note AS family_note, c.chosen_by, c.chosen_at
-    FROM lv JOIN {CHOICE_TABLE} c
-      ON lv.meetreeks_id = c.meetreeks_id AND lv.model_type = c.model_type
-     AND lv.tail = c.tail AND lv.family = c.family
+    WITH lv AS ({latest_run_sql(LEVELS_TABLE)}),
+         c AS (SELECT * FROM {CHOICE_TABLE} WHERE family IN ('gpd', 'exp'))
+    SELECT lv.*, c.family AS picked_family, c.n_kept AS picked_kept,
+           CASE WHEN lv.family = 'emp' THEN 'empirisch' ELSE 'familie' END AS bron,
+           c.note AS family_note, c.chosen_by, c.chosen_at
+    FROM lv JOIN c
+      ON lv.meetreeks_id = c.meetreeks_id AND lv.model_type = c.model_type AND lv.tail = c.tail
+    WHERE (lv.family = 'emp' AND lv.return_period <= {EMPIRICAL_MAX_T})
+       OR (lv.family = c.family AND lv.return_period > {EMPIRICAL_MAX_T}
+           AND (CASE WHEN nullif(c.n_kept, '') IS NULL THEN lv.default_kept
+                     ELSE lv.n_kept = CAST(c.n_kept AS INT) END))
 """)
 print(f"created {VIEW}")
 display(spark.sql(f"""
-    SELECT tail, family, count(DISTINCT meetreeks_id) AS series
+    SELECT tail, picked_family, count(DISTINCT meetreeks_id) AS series
     FROM {VIEW} GROUP BY ALL ORDER BY ALL
 """))

@@ -8,9 +8,10 @@ Tables accumulate one set of rows per run (``run_id``, a sortable UTC timestamp)
 result for a series is the **latest run that produced a row for it**, per model type:
 ``latest_run_sql``.
 
-The family per tail is the one a person picked (``<prefix>_family_choice``, kept in git as
-``family_choice/<prefix>_family_choice.csv``); a tail without a pick has no family:
-``chosen_levels``.
+The levels that apply per tail (``chosen_levels``): up to T=100 the empirical level of the
+pooled years, past it the family a person picked (``gpd`` or ``exp``) at the threshold they
+picked (``<prefix>_family_choice``, kept in git as ``family_choice/<prefix>_family_choice.csv``).
+A tail without a pick has none.
 """
 
 from __future__ import annotations
@@ -21,6 +22,7 @@ from pathlib import Path
 
 import pandas as pd
 
+from tarso_pipeline.evt import EMPIRICAL_MAX_T
 from tarso_pipeline.paths import (
     CONFIDENCE_PLOTS_DIR,
     DIAGNOSTICS_DIR,
@@ -28,6 +30,7 @@ from tarso_pipeline.paths import (
     RESULTS_DIR,
     RETURN_PLOTS_DIR,
     TABLE_PREFIX,
+    THRESHOLD_PLOTS_DIR,
     check_basis,
 )
 
@@ -39,6 +42,7 @@ PLOT_KINDS = {
     # kind:          (folder in the run folder, suffix of the file run_extremes writes)
     "return_periods": (RETURN_PLOTS_DIR, "_return_periods.png"),
     "qq": (QQ_PLOTS_DIR, "_qq.png"),
+    "threshold": (THRESHOLD_PLOTS_DIR, "_threshold.png"),
     "confidence": (CONFIDENCE_PLOTS_DIR, "_return_level.png"),  # explore_shape_and_uncertainty
     # The fit itself (fit_pastas_models): ml.plots.results() and ml.plots.diagnostics().
     "results": (RESULTS_DIR, "_tarso_results.png"),
@@ -53,11 +57,15 @@ EXPORT_FILES = {
     "return_levels": "return_levels.csv",
     "simulations": "simulations.parquet",
 }
-FAMILIES = ("gev", "exp", "gpd", "emp")
-FAMILY_LABELS = {"gev": "GEV", "exp": "exponentieel (Gumbel)", "gpd": "GPD", "emp": "empirisch"}
+FAMILIES = ("gpd", "exp", "gev", "emp")
+# What a person can pick per tail: how to extrapolate past EMPIRICAL_MAX_T.
+PICKABLE = ("gpd", "exp")
+FAMILY_LABELS = {"gpd": "GPD (staart vlakt af)", "exp": "exponentieel (staart vlakt niet af)",
+                 "gev": "GEV (alle jaren, vergelijking)", "emp": "empirisch"}
 TAIL_LABELS = {"dry": "droog (laagste standen)", "wet": "nat (hoogste standen)"}
-FAMILY_CHOICE_COLUMNS = ["meetreeks_id", "series_name", "model_type", "tail", "family", "note",
+FAMILY_CHOICE_COLUMNS = ["meetreeks_id", "series_name", "model_type", "tail", "family", "n_kept", "note",
                          "chosen_by", "chosen_at"]
+EMPIRISCH, FAMILIE = "empirisch", "familie"
 
 _TABLE = re.compile(r"^[A-Za-z_][A-Za-z0-9_]*(\.[A-Za-z_][A-Za-z0-9_]*){2}$")
 _ID = re.compile(r"^[A-Za-z0-9_-]{1,128}$")
@@ -184,11 +192,15 @@ def read_family_choice(path: str | Path) -> pd.DataFrame:
 
 
 def set_family_choice(choice: pd.DataFrame, *, meetreeks_id: str, series_name: str, model_type: str,
-                      tail: str, family: str | None, note: str = "", chosen_by: str = "",
-                      chosen_at: str = "") -> pd.DataFrame:
-    """One pick per (meetreeks_id, model_type, tail); ``family=None`` removes it (back to automatic)."""
-    if family is not None and family not in FAMILIES:
-        raise ValueError(f"family must be one of {FAMILIES}, got {family!r}")
+                      tail: str, family: str | None, n_kept: int | None = None, note: str = "",
+                      chosen_by: str = "", chosen_at: str = "") -> pd.DataFrame:
+    """One pick per (meetreeks_id, model_type, tail); ``family=None`` removes it (no family).
+
+    ``n_kept`` is the threshold: the number of pooled years above it (blank = the
+    default threshold of the extremes run).
+    """
+    if family is not None and family not in PICKABLE:
+        raise ValueError(f"family must be one of {PICKABLE}, got {family!r}")
     if tail not in TAIL_LABELS:
         raise ValueError(f"tail must be one of {tuple(TAIL_LABELS)}, got {tail!r}")
     same = ((choice["meetreeks_id"] == meetreeks_id) & (choice["model_type"] == model_type)
@@ -197,7 +209,8 @@ def set_family_choice(choice: pd.DataFrame, *, meetreeks_id: str, series_name: s
     if family is not None:
         out = pd.concat([out, pd.DataFrame([{
             "meetreeks_id": meetreeks_id, "series_name": series_name, "model_type": model_type,
-            "tail": tail, "family": family, "note": note, "chosen_by": chosen_by, "chosen_at": chosen_at,
+            "tail": tail, "family": family, "n_kept": "" if n_kept is None else str(int(n_kept)),
+            "note": note, "chosen_by": chosen_by, "chosen_at": chosen_at,
         }])], ignore_index=True)
     return out.sort_values(["meetreeks_id", "model_type", "tail"]).reset_index(drop=True)[FAMILY_CHOICE_COLUMNS]
 
@@ -210,14 +223,30 @@ def write_family_choice(path: str | Path, choice: pd.DataFrame) -> None:
     tmp.replace(path)
 
 
-def chosen_levels(levels: pd.DataFrame, choice: pd.DataFrame) -> pd.DataFrame:
-    """The return levels in the family a person picked per tail.
+def chosen_levels(levels: pd.DataFrame, choice: pd.DataFrame,
+                  empirical_max_t: int = EMPIRICAL_MAX_T) -> pd.DataFrame:
+    """The return levels that apply per tail, for the tails a person picked a family for.
 
-    Only picks count: a tail without one has no family and no levels. (``run_extremes``
-    still writes an automatic ``chosen_family`` to ``<prefix>_evt_selection``, but it is
-    not used: on the trimmed pooled extremes it calls almost every tail unbounded.)
+    Up to ``empirical_max_t`` the empirical level (``emp``): with ~704 pooled years no
+    distribution is needed there. Past it the picked family (``gpd`` / ``exp``) at the
+    picked threshold (``n_kept``; blank = the default one). ``bron`` says which. A tail
+    without a pick, or with a family that cannot be picked any more (``gev``), has none.
     """
     keys = ["meetreeks_id", "model_type", "tail"]
-    picks = choice[choice["family"].fillna("").astype(str) != ""]
-    picks = picks.drop_duplicates(keys, keep="last")[[*keys, "family"]]
-    return levels.merge(picks, on=[*keys, "family"], how="inner")
+    extra = ["picked_family", "picked_kept", "bron"]
+    picks = choice[choice["family"].fillna("").astype(str).isin(PICKABLE)]
+    picks = picks.drop_duplicates(keys, keep="last")[[*keys, "family", "n_kept"]].rename(
+        columns={"family": "picked_family", "n_kept": "picked_kept"})
+    if picks.empty or levels.empty:
+        return pd.DataFrame(columns=[*levels.columns, *extra])
+    merged = levels.merge(picks, on=keys, how="inner")
+    period = pd.to_numeric(merged["return_period"])
+    emp = merged[(merged["family"] == "emp") & (period <= empirical_max_t)].assign(bron=EMPIRISCH)
+    fam = merged[(merged["family"] == merged["picked_family"]) & (period > empirical_max_t)]
+    if "n_kept" in fam:
+        wanted = pd.to_numeric(fam["picked_kept"], errors="coerce")
+        default = (fam["default_kept"].astype(str).str.lower().eq("true") if "default_kept" in fam
+                   else pd.Series(True, index=fam.index))
+        fam = fam[(wanted.isna() & default) | (pd.to_numeric(fam["n_kept"], errors="coerce") == wanted)]
+    fam = fam.assign(bron=FAMILIE)
+    return pd.concat([emp, fam], ignore_index=True)
