@@ -127,3 +127,26 @@ def test_plot_path_rejects_an_unknown_kind(tmp_path):
 
     with pytest.raises(ValueError, match="kind"):
         plot_path(tmp_path, "validated", "series_a", "histogram")
+
+
+def test_the_fit_plots_are_found_without_their_model_type(tmp_path):
+    from tarso_pipeline.results import latest_plots
+
+    results = _png(tmp_path / "run_1" / "results_files" / "series_a_tarso_results.png", b"r", 1000)
+    diagnostics = _png(tmp_path / "run_1" / "diagnostics_files" / "series_a_tarso_diagnostics.png", b"d", 1000)
+    found = latest_plots(tmp_path)
+    assert found[("series_a", "results")] == results
+    assert found[("series_a", "diagnostics")] == diagnostics
+
+
+def test_syncing_some_kinds_leaves_the_others_alone(tmp_path):
+    from tarso_pipeline.results import sync_plots
+
+    volume, target = tmp_path / "volume", tmp_path / "plots"
+    _png(volume / "run_1" / "qq_plots" / "series_a_qq.png", b"qq", 1000)
+    _png(target / "series_a_results.png", b"kept", 500)
+    _png(target / "series_gone_qq.png", b"stale", 500)
+    assert sync_plots(volume, target, kinds=["qq"]) == {"copied": 1, "unchanged": 0, "removed": 1}
+    assert (target / "series_a_results.png").read_bytes() == b"kept"
+    with pytest.raises(ValueError, match="plot kind"):
+        sync_plots(volume, target, kinds=["histogram"])

@@ -23,7 +23,9 @@ import pandas as pd
 
 from tarso_pipeline.paths import (
     CONFIDENCE_PLOTS_DIR,
+    DIAGNOSTICS_DIR,
     QQ_PLOTS_DIR,
+    RESULTS_DIR,
     RETURN_PLOTS_DIR,
     TABLE_PREFIX,
     check_basis,
@@ -38,6 +40,9 @@ PLOT_KINDS = {
     "return_periods": (RETURN_PLOTS_DIR, "_return_periods.png"),
     "qq": (QQ_PLOTS_DIR, "_qq.png"),
     "confidence": (CONFIDENCE_PLOTS_DIR, "_return_level.png"),  # explore_shape_and_uncertainty
+    # The fit itself (fit_pastas_models): ml.plots.results() and ml.plots.diagnostics().
+    "results": (RESULTS_DIR, "_tarso_results.png"),
+    "diagnostics": (DIAGNOSTICS_DIR, "_tarso_diagnostics.png"),
 }
 FAMILY_CHOICE_DIRNAME = "family_choice"
 # What the app needs, and the file each is exported to (export_results.py).
@@ -108,17 +113,26 @@ def plot_path(root: str | Path, basis: str, series_name: str, kind: str) -> Path
     return plots_dir(root, basis) / f"{series_name}_{kind}.png"
 
 
-def latest_plots(basis_volume_dir: str | Path) -> dict[tuple[str, str], Path]:
+def _check_kinds(kinds) -> tuple[str, ...]:
+    kinds = tuple(PLOT_KINDS) if kinds is None else tuple(kinds)
+    unknown = [k for k in kinds if k not in PLOT_KINDS]
+    if unknown:
+        raise ValueError(f"unknown plot kind(s) {unknown}; use {tuple(PLOT_KINDS)}")
+    return kinds
+
+
+def latest_plots(basis_volume_dir: str | Path, kinds=None) -> dict[tuple[str, str], Path]:
     """The newest figure per (series_name, kind) over every run folder of one data basis.
 
     Newest by modification time, not by folder name, so a run folder with a custom name
-    (``run_folder`` widget) counts too.
+    (``run_folder`` widget) counts too. ``kinds`` limits it to some of ``PLOT_KINDS``.
     """
     found: dict[tuple[str, str], Path] = {}
     base = Path(basis_volume_dir)
     if not base.is_dir():
         return found
-    for kind, (folder, suffix) in PLOT_KINDS.items():
+    for kind in _check_kinds(kinds):
+        folder, suffix = PLOT_KINDS[kind]
         for path in base.glob(f"*/{folder}/*{suffix}"):
             key = (path.name[: -len(suffix)], kind)
             if key not in found or path.stat().st_mtime > found[key].stat().st_mtime:
@@ -126,16 +140,18 @@ def latest_plots(basis_volume_dir: str | Path) -> dict[tuple[str, str], Path]:
     return found
 
 
-def sync_plots(basis_volume_dir: str | Path, target: str | Path) -> dict[str, int]:
+def sync_plots(basis_volume_dir: str | Path, target: str | Path, kinds=None) -> dict[str, int]:
     """Mirror :func:`latest_plots` into ``target``: one PNG per model and kind.
 
     A file whose bytes did not change is left alone (no churn in git); a PNG in
-    ``target`` that no run folder has any more is removed. Returns the counts.
+    ``target`` that no run folder has any more is removed. Only the ``kinds`` synced
+    are touched: leaving a kind out keeps its files as they are. Returns the counts.
     """
+    kinds = _check_kinds(kinds)
     target = Path(target)
     target.mkdir(parents=True, exist_ok=True)
     wanted = {f"{series}_{kind}.png": source
-              for (series, kind), source in latest_plots(basis_volume_dir).items()}
+              for (series, kind), source in latest_plots(basis_volume_dir, kinds).items()}
     counts = {"copied": 0, "unchanged": 0, "removed": 0}
     for name, source in sorted(wanted.items()):
         dest = target / name
@@ -146,7 +162,7 @@ def sync_plots(basis_volume_dir: str | Path, target: str | Path) -> dict[str, in
         shutil.copyfile(source, dest)
         counts["copied"] += 1
     for stale in target.glob("*.png"):
-        if stale.name not in wanted:
+        if stale.name not in wanted and stale.name.endswith(tuple(f"_{k}.png" for k in kinds)):
             stale.unlink()
             counts["removed"] += 1
     return counts

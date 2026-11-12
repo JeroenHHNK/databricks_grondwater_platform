@@ -5,6 +5,8 @@ The Pastas section: the fitted models, their plots and return periods, and the f
   see observed vs. simulated head, the Brakenhoff checks and the return levels of each
   family, and to pick the statistical family per tail (dry / wet).
 - Vergelijken: the same series trained on validated and on unvalidated data, side by side.
+- Familie kiezen (pastas_familie.py): one model at a time, its fit and return-period plots
+  and the pick per tail, with previous / next.
 
 Results come live from Databricks when the app may read them, otherwise from the export in
 git (platform_app/pastas_bron.py). The family pick is saved to

@@ -11,11 +11,13 @@
 # MAGIC pastas/results_export/<prefix>/
 # MAGIC     fit_metrics.csv      model_checks.csv    evt_selection.csv
 # MAGIC     return_levels.csv    simulations.parquet (daily observed + simulated head)
-# MAGIC     plots/<series_name>_{return_periods,qq,confidence}.png
+# MAGIC     plots/<series_name>_{return_periods,qq,confidence,results,diagnostics}.png
 # MAGIC ```
 # MAGIC
-# MAGIC The plots are the figures `run_extremes` (and, for `confidence`,
-# MAGIC `explore_shape_and_uncertainty`) drew in the run folders on the volume: per model and
+# MAGIC The plots are the figures drawn in the run folders on the volume: `results` and
+# MAGIC `diagnostics` (`ml.plots.results()` / `.diagnostics()`) by `fit_pastas_models`,
+# MAGIC `return_periods` and `qq` by `run_extremes`, `confidence` by
+# MAGIC `explore_shape_and_uncertainty`. Per model and
 # MAGIC kind the newest one, so `plots/` holds exactly one PNG per model and kind. An unchanged
 # MAGIC figure is not rewritten, so git only sees what really changed.
 # MAGIC
@@ -33,7 +35,9 @@ dbutils.widgets.text("model_types", "tarso", "Model types to export (comma-separ
 dbutils.widgets.text("volume_base",
                      "/Volumes/waterkeringbeheer_prd/misc_files/misc_files/pastas_pipeline",
                      "Volume prefix (for the plots)")
-dbutils.widgets.dropdown("export_plots", "true", ["true", "false"], "Export the extremes plots?")
+dbutils.widgets.dropdown("export_plots", "true", ["true", "false"], "Export the plots?")
+dbutils.widgets.text("plot_kinds", "return_periods,qq,confidence,results,diagnostics",
+                     "Plot kinds (results/diagnostics: ~150 KB per model each)")
 
 # COMMAND ----------
 
@@ -71,6 +75,7 @@ SCHEMA = dbutils.widgets.get("output_schema").strip()
 MODEL_TYPES = [m.strip() for m in dbutils.widgets.get("model_types").split(",") if m.strip()]
 VOLUME_BASE = dbutils.widgets.get("volume_base").strip().rstrip("/")
 EXPORT_PLOTS = dbutils.widgets.get("export_plots") == "true"
+PLOT_KINDS = [k.strip() for k in dbutils.widgets.get("plot_kinds").split(",") if k.strip()]
 OUT = export_dir(ROOT, BASIS)
 OUT.mkdir(parents=True, exist_ok=True)
 print(f"basis {BASIS} -> {OUT}")
@@ -107,7 +112,7 @@ for kind, filename in EXPORT_FILES.items():
 
 if EXPORT_PLOTS:
     source = basis_volume(VOLUME_BASE, BASIS)
-    counts = sync_plots(source, plots_dir(ROOT, BASIS))
+    counts = sync_plots(source, plots_dir(ROOT, BASIS), kinds=PLOT_KINDS)
     print(f"plots from {source}/*/ -> {plots_dir(ROOT, BASIS)}: "
           f"{counts['copied']} copied, {counts['unchanged']} unchanged, {counts['removed']} removed")
     if not any(counts.values()):

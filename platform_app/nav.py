@@ -11,7 +11,7 @@ import streamlit as st
 
 from review_app import nav as validation_nav
 
-from . import pastas_pagina, peilbuizen, refresh, stijghoogtes
+from . import pastas_familie, pastas_pagina, peilbuizen, refresh, stijghoogtes
 
 ROOT = Path(__file__).resolve().parents[1]
 
@@ -26,6 +26,8 @@ ZONE = st.Page(stijghoogtes.render_zone, title="Zone vergelijken", icon=":materi
 
 MODELLEN = st.Page(pastas_pagina.render_modellen, title="Modellen", icon=":material/model_training:",
                    url_path="pastas-modellen")
+FAMILIE = st.Page(pastas_familie.render, title="Familie kiezen", icon=":material/checklist:",
+                   url_path="pastas-familie")
 VERGELIJKEN = st.Page(pastas_pagina.render_vergelijken, title="Gevalideerd vs ongevalideerd",
                       icon=":material/compare:", url_path="pastas-vergelijken")
 
@@ -34,7 +36,7 @@ REFRESH = st.Page(refresh.render, title="Refresh data", icon=":material/sync:", 
 SECTIES: dict[str, list] = {
     "Boxplots": [BOXPLOTS],
     "Peilbuizen": [KAART, PER_DWARSPROFIEL, ZONE],
-    "Pastas": [MODELLEN, VERGELIJKEN],
+    "Pastas": [MODELLEN, FAMILIE, VERGELIJKEN],
     "Data validation": validation_nav.PAGES,
     "Data": [REFRESH],
 }
