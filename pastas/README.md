@@ -171,7 +171,7 @@ Each notebook has one job. Only two are job tasks; the other two are run by hand
 | `transformation/run_extremes.py` | synthetic extremes, EVT fits, family choice (Hessian shape SE), return levels | by hand | `<prefix>_evt_selection`, `<prefix>_extremes_summary`, `<prefix>_return_levels` |
 | `analysis/explore_shape_and_uncertainty.py` | optional, after `run_extremes`: bootstrap shape SE vs the Hessian one (`families_agree`), 95% band per return level, `confidence_plots/` | optional task | `<prefix>_shape_uncertainty`, `<prefix>_return_level_ci` |
 | `analysis/inspect_results.py` | did it work, are the fits any good, Tarso vs baseline | no | nothing |
-| `analysis/export_results.py` | the latest run per series, into `results_export/` for the app (until it reads live) | no | CSVs / parquet in the Git folder |
+| `analysis/export_results.py` | the latest run per series, into `results_export/` for the app (until it reads live), plus the newest extremes plots per model | no | CSVs / parquet / `plots/*.png` in the Git folder |
 | `analysis/load_family_choice.py` | the families picked in the app (`family_choice/`) into Delta | no | `<prefix>_family_choice`, view `<prefix>_return_levels_chosen` |
 
 Task 2 depends on task 1: it reads the manifest table task 1 writes.
