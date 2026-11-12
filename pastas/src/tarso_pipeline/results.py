@@ -9,8 +9,8 @@ result for a series is the **latest run that produced a row for it**, per model 
 ``latest_run_sql``.
 
 The family per tail is the one a person picked (``<prefix>_family_choice``, kept in git as
-``family_choice/<prefix>_family_choice.csv``) or, without a pick, the automatic choice in
-``<prefix>_evt_selection``: ``effective_family`` / ``chosen_levels``.
+``family_choice/<prefix>_family_choice.csv``); a tail without a pick has no family:
+``chosen_levels``.
 """
 
 from __future__ import annotations
@@ -58,7 +58,6 @@ FAMILY_LABELS = {"gev": "GEV", "exp": "exponentieel (Gumbel)", "gpd": "GPD", "em
 TAIL_LABELS = {"dry": "droog (laagste standen)", "wet": "nat (hoogste standen)"}
 FAMILY_CHOICE_COLUMNS = ["meetreeks_id", "series_name", "model_type", "tail", "family", "note",
                          "chosen_by", "chosen_at"]
-GEKOZEN, AUTOMATISCH = "gekozen", "automatisch"
 
 _TABLE = re.compile(r"^[A-Za-z_][A-Za-z0-9_]*(\.[A-Za-z_][A-Za-z0-9_]*){2}$")
 _ID = re.compile(r"^[A-Za-z0-9_-]{1,128}$")
@@ -211,26 +210,14 @@ def write_family_choice(path: str | Path, choice: pd.DataFrame) -> None:
     tmp.replace(path)
 
 
-def effective_family(selection: pd.DataFrame, choice: pd.DataFrame) -> pd.DataFrame:
-    """Per (meetreeks_id, model_type, tail): the family that applies and where it came from.
+def chosen_levels(levels: pd.DataFrame, choice: pd.DataFrame) -> pd.DataFrame:
+    """The return levels in the family a person picked per tail.
 
-    ``selection`` is ``<prefix>_evt_selection`` (latest run), ``choice`` the picks. A pick
-    wins; otherwise the automatic ``chosen_family``, which is empty for a tail the
-    selection could not fit (degenerate, insufficient), so that tail has no family.
+    Only picks count: a tail without one has no family and no levels. (``run_extremes``
+    still writes an automatic ``chosen_family`` to ``<prefix>_evt_selection``, but it is
+    not used: on the trimmed pooled extremes it calls almost every tail unbounded.)
     """
     keys = ["meetreeks_id", "model_type", "tail"]
-    auto = selection[[*keys, "chosen_family", "verdict"]].rename(columns={"chosen_family": "auto_family"})
-    picks = choice[[*keys, "family"]].rename(columns={"family": "picked"})
-    out = auto.merge(picks, on=keys, how="outer")
-    picked = out["picked"].notna() & (out["picked"] != "")
-    out["family"] = out["picked"].where(picked, out["auto_family"])
-    out["family_source"] = pd.Series(AUTOMATISCH, index=out.index).where(~picked, GEKOZEN)
-    out.loc[out["family"].isna() | (out["family"] == ""), "family_source"] = None
-    return out[[*keys, "family", "family_source", "auto_family", "verdict"]]
-
-
-def chosen_levels(levels: pd.DataFrame, selection: pd.DataFrame, choice: pd.DataFrame) -> pd.DataFrame:
-    """The return levels of the family that applies per tail (``effective_family``)."""
-    fam = effective_family(selection, choice).dropna(subset=["family"])
-    keys = ["meetreeks_id", "model_type", "tail", "family"]
-    return levels.merge(fam[[*keys, "family_source"]], on=keys, how="inner")
+    picks = choice[choice["family"].fillna("").astype(str) != ""]
+    picks = picks.drop_duplicates(keys, keep="last")[[*keys, "family"]]
+    return levels.merge(picks, on=[*keys, "family"], how="inner")

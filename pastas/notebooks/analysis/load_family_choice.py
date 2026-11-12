@@ -2,7 +2,7 @@
 # MAGIC %md
 # MAGIC # Load the chosen statistical families into Delta
 # MAGIC
-# MAGIC **Run by hand after pulling the Git folder.** In the Streamlit app (*Pastas → Modellen*,
+# MAGIC **Run by hand after pulling the Git folder.** In the Streamlit app (*Pastas → Familie kiezen*,
 # MAGIC run locally where saving is on) a person picks the family per model and tail: GEV,
 # MAGIC exponential (Gumbel), GPD or empirical. The picks are saved in git as
 # MAGIC `pastas/family_choice/<prefix>_family_choice.csv`, the same route as the data
@@ -11,7 +11,7 @@
 # MAGIC | object | what |
 # MAGIC |---|---|
 # MAGIC | `<prefix>_family_choice` | the picks, one row per series x model type x tail (overwrite) |
-# MAGIC | `<prefix>_return_levels_chosen` (view) | the latest return levels in the family that applies: the pick, or else the automatic `chosen_family` of `<prefix>_evt_selection`; `family_source` says which |
+# MAGIC | `<prefix>_return_levels_chosen` (view) | the latest return levels in the family picked per tail; a tail without a pick has none (the automatic `chosen_family` of `<prefix>_evt_selection` is not used) |
 # MAGIC
 # MAGIC Boxplots draws the same levels per well in the cross sections.
 
@@ -52,7 +52,6 @@ CATALOG = dbutils.widgets.get("output_catalog").strip()
 SCHEMA = dbutils.widgets.get("output_schema").strip()
 CHOICE_TABLE = output_table(BASIS, "family_choice", CATALOG, SCHEMA)
 LEVELS_TABLE = output_table(BASIS, "return_levels", CATALOG, SCHEMA)
-SELECTION_TABLE = output_table(BASIS, "evt_selection", CATALOG, SCHEMA)
 VIEW = f"{LEVELS_TABLE}_chosen"
 
 choice = read_family_choice(family_choice_path(ROOT, BASIS))
@@ -70,29 +69,19 @@ print(f"overwrote {CHOICE_TABLE}")
 
 # COMMAND ----------
 
-if not (spark.catalog.tableExists(LEVELS_TABLE) and spark.catalog.tableExists(SELECTION_TABLE)):
-    dbutils.notebook.exit(f"No {LEVELS_TABLE} / {SELECTION_TABLE} yet: run run_extremes.py for this basis first.")
+if not spark.catalog.tableExists(LEVELS_TABLE):
+    dbutils.notebook.exit(f"No {LEVELS_TABLE} yet: run run_extremes.py for this basis first.")
 
 spark.sql(f"""
     CREATE OR REPLACE VIEW {VIEW} AS
-    WITH lv AS ({latest_run_sql(LEVELS_TABLE)}),
-         sel AS ({latest_run_sql(SELECTION_TABLE)}),
-         fam AS (
-             SELECT s.meetreeks_id, s.model_type, s.tail,
-                    coalesce(nullif(c.family, ''), s.chosen_family) AS family,
-                    CASE WHEN nullif(c.family, '') IS NOT NULL THEN 'gekozen' ELSE 'automatisch' END
-                        AS family_source
-             FROM sel s
-             LEFT JOIN {CHOICE_TABLE} c
-               ON c.meetreeks_id = s.meetreeks_id AND c.model_type = s.model_type AND c.tail = s.tail
-         )
-    SELECT lv.*, fam.family_source
-    FROM lv JOIN fam
-      ON lv.meetreeks_id = fam.meetreeks_id AND lv.model_type = fam.model_type
-     AND lv.tail = fam.tail AND lv.family = fam.family
+    WITH lv AS ({latest_run_sql(LEVELS_TABLE)})
+    SELECT lv.*, c.note AS family_note, c.chosen_by, c.chosen_at
+    FROM lv JOIN {CHOICE_TABLE} c
+      ON lv.meetreeks_id = c.meetreeks_id AND lv.model_type = c.model_type
+     AND lv.tail = c.tail AND lv.family = c.family
 """)
 print(f"created {VIEW}")
 display(spark.sql(f"""
-    SELECT family_source, tail, family, count(DISTINCT meetreeks_id) AS series
+    SELECT tail, family, count(DISTINCT meetreeks_id) AS series
     FROM {VIEW} GROUP BY ALL ORDER BY ALL
 """))

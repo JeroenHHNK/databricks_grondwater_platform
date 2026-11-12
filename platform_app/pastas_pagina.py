@@ -36,7 +36,7 @@ MODEL_PARAM, BASIS_PARAM = "model", "basis"
 KLEUR = {"observed": "#4a4a4a", "simulated": "#2a78d6", "ander": "#eb6834"}
 FAMILIE_KLEUR = {"gev": "#2a78d6", "exp": "#1baf7a", "gpd": "#eda100", "emp": "#8a8984"}
 STAART_KLEUR = {"dry": "#eb6834", "wet": "#2a78d6"}
-AUTO = "automatisch"
+GEEN = "geen"  # no pick: the tail gets no return levels
 
 
 @st.cache_data(ttl=600, show_spinner="Pastas-resultaten laden…", max_entries=40)
@@ -89,15 +89,12 @@ def _overzicht(basis: str) -> DataFrame | None:
         per = (checks.assign(ok=checks["passed"].astype(str).str.lower().eq("true"))
                .groupby(["meetreeks_id", "model_type"])["ok"].agg(checks_ok="sum", checks="size").reset_index())
         tabel = tabel.merge(per, on=["meetreeks_id", "model_type"], how="left")
-    selectie = _lees(basis, "evt_selection").data
-    if not selectie.empty:
-        fam = results.effective_family(selectie, _keuze(basis))
-        for staart in ("dry", "wet"):
-            deel = fam[fam["tail"] == staart].assign(
-                **{f"familie_{staart}": lambda d: d["family"].fillna("–") + d["family_source"].map(
-                    {results.GEKOZEN: " (gekozen)", results.AUTOMATISCH: ""}).fillna("")})
-            tabel = tabel.merge(deel[["meetreeks_id", "model_type", f"familie_{staart}"]],
-                                on=["meetreeks_id", "model_type"], how="left")
+    keuze = _keuze(basis)
+    for staart in ("dry", "wet"):
+        deel = keuze[keuze["tail"] == staart].rename(columns={"family": f"familie_{staart}"})
+        tabel = tabel.merge(deel[["meetreeks_id", "model_type", f"familie_{staart}"]],
+                            on=["meetreeks_id", "model_type"], how="left")
+        tabel[f"familie_{staart}"] = tabel[f"familie_{staart}"].replace("", None).fillna("–")
     return tabel
 
 
@@ -154,45 +151,58 @@ def _plot_herhaling(levels: DataFrame, staart: str, familie: str | None) -> go.F
     return fig
 
 
-def _familiekeuze(basis: str, rij, selectie: DataFrame, levels: DataFrame) -> None:
+def _bewaar_keuze(basis: str, meetreeks_id: str, series_name: str, model_type: str, staart: str,
+                  sleutel_familie: str, sleutel_notitie: str) -> None:
+    """on_change of the pick (or its note): write it to the family_choice CSV straight away."""
+    familie = st.session_state[sleutel_familie]
+    nieuw = results.set_family_choice(
+        _keuze(basis), meetreeks_id=meetreeks_id, series_name=series_name, model_type=model_type, tail=staart,
+        family=None if familie == GEEN else familie, note=st.session_state.get(sleutel_notitie, ""),
+        chosen_by=getpass.getuser(),
+        chosen_at=datetime.now(ZoneInfo("Europe/Amsterdam")).isoformat(timespec="seconds"))
+    results.write_family_choice(bron.keuze_pad(basis), nieuw)
+    st.toast(f"{results.TAIL_LABELS[staart].split(' ')[0].capitalize()}: "
+             f"{'geen keuze' if familie == GEEN else results.FAMILY_LABELS[familie]} · opgeslagen in "
+             f"{bron.keuze_pad(basis).relative_to(bron.ROOT).as_posix()}")
+
+
+def _familiekeuze(basis: str, rij, levels: DataFrame) -> None:
+    """Per tail: the levels of every family, and the pick, saved as soon as it changes."""
     keuze = _keuze(basis)
-    fam = results.effective_family(selectie, keuze)
-    fam = fam[(fam["meetreeks_id"] == rij.meetreeks_id) & (fam["model_type"] == rij.model_type)].set_index("tail")
+    eigen = keuze[(keuze["meetreeks_id"] == rij.meetreeks_id) & (keuze["model_type"] == rij.model_type)]
+    gekozen = {r.tail: r for r in eigen.itertuples() if r.family}
     alleen_lezen = common.read_only()
-    kolommen = st.columns(2)
-    for kolom, staart in zip(kolommen, ("dry", "wet")):
+    for kolom, staart in zip(st.columns(2), ("dry", "wet")):
         with kolom:
-            if staart not in fam.index:
-                st.caption(f"{results.TAIL_LABELS[staart]}: geen extremenanalyse.")
+            pick = gekozen.get(staart)
+            familie = pick.family if pick is not None else GEEN
+            if levels[levels["tail"] == staart].empty:
+                st.caption(f"{results.TAIL_LABELS[staart]}: geen herhalingstijden.")
                 continue
-            f = fam.loc[staart]
-            kolom.plotly_chart(_plot_herhaling(levels, staart, f["family"]), config={"displaylogo": False},
-                               key=f"pa_herh_{rij.meetreeks_id}_{staart}")
-            sel = selectie[(selectie["meetreeks_id"] == rij.meetreeks_id) & (selectie["tail"] == staart)]
-            reden = sel["reason"].iloc[0] if "reason" in sel and len(sel) else ""
-            st.caption(f"Automatisch: **{f['auto_family'] if isinstance(f['auto_family'], str) else '–'}** "
-                       f"({f['verdict']}) · {reden}")
-            opties = [AUTO, *results.FAMILIES]
-            huidig = f["family"] if f["family_source"] == results.GEKOZEN else AUTO
-            gekozen = st.radio("Statistische familie", opties, index=opties.index(huidig), horizontal=True,
-                               key=f"pa_fam_{basis}_{rij.meetreeks_id}_{staart}",
-                               format_func=lambda o: f"automatisch ({f['auto_family']})" if o == AUTO
-                               else results.FAMILY_LABELS[o])
-            notitie = st.text_input("Notitie", value="", max_chars=80, key=f"pa_not_{basis}_{rij.meetreeks_id}_{staart}")
-            if st.button("Opslaan", key=f"pa_save_{basis}_{rij.meetreeks_id}_{staart}", disabled=alleen_lezen
-                         or gekozen == huidig, help=common.READ_ONLY_MSG if alleen_lezen else None):
-                nieuw = results.set_family_choice(
-                    keuze, meetreeks_id=rij.meetreeks_id, series_name=rij.series_name, model_type=rij.model_type,
-                    tail=staart, family=None if gekozen == AUTO else gekozen, note=notitie,
-                    chosen_by=getpass.getuser(), chosen_at=datetime.now(ZoneInfo("Europe/Amsterdam")).isoformat(
-                        timespec="seconds"))
-                results.write_family_choice(bron.keuze_pad(basis), nieuw)
-                st.toast(f"Opgeslagen in {bron.keuze_pad(basis).relative_to(bron.ROOT).as_posix()}")
-                st.rerun()
+            st.plotly_chart(_plot_herhaling(levels, staart, None if familie == GEEN else familie),
+                            config={"displaylogo": False}, key=f"pa_herh_{rij.meetreeks_id}_{staart}")
+            sleutel = f"pa_fam_{basis}_{rij.meetreeks_id}_{rij.model_type}_{staart}"
+            sleutel_notitie = f"pa_not_{basis}_{rij.meetreeks_id}_{rij.model_type}_{staart}"
+            # The widgets follow the file: a save elsewhere (other page, git pull) shows up here.
+            st.session_state[sleutel] = familie
+            st.session_state.setdefault(sleutel_notitie, pick.note if pick is not None else "")
+            opslaan = {"on_change": _bewaar_keuze, "disabled": alleen_lezen,
+                       "args": (basis, rij.meetreeks_id, rij.series_name, rij.model_type, staart, sleutel,
+                                sleutel_notitie)}
+            st.radio(f"Familie {results.TAIL_LABELS[staart]}", [GEEN, *results.FAMILIES], horizontal=True,
+                     key=sleutel, format_func=lambda o: "geen keuze" if o == GEEN else results.FAMILY_LABELS[o],
+                     **opslaan)
+            st.text_input("Notitie", max_chars=80, key=sleutel_notitie, **opslaan)
+            if pick is not None:
+                st.caption(f"Gekozen: **{results.FAMILY_LABELS[pick.family]}** · {pick.chosen_by} · {pick.chosen_at}")
+            else:
+                st.caption("Nog geen keuze: deze staart krijgt geen herhalingstijden in de Boxplots.")
     if alleen_lezen:
         st.caption("Kiezen kan hier niet opslaan (de bestanden van een Databricks App blijven niet bewaard). "
-                   "Kies lokaal (`uv run streamlit run app.py`), push `pastas/family_choice/` en draai "
-                   "`pastas/notebooks/analysis/load_family_choice.py`.")
+                   "Kies lokaal (`uv run streamlit run app.py`) en push `pastas/family_choice/`.")
+    else:
+        st.caption(f"Een keuze wordt direct opgeslagen in `{bron.keuze_pad(basis).relative_to(bron.ROOT).as_posix()}`; "
+                   "push die map om haar te delen.")
 
 
 PLOT_TITELS = {
@@ -237,14 +247,13 @@ def _detail(basis: str, rij) -> None:
         _plot_simulatie(basis, rij)
     with tab_herh:
         _extremenplots(basis, rij)
-        selectie = _lees(basis, "evt_selection").data
         levels = _lees(basis, "return_levels", rij.meetreeks_id).data
-        if selectie.empty or levels.empty:
+        if levels.empty:
             st.info("Nog geen extremenanalyse voor dit model: draai `run_extremes.py` met dezelfde `data_basis` "
                     "(en, zonder live toegang, `export_results.py`).")
         else:
             levels = levels[levels["model_type"] == rij.model_type]
-            _familiekeuze(basis, rij, selectie, levels)
+            _familiekeuze(basis, rij, levels)
     with tab_checks:
         checks = _lees(basis, "model_checks", rij.meetreeks_id).data
         if checks.empty:
@@ -308,10 +317,10 @@ def render_vergelijken() -> None:
 
     T = st.segmented_control("Herhalingstijd voor de standen", [10, 100], default=10, key="pa_vgl_T") or 10
     for b, achter in ((VALIDATED, "gev"), (UNVALIDATED, "ongev")):
-        lv, sel = _lees(b, "return_levels").data, _lees(b, "evt_selection").data
-        if lv.empty or sel.empty:
+        lv = _lees(b, "return_levels").data
+        if lv.empty:
             continue
-        gekozen = results.chosen_levels(lv[lv["return_period"] == T], sel, _keuze(b))
+        gekozen = results.chosen_levels(lv[lv["return_period"] == T], _keuze(b))
         breed = gekozen.pivot_table(index=sleutel, columns="tail", values="level").add_prefix(f"T{T}_").add_suffix(
             f"_{achter}").reset_index()
         naast = naast.merge(breed, on=sleutel, how="left")

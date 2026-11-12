@@ -175,14 +175,27 @@ def test_return_levels_land_on_the_wells_of_the_cross_section():
                            "peilbuis": ["PB1", "PB2", "PB3"], "diepte_niveau": "hoofd"})
     niveaus = pd.DataFrame({"meetreeks_id": ["r1", "r1", "r1", "r9"], "model_type": "tarso",
                             "tail": ["wet", "wet", "dry", "wet"], "family": "gev",
-                            "return_period": [10, 100, 10, 10], "level": [0.5, 0.8, -2.0, 9.0],
-                            "family_source": "automatisch"})
+                            "return_period": [10, 100, 10, 10], "level": [0.5, 0.8, -2.0, 9.0]})
     pt = h.punten(putten, niveaus, [10, 100])
     assert set(pt["peilbuis"]) == {"PB1"} and len(pt) == 3          # r2 has no model, r9 is elsewhere
     fig = go.Figure(go.Scatter(x=[0], y=[0]), layout={"yaxis": {"range": [-1, 1]}})
     uit = h.voeg_toe(fig, pt)
     assert len(fig.data) == 1 and len(uit.data) == 4                  # the original is not changed
     assert tuple(uit.layout.yaxis.range) == (-2.3, 1.1)               # widened to show every marker
+
+
+def test_a_return_period_is_one_line_across_the_wells_sorted_by_x():
+    import plotly.graph_objects as go
+    from platform_app import herhalingstijden as h
+
+    # PB2 has two filters at the same x: the line goes through their mean, not up and down.
+    pt = pd.DataFrame({"x_profiel": [30.0, 10.0, 30.0], "peilbuis": ["PB2", "PB1", "PB2"],
+                       "diepte_niveau": "hoofd", "tail": "wet", "return_period": 10,
+                       "level": [1.0, 0.5, 2.0], "family": "gev", "meetreeks_id": ["r2", "r1", "r3"]})
+    uit = h.voeg_toe(go.Figure(), pt)
+    lijn = uit.data[-1]
+    assert lijn.mode == "lines+markers"
+    assert list(lijn.x) == [10.0, 30.0] and list(lijn.y) == [0.5, 1.5]
 
 
 def test_pastas_results_come_from_the_export_when_there_is_no_warehouse(monkeypatch, tmp_path):

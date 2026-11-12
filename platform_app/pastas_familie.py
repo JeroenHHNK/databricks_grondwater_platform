@@ -8,8 +8,9 @@ Per model the page shows, top to bottom:
   expander), drawn by `fit_pastas_models`;
 - the return periods: empirical points against the exp / gpd / gev curves (`run_extremes`),
   QQ and the confidence band in an expander;
-- the pick per tail, saved to `pastas/family_choice/<prefix>_family_choice.csv` (locally;
-  the same file the Modellen page and the Boxplots use).
+- the pick per tail, saved to `pastas/family_choice/<prefix>_family_choice.csv` as soon as it
+  changes (locally; the same file the Modellen page and the Boxplots use). Only picks count:
+  a tail without one gets no return levels.
 
 The figures come from `pastas/results_export/<prefix>/plots/` (export_results.py), the
 tables live or from the export, like the Modellen page.
@@ -20,7 +21,6 @@ from __future__ import annotations
 import pandas as pd
 import streamlit as st
 
-from tarso_pipeline import results
 from tarso_pipeline.paths import DATA_BASES, VALIDATED
 
 from . import pastas_bron as bron
@@ -29,13 +29,10 @@ from .pastas_pagina import _familiekeuze, _herkomst, _keuze, _label, _lees, _nam
 MODEL_KEY, BASIS_KEY, OPEN_KEY = "pf_model", "pf_basis", "pf_alleen_open"
 
 
-def _status(selectie: pd.DataFrame, keuze: pd.DataFrame) -> pd.DataFrame:
-    """Per (meetreeks_id, model_type): how many tails have a hand-set family (0, 1 or 2)."""
-    if selectie.empty:
-        return pd.DataFrame(columns=["meetreeks_id", "model_type", "gekozen"])
-    fam = results.effective_family(selectie, keuze)
-    return (fam.assign(gekozen=fam["family_source"].eq(results.GEKOZEN))
-            .groupby(["meetreeks_id", "model_type"])["gekozen"].sum().astype(int).reset_index())
+def _status(keuze: pd.DataFrame) -> pd.DataFrame:
+    """Per (meetreeks_id, model_type): how many tails have a picked family (0, 1 or 2)."""
+    gekozen = keuze[keuze["family"].fillna("") != ""].drop_duplicates(["meetreeks_id", "model_type", "tail"])
+    return gekozen.groupby(["meetreeks_id", "model_type"]).size().rename("gekozen").reset_index()
 
 
 def _stap(opties: list[str], delta: int) -> None:
@@ -61,13 +58,12 @@ def render() -> None:
                                  format_func=bron.BASIS_LABEL.get) or VALIDATED
 
     metrics = _lees(basis, "fit_metrics")
-    selectie = _lees(basis, "evt_selection").data
     if metrics.data.empty:
         st.info(f"Nog geen modellen voor **{bron.BASIS_LABEL[basis]}** · {_herkomst(metrics)}.")
         return
     tabel = metrics.data[metrics.data["success"].astype(str).str.lower().eq("true")]
     tabel = tabel.merge(_namen(), on="meetreeks_id", how="left")
-    tabel = tabel.merge(_status(selectie, _keuze(basis)), on=["meetreeks_id", "model_type"], how="left")
+    tabel = tabel.merge(_status(_keuze(basis)), on=["meetreeks_id", "model_type"], how="left")
     tabel["gekozen"] = tabel["gekozen"].fillna(0).astype(int)
     tabel = tabel.assign(_sort=tabel["code"].fillna(tabel["series_name"])).sort_values(
         ["_sort", "model_type"], ignore_index=True)
@@ -75,9 +71,6 @@ def render() -> None:
     klaar = int((tabel["gekozen"] == 2).sum())
     st.progress(klaar / len(tabel), text=f"{klaar} van {len(tabel)} modellen met een gekozen familie voor "
                                          f"beide staarten · {bron.prefix(basis)}_* · {_herkomst(metrics)}")
-    if selectie.empty:
-        st.warning("Geen extremenanalyse (`evt_selection`) voor deze basis: draai `run_extremes.py` en "
-                   "`export_results.py` met dezelfde `data_basis`. Kiezen kan pas daarna.")
 
     alleen_open = st.toggle("Alleen modellen zonder volledige keuze", key=OPEN_KEY)
     zicht = tabel[tabel["gekozen"] < 2] if alleen_open else tabel
@@ -128,7 +121,8 @@ def render() -> None:
 
     st.markdown("#### Familie per staart")
     levels = _lees(basis, "return_levels", rij.meetreeks_id).data
-    if selectie.empty or levels.empty:
-        st.info("Nog geen herhalingstijden voor dit model.")
+    if levels.empty:
+        st.info("Nog geen herhalingstijden voor dit model: draai `run_extremes.py` en `export_results.py` met "
+                "dezelfde `data_basis`.")
         return
-    _familiekeuze(basis, rij, selectie, levels[levels["model_type"] == rij.model_type])
+    _familiekeuze(basis, rij, levels[levels["model_type"] == rij.model_type])

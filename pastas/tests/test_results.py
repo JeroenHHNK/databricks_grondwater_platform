@@ -36,13 +36,7 @@ def test_latest_rows_keeps_the_last_run_per_series():
     assert sorted(zip(out["meetreeks_id"], out["r2"])) == [("a", 0.8), ("b", 0.7)]
 
 
-def selection():
-    return pd.DataFrame({
-        "meetreeks_id": ["a", "a", "b"], "model_type": "tarso", "tail": ["dry", "wet", "wet"],
-        "chosen_family": ["gev", "exp", None], "verdict": ["weibull", "gumbel", "degenerate"]})
-
-
-def test_a_pick_wins_and_removing_it_goes_back_to_automatic(tmp_path):
+def test_only_a_pick_gives_levels_and_removing_it_leaves_none(tmp_path):
     choice = results.read_family_choice(tmp_path / "none.csv")
     assert choice.empty and list(choice.columns) == results.FAMILY_CHOICE_COLUMNS
     choice = results.set_family_choice(choice, meetreeks_id="a", series_name="s", model_type="tarso",
@@ -56,19 +50,14 @@ def test_a_pick_wins_and_removing_it_goes_back_to_automatic(tmp_path):
     results.write_family_choice(path, choice)
     choice = results.read_family_choice(path)
 
-    fam = results.effective_family(selection(), choice).set_index(["meetreeks_id", "tail"])
-    assert fam.loc[("a", "wet"), ["family", "family_source"]].tolist() == ["gev", results.GEKOZEN]
-    assert fam.loc[("a", "dry"), ["family", "family_source"]].tolist() == ["gev", results.AUTOMATISCH]
-    assert pd.isna(fam.loc[("b", "wet"), "family"])          # degenerate: no family
-
-    levels = pd.DataFrame({"meetreeks_id": "a", "model_type": "tarso", "tail": ["wet"] * 4,
-                           "family": ["gev", "exp", "gpd", "emp"], "return_period": 10,
-                           "level": [1.0, 2.0, 3.0, 4.0]})
-    assert results.chosen_levels(levels, selection(), choice)["level"].tolist() == [1.0]
+    levels = pd.DataFrame({"meetreeks_id": "a", "model_type": "tarso", "tail": ["wet"] * 4 + ["dry"],
+                           "family": ["gev", "exp", "gpd", "emp", "gev"], "return_period": 10,
+                           "level": [1.0, 2.0, 3.0, 4.0, 5.0]})
+    assert results.chosen_levels(levels, choice)["level"].tolist() == [1.0]   # dry: no pick, no level
 
     choice = results.set_family_choice(choice, meetreeks_id="a", series_name="s", model_type="tarso",
                                        tail="wet", family=None)
-    assert results.chosen_levels(levels, selection(), choice)["level"].tolist() == [2.0]   # automatic: exp
+    assert results.chosen_levels(levels, choice).empty                         # no automatic fallback
     with pytest.raises(ValueError):
         results.set_family_choice(choice, meetreeks_id="a", series_name="s", model_type="tarso",
                                   tail="wet", family="normal")
