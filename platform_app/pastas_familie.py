@@ -42,12 +42,12 @@ def _status(keuze: pd.DataFrame) -> pd.DataFrame:
 def overzicht(tabel: pd.DataFrame, keuze: pd.DataFrame) -> pd.DataFrame:
     """One row per model: the family, note and who picked it, per tail, and how far it is.
 
-    `tabel` is the models (meetreeks_id, model_type, series_name, code, cs_naam), `keuze`
+    `tabel` is the models (meetreeks_id, model_type, series_name, profielnaam, code, cs_naam), `keuze`
     the family_choice file. A tail without a pick shows "–".
     """
     keys = ["meetreeks_id", "model_type"]
     gekozen = keuze[keuze["family"].fillna("") != ""].drop_duplicates([*keys, "tail"], keep="last")
-    uit = tabel[[*keys, "series_name", *[c for c in ("code", "cs_naam") if c in tabel]]].copy()
+    uit = tabel[[*keys, "series_name", *[c for c in ("profielnaam", "code", "cs_naam") if c in tabel]]].copy()
     for staart, naam in (("dry", "droog"), ("wet", "nat")):
         deel = gekozen[gekozen["tail"] == staart][[*keys, "family", "n_kept", "note", "chosen_by",
                                                     "chosen_at"]].rename(
@@ -83,14 +83,14 @@ def _overzichtstabel(zicht: pd.DataFrame, keuze: pd.DataFrame, basis: str) -> No
     titel = (f"Overzicht · {telling.get('klaar', 0)} klaar, {telling.get('half', 0)} half, "
              f"{telling.get('open', 0)} open")
     with st.expander(titel, expanded=True):
-        kolommen = [c for c in ("status", "code", "cs_naam", "series_name", "droog", "drempel droog", "nat",
+        kolommen = [c for c in ("status", "profielnaam", "code", "cs_naam", "series_name", "droog", "drempel droog", "nat",
                                 "drempel nat", "notitie droog",
                                 "notitie nat", "door droog", "door nat", "op droog", "op nat") if c in tab]
         st.dataframe(tab[kolommen], hide_index=True, width="stretch", height=min(38 + 35 * len(tab), 330),
                      on_select=_naar_rij, selection_mode="single-row", key=TABEL_KEY, column_config={
                          "status": st.column_config.TextColumn("status", help="klaar: beide staarten gekozen, "
                                                                "half: één, open: geen"),
-                         "cs_naam": "locatie"})
+                         "cs_naam": "locatie", "profielnaam": "dwarsprofiel"})
         st.caption("Klik een rij om naar dat model te gaan.")
         st.download_button("Download als CSV", tab.to_csv(index=False).encode("utf-8"),
                            file_name=f"{bron.prefix(basis)}_familiekeuze_overzicht.csv", mime="text/csv")
@@ -126,7 +126,8 @@ def render() -> None:
     tabel = tabel.merge(_namen(), on="meetreeks_id", how="left")
     tabel = tabel.merge(_status(_keuze(basis)), on=["meetreeks_id", "model_type"], how="left")
     tabel["gekozen"] = tabel["gekozen"].fillna(0).astype(int)
-    tabel = tabel.assign(_sort=tabel["code"].fillna(tabel["series_name"])).sort_values(
+    tabel = tabel.assign(_sort=tabel.get("profielnaam", pd.Series(index=tabel.index, dtype=object))
+                         .fillna(tabel["code"]).fillna(tabel["series_name"])).sort_values(
         ["_sort", "model_type"], ignore_index=True)
 
     klaar = int((tabel["gekozen"] == 2).sum())

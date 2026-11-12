@@ -62,6 +62,22 @@ def test_catalogus_links_wells_to_series_and_zones():
     assert data.zones_in(cat) == ["BUKR", "BIKR"]
 
 
+@pytest.mark.parametrize("profiel, code, naam", [
+    ("BE_0072", "B_BE0072+3_BUKR_GMW_PB1_F-385", "BE_0072_BUKR_PB1"),
+    ("BE_0072", "B_BE0072+3_BIT_GMW_PB2_F-769", "BE_0072_BIT_PB2"),
+    ("BE_0188", "B_BE0188+23_KR_GMW_PB1_F-547", "BE_0188_KR_PB1"),
+    (None, "B_BE0072+3_BUKR_GMW_PB1_F-385", None),
+])
+def test_profielnaam(profiel, code, naam):
+    assert data.profielnaam(profiel, code) == naam
+
+
+def test_profielnamen_give_each_series_its_cross_section():
+    namen = data.profielnamen(data.catalogus(_bron(), _config())).set_index("meetreeks_id")
+    assert set(namen.index) == {"r1", "r2"}
+    assert "_BIKR" in namen.loc["r1", "profielnaam"]
+
+
 def test_samenvatting_and_breed():
     b = _bron()
     cat = data.catalogus(b, _config()).dropna(subset=["meetreeks_id"])

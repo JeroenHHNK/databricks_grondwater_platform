@@ -50,16 +50,42 @@ def _keuze(basis: str) -> DataFrame:
     return bron.lees_keuze(basis)
 
 
+@st.cache_data(ttl=600, show_spinner=False)
+def _profielen(_versie: float) -> DataFrame:
+    """meetreeks_id -> dwarsprofiel and profielnaam (BE_0072_BUKR_PB1), the way the cross
+    sections link wells to series. The session's heads when they are loaded, else the export."""
+    from modules import databricks_reeksen
+
+    from . import bron as bron_module
+    from .stijghoogtes_data import profielnamen_uit_reeksen
+
+    if bron_module.SESSIE_BRON in st.session_state:
+        reeksen = st.session_state[bron_module.SESSIE_BRON].reeksen
+    elif databricks_reeksen.export_beschikbaar():
+        reeksen = databricks_reeksen.lees_reeksen()
+    else:
+        reeksen = bron_module.bron().reeksen
+    return profielnamen_uit_reeksen(reeksen)
+
+
 def _namen() -> DataFrame:
-    """meetreeks_id -> code and location name, from the data validation export."""
+    """meetreeks_id -> code, location name and cross section."""
     meta = common.object_data()
-    return meta[["meetreeks_id", "code", "cs_naam", "vendor", "filename"]].drop_duplicates("meetreeks_id")
+    namen = meta[["meetreeks_id", "code", "cs_naam", "vendor", "filename"]].drop_duplicates("meetreeks_id")
+    try:
+        from modules import paths
+
+        profielen = _profielen(paths.config_csv().stat().st_mtime)
+    except Exception:  # noqa: BLE001 - without the cross sections the table still works
+        return namen
+    return namen.merge(profielen[["meetreeks_id", "dwarsprofiel", "profielnaam"]], on="meetreeks_id", how="left")
 
 
 def _label(rij) -> str:
     naam = rij.cs_naam if isinstance(getattr(rij, "cs_naam", None), str) else ""
     code = rij.code if isinstance(getattr(rij, "code", None), str) else rij.series_name
-    return " · ".join(d for d in (code, naam, rij.model_type) if d)
+    profiel = rij.profielnaam if isinstance(getattr(rij, "profielnaam", None), str) else ""
+    return " · ".join(d for d in (profiel, code, naam, rij.model_type) if d)
 
 
 def _kies_basis(key: str) -> str:
@@ -342,16 +368,19 @@ def render_modellen() -> None:
     gevraagd = st.query_params.get(MODEL_PARAM)
     gevraagd = next((k for k in labels if k.startswith(f"{gevraagd}|")), None) if gevraagd else None
     sleutel = st.selectbox("Zoek een model", list(labels), index=list(labels).index(gevraagd) if gevraagd else None,
-                           format_func=labels.get, placeholder="code, locatienaam of series_…")
+                           format_func=labels.get, placeholder="dwarsprofiel (BE_0072…), code, locatienaam of series_…")
 
-    kolommen = [c for c in ("code", "cs_naam", "model_type", "success", "evp", "r2", "rmse", "nobs", "checks_ok",
+    kolommen = [c for c in ("profielnaam", "code", "cs_naam", "model_type", "success", "evp", "r2", "rmse", "nobs", "checks_ok",
                             "checks", "familie_dry", "familie_wet", "series_name") if c in tabel]
     gekozen = st.dataframe(tabel[kolommen], hide_index=True, width="stretch", height=320, on_select="rerun",
                            selection_mode="single-row", key=f"pa_tabel_{basis}", column_config={
                                "evp": st.column_config.NumberColumn("EVP %", format="%.1f"),
                                "r2": st.column_config.NumberColumn("R²", format="%.3f"),
                                "rmse": st.column_config.NumberColumn("RMSE", format="%.3f"),
-                               "familie_dry": "familie droog", "familie_wet": "familie nat"})
+                               "familie_dry": "familie droog", "familie_wet": "familie nat",
+                               "profielnaam": st.column_config.TextColumn(
+                                   "dwarsprofiel", help="Dwarsprofiel, zone en filter van de peilbuis "
+                                   "(zoals in de Boxplots)")})
     rijen = gekozen.selection.rows if gekozen and gekozen.selection else []
     if rijen:
         r = tabel.iloc[rijen[0]]
@@ -396,8 +425,10 @@ def render_vergelijken() -> None:
         if a in naast and b in naast:
             naast[f"Δ T{T} {staart}"] = naast[a] - naast[b]
 
-    naast = naast.merge(_namen()[["meetreeks_id", "code", "cs_naam"]], on="meetreeks_id", how="left")
-    voor = ["code", "cs_naam", "model_type"]
+    namen = _namen()
+    naast = naast.merge(namen[[c for c in ("meetreeks_id", "profielnaam", "code", "cs_naam") if c in namen]],
+                        on="meetreeks_id", how="left")
+    voor = [c for c in ("profielnaam", "code", "cs_naam", "model_type") if c in naast]
     naast = naast[[*voor, *[c for c in naast if c not in voor and c != "meetreeks_id"], "meetreeks_id"]]
     st.metric("Reeksen met beide modellen", len(naast))
     st.dataframe(naast, hide_index=True, width="stretch", column_config={
