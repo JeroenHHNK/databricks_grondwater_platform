@@ -21,18 +21,73 @@ from __future__ import annotations
 import pandas as pd
 import streamlit as st
 
+from tarso_pipeline import results
 from tarso_pipeline.paths import DATA_BASES, VALIDATED
 
 from . import pastas_bron as bron
 from .pastas_pagina import _familiekeuze, _herkomst, _keuze, _label, _lees, _namen
 
 MODEL_KEY, BASIS_KEY, OPEN_KEY = "pf_model", "pf_basis", "pf_alleen_open"
+TABEL_KEY, TABEL_SLEUTELS = "pf_overzicht", "pf_overzicht_sleutels"
+STATUS = {0: "open", 1: "half", 2: "klaar"}
 
 
 def _status(keuze: pd.DataFrame) -> pd.DataFrame:
     """Per (meetreeks_id, model_type): how many tails have a picked family (0, 1 or 2)."""
     gekozen = keuze[keuze["family"].fillna("") != ""].drop_duplicates(["meetreeks_id", "model_type", "tail"])
     return gekozen.groupby(["meetreeks_id", "model_type"]).size().rename("gekozen").reset_index()
+
+
+def overzicht(tabel: pd.DataFrame, keuze: pd.DataFrame) -> pd.DataFrame:
+    """One row per model: the family, note and who picked it, per tail, and how far it is.
+
+    `tabel` is the models (meetreeks_id, model_type, series_name, code, cs_naam), `keuze`
+    the family_choice file. A tail without a pick shows "–".
+    """
+    keys = ["meetreeks_id", "model_type"]
+    gekozen = keuze[keuze["family"].fillna("") != ""].drop_duplicates([*keys, "tail"], keep="last")
+    uit = tabel[[*keys, "series_name", *[c for c in ("code", "cs_naam") if c in tabel]]].copy()
+    for staart, naam in (("dry", "droog"), ("wet", "nat")):
+        deel = gekozen[gekozen["tail"] == staart][[*keys, "family", "note", "chosen_by", "chosen_at"]].rename(
+            columns={"family": naam, "note": f"notitie {naam}", "chosen_by": f"door {naam}",
+                     "chosen_at": f"op {naam}"})
+        uit = uit.merge(deel, on=keys, how="left")
+    n = uit[["droog", "nat"]].notna().sum(axis=1)
+    uit.insert(0, "status", n.map(STATUS))
+    for naam in ("droog", "nat"):
+        uit[naam] = uit[naam].map(results.FAMILY_LABELS).fillna("–")
+        uit[f"notitie {naam}"] = uit[f"notitie {naam}"].fillna("")
+        uit[f"door {naam}"] = uit[f"door {naam}"].fillna("")
+        uit[f"op {naam}"] = uit[f"op {naam}"].fillna("").str[:16].str.replace("T", " ")
+    return uit
+
+
+def _naar_rij() -> None:
+    """on_select of the overview: jump to the model of the clicked row."""
+    keuze = st.session_state.get(TABEL_KEY)
+    rijen = keuze.selection.rows if keuze is not None and keuze.selection else []
+    sleutels = st.session_state.get(TABEL_SLEUTELS, [])
+    if rijen and rijen[0] < len(sleutels):
+        st.session_state[MODEL_KEY] = sleutels[rijen[0]]
+
+
+def _overzichtstabel(zicht: pd.DataFrame, keuze: pd.DataFrame, basis: str) -> None:
+    tab = overzicht(zicht, keuze)
+    st.session_state[TABEL_SLEUTELS] = [f"{r.meetreeks_id}|{r.model_type}" for r in tab.itertuples()]
+    telling = tab["status"].value_counts()
+    titel = (f"Overzicht · {telling.get('klaar', 0)} klaar, {telling.get('half', 0)} half, "
+             f"{telling.get('open', 0)} open")
+    with st.expander(titel, expanded=True):
+        kolommen = [c for c in ("status", "code", "cs_naam", "series_name", "droog", "nat", "notitie droog",
+                                "notitie nat", "door droog", "door nat", "op droog", "op nat") if c in tab]
+        st.dataframe(tab[kolommen], hide_index=True, width="stretch", height=min(38 + 35 * len(tab), 330),
+                     on_select=_naar_rij, selection_mode="single-row", key=TABEL_KEY, column_config={
+                         "status": st.column_config.TextColumn("status", help="klaar: beide staarten gekozen, "
+                                                               "half: één, open: geen"),
+                         "cs_naam": "locatie"})
+        st.caption("Klik een rij om naar dat model te gaan.")
+        st.download_button("Download als CSV", tab.to_csv(index=False).encode("utf-8"),
+                           file_name=f"{bron.prefix(basis)}_familiekeuze_overzicht.csv", mime="text/csv")
 
 
 def _stap(opties: list[str], delta: int) -> None:
@@ -77,6 +132,7 @@ def render() -> None:
     if zicht.empty:
         st.success("Alle modellen hebben voor beide staarten een gekozen familie.")
         return
+    _overzichtstabel(zicht, _keuze(basis), basis)
     sleutels = [f"{r.meetreeks_id}|{r.model_type}" for r in zicht.itertuples()]
     teken = {0: "○○", 1: "●○", 2: "●●"}
     labels = {f"{r.meetreeks_id}|{r.model_type}": f"{teken[r.gekozen]}  {_label(r)}" for r in zicht.itertuples()}
