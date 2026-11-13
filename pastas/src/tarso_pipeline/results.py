@@ -163,7 +163,9 @@ def latest_plots(basis_volume_dir: str | Path, kinds=None) -> dict[tuple[str, st
             key = (path.name[: -len(suffix)], kind)
             if key not in found or path.stat().st_mtime > found[key].stat().st_mtime:
                 found[key] = path
-    return found
+    # An old-style <series>_<kind>.png (Tarso) is superseded once <series>_tarso_<kind>.png exists.
+    return {(stem, kind): path for (stem, kind), path in found.items()
+            if (f"{stem}_tarso", kind) not in found}
 
 
 def sync_plots(basis_volume_dir: str | Path, target: str | Path, kinds=None) -> dict[str, int]:

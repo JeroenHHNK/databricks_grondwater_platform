@@ -164,6 +164,17 @@ def test_the_plots_are_kept_per_model_type(tmp_path):
     assert found[("series_a_tarso", "diagnostics")] == diagnostics
 
 
+def test_an_old_tarso_plot_is_superseded_by_one_with_the_model_type(tmp_path):
+    from tarso_pipeline.results import latest_plots
+
+    _png(tmp_path / "run_1" / "return_plots_fitted" / "series_a_return_periods.png", b"old", 1000)
+    _png(tmp_path / "run_1" / "return_plots_fitted" / "series_b_return_periods.png", b"only", 1000)
+    new = _png(tmp_path / "run_2" / "return_plots_fitted" / "series_a_tarso_return_periods.png", b"new", 2000)
+    found = latest_plots(tmp_path)
+    assert found[("series_a_tarso", "return_periods")] == new
+    assert ("series_a", "return_periods") not in found and ("series_b", "return_periods") in found
+
+
 def test_find_plot_falls_back_to_the_old_tarso_name(tmp_path):
     from tarso_pipeline.results import find_plot, plots_dir
 
