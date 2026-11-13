@@ -168,18 +168,21 @@ def latest_plots(basis_volume_dir: str | Path, kinds=None) -> dict[tuple[str, st
             if (f"{stem}_tarso", kind) not in found}
 
 
-def sync_plots(basis_volume_dir: str | Path, target: str | Path, kinds=None) -> dict[str, int]:
+def sync_plots(basis_volume_dir: str | Path, target: str | Path, kinds=None, stems=None) -> dict[str, int]:
     """Mirror :func:`latest_plots` into ``target``: one PNG per model and kind.
 
     A file whose bytes did not change is left alone (no churn in git); a PNG in
     ``target`` that no run folder has any more is removed. Only the ``kinds`` synced
-    are touched: leaving a kind out keeps its files as they are. Returns the counts.
+    are touched: leaving a kind out keeps its files as they are. ``stems`` (a set of
+    ``<series_name>_<model_type>``, ``model_plots.stems_in_use``) exports only those
+    models and removes the figures of the others. Returns the counts.
     """
     kinds = _check_kinds(kinds)
     target = Path(target)
     target.mkdir(parents=True, exist_ok=True)
     wanted = {f"{series}_{kind}.png": source
-              for (series, kind), source in latest_plots(basis_volume_dir, kinds).items()}
+              for (series, kind), source in latest_plots(basis_volume_dir, kinds).items()
+              if stems is None or series in stems}
     counts = {"copied": 0, "unchanged": 0, "removed": 0}
     for name, source in sorted(wanted.items()):
         dest = target / name

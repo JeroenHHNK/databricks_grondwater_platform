@@ -40,6 +40,8 @@ dbutils.widgets.text("volume_base",
 dbutils.widgets.dropdown("export_plots", "true", ["true", "false"], "Export the plots?")
 dbutils.widgets.text("plot_kinds", "return_periods,threshold,qq,confidence,results,diagnostics",
                      "Plot kinds (results/diagnostics: ~150 KB per model each)")
+dbutils.widgets.dropdown("plot_models", "in_use", ["in_use", "all"],
+                         "Plots of the models in use only, or of every model")
 
 # COMMAND ----------
 
@@ -78,6 +80,7 @@ MODEL_TYPES = [m.strip() for m in dbutils.widgets.get("model_types").split(",") 
 VOLUME_BASE = dbutils.widgets.get("volume_base").strip().rstrip("/")
 EXPORT_PLOTS = dbutils.widgets.get("export_plots") == "true"
 PLOT_KINDS = [k.strip() for k in dbutils.widgets.get("plot_kinds").split(",") if k.strip()]
+PLOT_MODELS = dbutils.widgets.get("plot_models")
 OUT = export_dir(ROOT, BASIS)
 OUT.mkdir(parents=True, exist_ok=True)
 print(f"basis {BASIS} -> {OUT}")
@@ -114,7 +117,22 @@ for kind, filename in EXPORT_FILES.items():
 
 if EXPORT_PLOTS:
     source = basis_volume(VOLUME_BASE, BASIS)
-    counts = sync_plots(source, plots_dir(ROOT, BASIS), kinds=PLOT_KINDS)
+    stems = None
+    if PLOT_MODELS == "in_use":
+        # The model per series: a person's pick (git), else the automatic one, else Tarso.
+        from tarso_pipeline.model_plots import stems_in_use
+        from tarso_pipeline.selection import model_choice_path, model_in_use, read_model_choice
+
+        metrics_table = output_table(BASIS, "fit_metrics", CATALOG, SCHEMA)
+        selection_table = output_table(BASIS, "model_selection", CATALOG, SCHEMA)
+        names = spark.sql(f"SELECT DISTINCT meetreeks_id, series_name FROM {metrics_table}").toPandas()
+        selection = (spark.sql(latest_run_sql(selection_table, keys=("meetreeks_id",))).toPandas()
+                     if spark.catalog.tableExists(selection_table) else pd.DataFrame())
+        in_use = model_in_use(selection, read_model_choice(model_choice_path(ROOT, BASIS)),
+                              series=names["meetreeks_id"])
+        stems = stems_in_use(in_use, names)
+        print(f"plots of the {len(in_use)} model(s) in use only")
+    counts = sync_plots(source, plots_dir(ROOT, BASIS), kinds=PLOT_KINDS, stems=stems)
     print(f"plots from {source}/*/ -> {plots_dir(ROOT, BASIS)}: "
           f"{counts['copied']} copied, {counts['unchanged']} unchanged, {counts['removed']} removed")
     if not any(counts.values()):

@@ -171,6 +171,7 @@ Each notebook has one job. Only two are job tasks; the other two are run by hand
 | `transformation/fit_pastas_models.py` | clean, fit, save `.pas`, record metrics, run the model checks | **task 2** | `<prefix>_fit_metrics`, `<prefix>_model_checks`, `<prefix>_simulations`, `.pas` files |
 | `transformation/run_extremes.py` | synthetic extremes per model; empirical levels, GPD/exp per threshold, GEV for comparison; return-period and threshold plots; then which model each series uses | by hand | `<prefix>_evt_selection`, `<prefix>_extremes_summary`, `<prefix>_return_levels`, `<prefix>_model_selection` |
 | `analysis/explore_shape_and_uncertainty.py` | optional, after `run_extremes`: bootstrap shape SE vs the Hessian one (`families_agree`), 95% band per return level, `confidence_plots/` | optional task | `<prefix>_shape_uncertainty`, `<prefix>_return_level_ci` |
+| `analysis/plot_models_in_use.py` | after a model pick in the app: the missing figures of the models in use, optionally removing the figures of the others | no | PNGs in the run folder |
 | `analysis/inspect_results.py` | did it work, are the fits any good, the model types side by side | no | nothing |
 | `analysis/export_results.py` | the latest run per series, into `results_export/` for the app (until it reads live), plus the newest extremes plots per model | no | CSVs / parquet / `plots/*.png` in the Git folder |
 | `analysis/load_family_choice.py` | the families and models picked in the app (`family_choice/`, `model_choice/`) into Delta | no | `<prefix>_family_choice`, `<prefix>_model_choice`, views `<prefix>_return_levels_chosen`, `<prefix>_model_in_use` |
@@ -203,6 +204,8 @@ extremes, FlexModel fitted worse, Peterson won AIC but predicted unseen data wor
 2. **no runaway**: a T=100 level more than 1.5 m beyond the observed range rules a model out;
 3. among the passed models (else all), not more than 0.05 below Tarso on `r2_holdout`, the
    **lowest AIC**; a model with fewer parameters within 2 AIC wins.
+
+**Figures only for the model in use.** With five fits per series, drawing everything would put five `ml.plots.results()`, diagnostics, return-period, threshold and QQ figures per series in the run folder. So `fit_pastas_models` draws none (`save_plots=false`) and `run_extremes` (`make_plots=in_use`) draws them after the selection, for the model each series uses, from the `.pas` and the pooled extremes (`tarso_pipeline.model_plots`). `export_results` (`plot_models=in_use`) copies only those to git and removes the others. `make_plots=all` / `plot_models=all` restore the old behaviour.
 
 A person can overrule the pick per series in the app (*Pastas → Modellen →
 Modelvergelijking en keuze*, saved to `model_choice/<prefix>_model_choice.csv`). The Boxplots

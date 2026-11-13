@@ -109,7 +109,8 @@ dbutils.widgets.dropdown("select_models", "true", ["true", "false"], "Write the 
 
 dbutils.widgets.text("kept_grid", "100 150 200 250 300 350 400",
                      "Years above the threshold to scan (n_kept)")
-dbutils.widgets.dropdown("make_plots", "true", ["true", "false"], "Make plots?")
+dbutils.widgets.dropdown("make_plots", "in_use", ["in_use", "all", "none"],
+                         "Plots: only the models in use, all, or none")
 dbutils.widgets.dropdown("write_tables", "true", ["true", "false"], "Write Delta tables?")
 dbutils.widgets.text("output_catalog", "waterkeringbeheer_prd", "Output catalog")
 dbutils.widgets.text("output_schema", "jvanruitenbeek", "Output schema")
@@ -188,7 +189,10 @@ MODEL_TYPES = [m.strip() for m in dbutils.widgets.get("model_types").split(",") 
 SELECT_MODELS = dbutils.widgets.get("select_models") == "true"
 
 KEPT_GRID = tuple(int(k) for k in dbutils.widgets.get("kept_grid").split())
-MAKE_PLOTS = dbutils.widgets.get("make_plots") == "true"
+PLOT_MODE = dbutils.widgets.get("make_plots")
+# "in_use": nothing per model in the loop; after the selection, every figure (fit and
+# extremes) of the model each series uses (tarso_pipeline.model_plots).
+MAKE_PLOTS = PLOT_MODE == "all"
 WRITE_TABLES = dbutils.widgets.get("write_tables") == "true"
 CATALOG = dbutils.widgets.get("output_catalog").strip()
 SCHEMA = dbutils.widgets.get("output_schema").strip()
@@ -420,6 +424,35 @@ else:
                                schema=selection_schema())
          .write.format("delta").mode("append").option("mergeSchema", "true").saveAsTable(MODEL_SELECTION_TABLE))
         print(f"appended {len(selection_models)} rows to {MODEL_SELECTION_TABLE}")
+
+# COMMAND ----------
+
+# MAGIC %md
+# MAGIC ## The figures of the models in use
+# MAGIC
+# MAGIC With `make_plots=in_use` (the default) the loop above drew nothing; here every figure
+# MAGIC (`ml.plots.results()`, diagnostics, return periods, threshold, QQ) is drawn for the one
+# MAGIC model per series that is used: a person's pick (`pastas/model_choice/`) or the
+# MAGIC automatic one, else Tarso. A model picked later in the app gets its figures from
+# MAGIC `analysis/plot_models_in_use.py`.
+
+# COMMAND ----------
+
+from pathlib import Path  # noqa: E402
+
+from tarso_pipeline.model_plots import plot_models  # noqa: E402
+from tarso_pipeline.selection import model_choice_path, model_in_use, read_model_choice  # noqa: E402
+
+if PLOT_MODE != "in_use":
+    print(f"make_plots={PLOT_MODE}; nothing more to draw")
+else:
+    in_use = model_in_use(selection_models, read_model_choice(model_choice_path(Path(SRC).parent, BASIS)),
+                          series=models["meetreeks_id"])
+    to_plot = in_use.merge(models[["meetreeks_id", "series_name", "model_type"]].drop_duplicates(),
+                           on=["meetreeks_id", "model_type"])
+    drawn = plot_models(RUN_DIR, to_plot, exclude_first=EXCLUDE_FIRST, t_list=T_LIST, kept_grid=KEPT_GRID)
+    print(f"figures for {len(drawn)} model(s) in use: {drawn['status'].value_counts().to_dict()}")
+    display(drawn[drawn["status"] != "ok"] if (drawn["status"] != "ok").any() else drawn.head())
 
 # COMMAND ----------
 

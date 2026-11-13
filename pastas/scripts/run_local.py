@@ -44,7 +44,8 @@ from tarso_pipeline.evt_report import RETURN_LEVEL_COLUMNS, VALUE_COLUMN  # noqa
 from tarso_pipeline.extremes_run import fit_pooled, run_model  # noqa: E402
 from tarso_pipeline.fit import DEFAULT_MODEL_TYPES, MODEL_TYPES, fit_series  # noqa: E402
 from tarso_pipeline.extremes_run import model_stem  # noqa: E402
-from tarso_pipeline.selection import select_models  # noqa: E402
+from tarso_pipeline.model_plots import plot_models, stems_in_use  # noqa: E402
+from tarso_pipeline.selection import model_choice_path, model_in_use, read_model_choice, select_models  # noqa: E402
 from tarso_pipeline.forcing import forcing_file, load_forcing_pair  # noqa: E402
 from tarso_pipeline.paths import (  # noqa: E402
     EVT_SELECTION_FILE,
@@ -92,7 +93,7 @@ def fit_all(heads: dict, run_directory: Path, run_id: str, args) -> tuple[pd.Dat
                 meetreeks_id=meetreeks_id, series_name=series_name, raw=raw,
                 precipitation=precipitation, evaporation=evaporation, run_id=run_id, model_type=model_type,
                 run_directory=str(run_directory), min_days=args.min_days, min_obs=100, warmup_days=3650,
-                forcing_station=str(args.station), forcing_units="m", save_plot=True,
+                forcing_station=str(args.station), forcing_units="m", save_plot=args.plots == "all",
                 noise=args.noise, holdout=args.holdout,
                 check_rows=check_rows, simulation_frames=simulations,
             )
@@ -126,7 +127,7 @@ def _extremes_one(item: dict, run_directory: str, run_id: str, args_dict: dict):
         result = run_model(item["model_path"], item["meetreeks_id"], item["series_name"], members,
                            run_directory, run_id, exclude_first=args_dict["exclude_first"],
                            t_list=DEFAULT_T_LIST, kept_grid=DEFAULT_KEPT_GRID, forcing=forcing,
-                           model_type=item["model_type"])
+                           model_type=item["model_type"], make_plots=args_dict["plots"] == "all")
     else:
         pooled = {}
         for tail in ("dry", "wet"):
@@ -140,7 +141,8 @@ def _extremes_one(item: dict, run_directory: str, run_id: str, args_dict: dict):
         first = next(iter(pooled.values()))
         n_members = int(pd.concat(pooled.values())["member"].nunique()) if "member" in first else 16
         result = fit_pooled(pooled, item["meetreeks_id"], item["series_name"], run_directory, run_id,
-                            n_members, exclude_first=args_dict["exclude_first"], model_type=item["model_type"])
+                            n_members, exclude_first=args_dict["exclude_first"], model_type=item["model_type"],
+                            make_plots=args_dict["plots"] == "all")
     return result.summary, result.selection, result.levels
 
 
@@ -151,7 +153,7 @@ def extremes_all(fits: pd.DataFrame, run_directory: Path, run_id: str, args) -> 
     ok = fits[fits["success"].astype(bool)]
     items = ok[["model_path", "meetreeks_id", "series_name", "model_type"]].to_dict("records")
     args_dict = {"imprex_dir": args.imprex_dir, "pooled_dir": args.pooled_dir, "location": args.location,
-                 "exclude_first": args.exclude_first}
+                 "exclude_first": args.exclude_first, "plots": args.plots}
     print(f"  {len(items)} model(s), {args.workers} at a time")
     with ProcessPoolExecutor(max_workers=args.workers) as pool:
         futures = {pool.submit(_extremes_one, item, str(run_directory), run_id, args_dict): item for item in items}
@@ -192,6 +194,8 @@ def main() -> None:
     parser.add_argument("--noise", default="none", choices=["none", "ar1", "arma"])
     parser.add_argument("--holdout", type=float, default=0.3, help="share held out for r2_holdout (0 = off)")
     parser.add_argument("--workers", type=int, default=4, help="extremes runs in parallel")
+    parser.add_argument("--plots", default="in_use", choices=["in_use", "all", "none"],
+                        help="figures of the models in use only (default), of every model, or none")
     args = parser.parse_args()
     args.model_types = [m.strip() for m in args.model_types.split(",") if m.strip()]
     unknown = [m for m in args.model_types if m not in MODEL_TYPES]
@@ -225,6 +229,14 @@ def main() -> None:
           f" of {len(chosen)}")
     fits.to_csv(run_directory / "fit_metrics.csv", index=False)
 
+    in_use = model_in_use(tables["model_selection"], read_model_choice(model_choice_path(PASTAS, VALIDATED)),
+                          series=fits["meetreeks_id"])
+    if args.plots == "in_use":
+        ok = fits[fits["success"].astype(bool)][["meetreeks_id", "series_name", "model_type"]]
+        drawn = plot_models(str(run_directory), in_use.merge(ok, on=["meetreeks_id", "model_type"]),
+                            exclude_first=args.exclude_first)
+        print(f"figures of the models in use: {drawn['status'].value_counts().to_dict()}")
+
     if args.export:
         out = results.export_dir(PASTAS, VALIDATED)
         out.mkdir(parents=True, exist_ok=True)
@@ -236,7 +248,8 @@ def main() -> None:
             path = out / filename
             frame.to_parquet(path, index=False) if filename.endswith(".parquet") else frame.to_csv(path, index=False)
             print(f"  export: {kind} -> {path.relative_to(REPO).as_posix()} ({len(frame)} rows)")
-        counts = results.sync_plots(base, results.plots_dir(PASTAS, VALIDATED))
+        stems = None if args.plots == "all" else stems_in_use(in_use, fits[["meetreeks_id", "series_name"]])
+        counts = results.sync_plots(base, results.plots_dir(PASTAS, VALIDATED), stems=stems)
         print(f"  export: plots {counts}")
 
 

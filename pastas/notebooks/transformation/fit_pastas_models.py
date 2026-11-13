@@ -143,7 +143,8 @@ dbutils.widgets.text("min_obs", "100", "Minimum observations after cleaning")
 dbutils.widgets.text("min_days", "365", "Minimum span after cleaning")
 dbutils.widgets.text("run_id", "", "Run id (blank = UTC timestamp)")
 dbutils.widgets.dropdown("write_metrics", "true", ["true", "false"], "Write metrics?")
-dbutils.widgets.dropdown("save_plots", "true", ["true", "false"], "Save result plots?")
+dbutils.widgets.dropdown("save_plots", "false", ["true", "false"],
+                         "Fit plots for every model? (false: run_extremes draws the models in use)")
 
 # COMMAND ----------
 

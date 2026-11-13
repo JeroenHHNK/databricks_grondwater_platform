@@ -324,12 +324,15 @@ PLOT_TITELS = {
 }
 
 
+PLOTS_IN_GEBRUIK = ("De plots worden alleen gemaakt voor het model dat een reeks gebruikt; kies je dit model, "
+                    "draai dan `analysis/plot_models_in_use.py` en `export_results.py`.")
+
+
 def _extremenplots(basis: str, rij) -> None:
     """The figures run_extremes drew for this model, from the export in git."""
     plots = {k: bron.plot(basis, rij.series_name, k, rij.model_type) for k in PLOT_TITELS}
     if not any(plots.values()):
-        st.caption("Geen extremenplots in de export voor dit model (`export_results.py` kopieert ze uit de "
-                   "run-mappen naar `pastas/results_export/<prefix>/plots/`).")
+        st.caption("Geen extremenplots in de export voor dit model. " + PLOTS_IN_GEBRUIK)
         return
     hoofd = [k for k in ("return_periods", "threshold") if plots[k]] or [next(k for k, p in plots.items() if p)]
     for k in hoofd:
@@ -346,8 +349,7 @@ def _fitplots(basis: str, rij) -> None:
     resultaten = bron.plot(basis, rij.series_name, "results", rij.model_type)
     diagnostiek = bron.plot(basis, rij.series_name, "diagnostics", rij.model_type)
     if resultaten is None and diagnostiek is None:
-        st.caption("Geen ml.plots.results() in de export voor dit model (`export_results.py` met `results` in "
-                   "`plot_kinds`).")
+        st.caption("Geen ml.plots.results() in de export voor dit model. " + PLOTS_IN_GEBRUIK)
         return
     if resultaten is not None:
         st.image(str(resultaten), caption="ml.plots.results()")
