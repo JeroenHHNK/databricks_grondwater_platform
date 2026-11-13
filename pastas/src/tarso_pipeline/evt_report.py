@@ -141,7 +141,8 @@ DIAGNOSTIC_COLUMNS = ["run_id", "meetreeks_id", "series_name", "model_type", "ta
                       "threshold", "gpd_shape", "gpd_shape_se", "gev_shape"]
 
 
-def selection_rows(meetreeks_id: str, series_name: str, run_id: str, per_tail: dict) -> list[dict]:
+def selection_rows(meetreeks_id: str, series_name: str, run_id: str, per_tail: dict,
+                   model_type: str = "tarso") -> list[dict]:
     """One row per tail for ``evt_selection.csv``: diagnostics, no family choice."""
     rows = []
     for tail in TAILS:
@@ -153,7 +154,7 @@ def selection_rows(meetreeks_id: str, series_name: str, run_id: str, per_tail: d
         default = data["scan"][data["scan"]["n_kept"] == data["n_kept_default"]]
         rows.append({
             "run_id": run_id, "meetreeks_id": meetreeks_id, "series_name": series_name,
-            "model_type": "tarso", "tail": tail,
+            "model_type": model_type, "tail": tail,
             **data["diagnosis"],
             "review_flag": bool(data["diagnosis"]["flag"]),
             "exclude_first": data["exclude_first"], "n_kept": data["n_kept_default"],
@@ -166,7 +167,8 @@ def selection_rows(meetreeks_id: str, series_name: str, run_id: str, per_tail: d
 
 
 def tail_parameter_rows(
-    meetreeks_id: str, series_name: str, run_id: str, per_tail: dict
+    meetreeks_id: str, series_name: str, run_id: str, per_tail: dict,
+    model_type: str = "tarso",
 ) -> list[dict]:
     """Three rows per tail: the fitted parameters the level table throws away."""
     rows = []
@@ -178,6 +180,7 @@ def tail_parameter_rows(
                 "run_id": run_id,
                 "meetreeks_id": meetreeks_id,
                 "series_name": series_name,
+                "model_type": model_type,
                 "tail": tail,
                 "family": family,
             }
@@ -243,13 +246,14 @@ def summary_row(
     status: str,
     exclude_first: int,
     t_list=DEFAULT_T_LIST,
+    model_type: str = "tarso",
 ) -> dict:
     """The run's report card: one row per model, the only place a partial shows."""
     row = {
         "run_id": run_id,
         "meetreeks_id": meetreeks_id,
         "series_name": series_name,
-        "model_type": "tarso",
+        "model_type": model_type,
         "status": status,
         "n_members": n_members,
         "n_failed_members": len(failures),

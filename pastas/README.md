@@ -169,11 +169,11 @@ Each notebook has one job. Only two are job tasks; the other two are run by hand
 | `exploration/explore_meting.py` | what is in the source, how many series are fit to model | no | nothing |
 | `ingestion/build_manifest.py` | select every series spanning >= `min_days` (365); quantify duplicate timestamps | **task 1** | `<prefix>_series_manifest` |
 | `transformation/fit_pastas_models.py` | clean, fit, save `.pas`, record metrics, run the model checks | **task 2** | `<prefix>_fit_metrics`, `<prefix>_model_checks`, `<prefix>_simulations`, `.pas` files |
-| `transformation/run_extremes.py` | synthetic extremes; empirical levels, GPD/exp per threshold, GEV for comparison; return-period and threshold plots | by hand | `<prefix>_evt_selection`, `<prefix>_extremes_summary`, `<prefix>_return_levels` |
+| `transformation/run_extremes.py` | synthetic extremes per model; empirical levels, GPD/exp per threshold, GEV for comparison; return-period and threshold plots; then which model each series uses | by hand | `<prefix>_evt_selection`, `<prefix>_extremes_summary`, `<prefix>_return_levels`, `<prefix>_model_selection` |
 | `analysis/explore_shape_and_uncertainty.py` | optional, after `run_extremes`: bootstrap shape SE vs the Hessian one (`families_agree`), 95% band per return level, `confidence_plots/` | optional task | `<prefix>_shape_uncertainty`, `<prefix>_return_level_ci` |
-| `analysis/inspect_results.py` | did it work, are the fits any good, Tarso vs baseline | no | nothing |
+| `analysis/inspect_results.py` | did it work, are the fits any good, the model types side by side | no | nothing |
 | `analysis/export_results.py` | the latest run per series, into `results_export/` for the app (until it reads live), plus the newest extremes plots per model | no | CSVs / parquet / `plots/*.png` in the Git folder |
-| `analysis/load_family_choice.py` | the families picked in the app (`family_choice/`) into Delta | no | `<prefix>_family_choice`, view `<prefix>_return_levels_chosen` |
+| `analysis/load_family_choice.py` | the families and models picked in the app (`family_choice/`, `model_choice/`) into Delta | no | `<prefix>_family_choice`, `<prefix>_model_choice`, views `<prefix>_return_levels_chosen`, `<prefix>_model_in_use` |
 
 Task 2 depends on task 1: it reads the manifest table task 1 writes.
 
@@ -181,6 +181,36 @@ As one job: `03_validated_to_delta -> build_manifest -> fit_pastas_models -> run
 export_results`, with `explore_shape_and_uncertainty` as an optional branch off
 `run_extremes`. Give every task the same `data_basis` and `run_folder`: the run folder
 defaults to today's date, so a job that crosses midnight would otherwise split.
+
+### Model types, and which one a series uses
+
+Every series is fitted with five model types (`tarso_pipeline.fit.MODEL_SPECS`): **Tarso**
+and **linear recharge** (`R = P - f E`) with an Exponential, Gamma, DoubleExponential or
+FourParam response (`linear_exp`, `linear_gamma`, `linear_dexp`, `linear_fourparam`). A grid
+test on the validated series (Tarso, Linear, Berendrecht, Peterson and FlexModel x four
+responses) left these: Berendrecht hit its parameter bounds on every series and ran away in the
+extremes, FlexModel fitted worse, Peterson won AIC but predicted unseen data worse
+(`peterson_gamma` can still be fitted). Each fit also gets `r2_holdout`: the R2 on the last
+30 % of the observations of a fit on the first 70 %.
+
+`run_extremes` runs the ensemble for every model, then picks one per series
+(`tarso_pipeline.selection`, `<prefix>_model_selection`):
+
+1. **the stamp `passed`**: R2 >= 0.7, response memory, gain and parameter bounds (Brakenhoff
+   2022). The runs test is reported (`pass_runs`) but does not count: without a noise model
+   daily residuals are always autocorrelated, and an AR(1) or ARMA(1,1) noise model did not
+   change that on the validated series (`noise` widget, off by default);
+2. **no runaway**: a T=100 level more than 1.5 m beyond the observed range rules a model out;
+3. among the passed models (else all), not more than 0.05 below Tarso on `r2_holdout`, the
+   **lowest AIC**; a model with fewer parameters within 2 AIC wins.
+
+A person can overrule the pick per series in the app (*Pastas → Modellen →
+Modelvergelijking en keuze*, saved to `model_choice/<prefix>_model_choice.csv`). The Boxplots
+draw the return levels of the model in use, in the family picked for that model.
+
+The fitted parameters of every model type share one column: `fit_metrics.parameters` is a JSON
+object `{name: value}` (`parameters_stderr` and `parameters_bounds` likewise), so a new model
+type needs no new columns; `n_param`, `t95_days` and `gain` are the comparable summaries.
 
 ### Return levels: what is used where
 
@@ -209,7 +239,8 @@ the pooled years.
 `--imprex-dir <folder with the IMPREX member CSVs>` it also runs the extremes, or with
 `--pooled-dir <a pooled_extremes folder>` it refits pooled extremes of an earlier run;
 `--export` writes the results to `results_export/valid_pastas/` for the app. Run folders go
-to `local_runs/` (git-ignored).
+to `local_runs/` (git-ignored). `--model-types`, `--noise` and `--holdout` as the fit notebook;
+`--workers` runs the extremes of that many models at once.
 
 ### Validated or unvalidated data (`data_basis`)
 

@@ -26,9 +26,9 @@ from tarso_pipeline.evt import EMPIRICAL_MAX_T
 from tarso_pipeline.paths import DATA_BASES, VALIDATED
 
 from . import pastas_bron as bron
-from .pastas_pagina import _familiekeuze, _herkomst, _keuze, _label, _lees, _namen
+from .pastas_pagina import _familiekeuze, _herkomst, _in_gebruik, _keuze, _label, _lees, _namen
 
-MODEL_KEY, BASIS_KEY, OPEN_KEY = "pf_model", "pf_basis", "pf_alleen_open"
+MODEL_KEY, BASIS_KEY, OPEN_KEY, GEBRUIKT_KEY = "pf_model", "pf_basis", "pf_alleen_open", "pf_gebruikt"
 TABEL_KEY, TABEL_SLEUTELS = "pf_overzicht", "pf_overzicht_sleutels"
 STATUS = {0: "open", 1: "half", 2: "klaar"}
 
@@ -104,7 +104,7 @@ def _stap(opties: list[str], delta: int) -> None:
 
 
 def _figuur(basis: str, rij, kind: str, onderschrift: str) -> bool:
-    pad = bron.plot(basis, rij.series_name, kind)
+    pad = bron.plot(basis, rij.series_name, kind, rij.model_type)
     if pad is None:
         return False
     st.image(str(pad), caption=onderschrift)
@@ -123,6 +123,11 @@ def render() -> None:
         st.info(f"Nog geen modellen voor **{bron.BASIS_LABEL[basis]}** · {_herkomst(metrics)}.")
         return
     tabel = metrics.data[metrics.data["success"].astype(str).str.lower().eq("true")]
+    if tabel.groupby("meetreeks_id")["model_type"].nunique().max() > 1 and st.toggle(
+            "Alleen het model in gebruik per reeks", value=True, key=GEBRUIKT_KEY,
+            help="Per reeks zijn meerdere modeltypen gefit; de Boxplots gebruiken de familie van het model in "
+                 "gebruik (Pastas → Modellen → Modelvergelijking)."):
+        tabel = tabel.merge(_in_gebruik(basis)[["meetreeks_id", "model_type"]], on=["meetreeks_id", "model_type"])
     tabel = tabel.merge(_namen(), on="meetreeks_id", how="left")
     tabel = tabel.merge(_status(_keuze(basis)), on=["meetreeks_id", "model_type"], how="left")
     tabel["gekozen"] = tabel["gekozen"].fillna(0).astype(int)
@@ -167,7 +172,7 @@ def render() -> None:
     if not _figuur(basis, rij, "results", "ml.plots.results()"):
         st.caption("Geen resultatenplot in de export: draai `export_results.py` (met `results` in `plot_kinds`) "
                    "en push `pastas/results_export/`.")
-    if bron.plot(basis, rij.series_name, "diagnostics"):
+    if bron.plot(basis, rij.series_name, "diagnostics", rij.model_type):
         with st.expander("Diagnostiek van de residuen (ml.plots.diagnostics())"):
             _figuur(basis, rij, "diagnostics", "ml.plots.diagnostics()")
 
@@ -178,7 +183,7 @@ def render() -> None:
     _figuur(basis, rij, "threshold", "Drempelkeuze: waar de GPD-vorm (boven) niet meer verandert, is de drempel "
                                      "hoog genoeg. Onder: het T=1000-niveau per drempel.")
     extra = [(k, t) for k, t in (("qq", "QQ-plot per familie"), ("confidence", "GPD en exponentieel met 95%-band"))
-             if bron.plot(basis, rij.series_name, k)]
+             if bron.plot(basis, rij.series_name, k, rij.model_type)]
     if extra:
         with st.expander("Meer: " + ", ".join(t for _, t in extra)):
             for k, t in extra:

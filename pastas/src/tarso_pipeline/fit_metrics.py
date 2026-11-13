@@ -52,6 +52,18 @@ FIT_METRICS_SCHEMA: dict[str, str] = {
     "t95_level0_days": "double",
     "t95_level1_days": "double",
     "t95_upper_regime_days": "double",
+    # Any model: days until 95 % of a recharge pulse has worked through (for Tarso
+    # the longer of its two levels), and the gain (m per m/day of recharge; Tarso: A0).
+    "t95_days": "double",
+    "gain": "double",
+    # model choice (tarso_pipeline.fit.MODEL_SPECS)
+    "recharge": "string",
+    "rfunc": "string",
+    "n_param": "int",
+    "noise_model": "string",
+    # R2 on the last holdout_share of the observations, of a fit on the rest (NULL: not run)
+    "r2_holdout": "double",
+    "holdout_share": "double",
     # what was actually fitted
     "n_raw_rows": "int",
     "n_missing_value": "int",
@@ -65,8 +77,12 @@ FIT_METRICS_SCHEMA: dict[str, str] = {
     "last_entry": "timestamp",
     "min_value": "double",
     "max_value": "double",
-    # provenance
+    # provenance. The parameters are JSON objects {name: value}, one key per parameter of
+    # whatever model it is, so every model type shares the column: parameters_json in SQL,
+    # json.loads in Python. stderr is NULL for a parameter that was not varied.
     "parameters": "string",
+    "parameters_stderr": "string",
+    "parameters_bounds": "string",
     "model_path": "string",
     "plot_path": "string",
     "diagnostics_path": "string",
@@ -135,11 +151,39 @@ def empty_row() -> dict:
     return {name: None for name in FIT_METRICS_SCHEMA}
 
 
+def _json(values) -> str:
+    return json.dumps({k: (None if v is None or pd.isna(v) else float(v)) for k, v in values.items()},
+                      sort_keys=True)
+
+
+def response_t95(model, cutoff: float = T95_CUTOFF) -> float | None:
+    """t95 of the (only) stress model's response, in days; for Tarso the longer level."""
+    name, sm = next(iter(model.stressmodels.items()))
+    p = model.parameters["optimal"]
+    if getattr(sm, "_name", None) == "TarsoModel":
+        t = tarso_t95(p, name=name, cutoff=cutoff)
+        return max(t["t95_level0_days"], t["t95_level1_days"])
+    return float(sm.rfunc.get_tmax(model.get_parameters(name), cutoff))
+
+
+def response_gain(model) -> float | None:
+    name, sm = next(iter(model.stressmodels.items()))
+    p = model.parameters["optimal"]
+    key = f"{name}_A0" if getattr(sm, "_name", None) == "TarsoModel" else f"{name}_A"
+    return float(p[key]) if key in p else None
+
+
 def extract_metrics(model, model_type: str = "tarso") -> dict:
     """Pull the fit report's contents out of a solved model, via the API."""
     import pastas as ps
 
     settings = getattr(model, "settings", {}) or {}
+    try:
+        from tarso_pipeline.fit import model_spec
+
+        spec = model_spec(model_type)
+    except ValueError:
+        spec = None
     row = {
         "model_type": model_type,
         "success": True,
@@ -164,17 +208,21 @@ def extract_metrics(model, model_type: str = "tarso") -> dict:
         # None means "simulation not interpolated onto the observations", which
         # is what the report prints as "Interp. No".
         "interp": bool(_safe(lambda: model.interpolate_simulation) or False),
-        "parameters": _safe(
-            lambda: json.dumps(
-                {k: (None if pd.isna(v) else float(v))
-                 for k, v in model.parameters["optimal"].items()},
-                sort_keys=True,
-            )
-        ),
+        "parameters": _safe(lambda: _json(model.parameters["optimal"])),
+        "parameters_stderr": _safe(lambda: _json(model.parameters["stderr"].where(model.parameters["vary"]))),
+        "parameters_bounds": _safe(lambda: json.dumps(
+            {k: [None if pd.isna(lo) else float(lo), None if pd.isna(hi) else float(hi)]
+             for k, lo, hi in zip(model.parameters.index, model.parameters["pmin"], model.parameters["pmax"])},
+            sort_keys=True)),
+        "n_param": _safe(lambda: model.parameters["vary"].sum(), int),
+        "t95_days": _safe(lambda: response_t95(model), float),
+        "gain": _safe(lambda: response_gain(model), float),
+        "recharge": spec.recharge if spec else None,
+        "rfunc": spec.rfunc if spec else None,
         "pastas_version": ps.__version__,
         "fitted_at": dt.datetime.now(),
     }
-    if model_type == "tarso":
+    if spec is not None and spec.recharge == "tarso":
         # TarsoModel cannot be combined with other stressmodels, so it is the one.
         t95 = _safe(lambda: tarso_t95(
             model.parameters["optimal"], name=next(iter(model.stressmodels))

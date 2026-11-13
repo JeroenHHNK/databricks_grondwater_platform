@@ -26,8 +26,9 @@ import streamlit as st
 from pandas import DataFrame
 
 from review_app import common
-from tarso_pipeline import results
+from tarso_pipeline import results, selection
 from tarso_pipeline.evt import EMPIRICAL_MAX_T, INDICATIVE_MIN_T
+from tarso_pipeline.fit import DEFAULT_MODEL_TYPES, MODEL_LABELS
 from tarso_pipeline.paths import DATA_BASES, UNVALIDATED, VALIDATED
 
 from . import pastas_bron as bron
@@ -48,6 +49,18 @@ def _lees(basis: str, kind: str, meetreeks_id: str | None = None) -> bron.Result
 def _keuze(basis: str) -> DataFrame:
     """Not cached: it changes on every save."""
     return bron.lees_keuze(basis)
+
+
+def _modelkeuze(basis: str) -> DataFrame:
+    """Not cached: it changes on every save."""
+    return bron.lees_modelkeuze(basis)
+
+
+def _in_gebruik(basis: str) -> DataFrame:
+    """Per series the model it uses: meetreeks_id, model_type, bron (handmatig / automatisch / standaard)."""
+    metrics = _lees(basis, "fit_metrics").data
+    reeksen = metrics["meetreeks_id"] if not metrics.empty else None
+    return selection.model_in_use(_lees(basis, "model_selection").data, _modelkeuze(basis), reeksen)
 
 
 @st.cache_data(ttl=600, show_spinner=False)
@@ -122,6 +135,29 @@ def _overzicht(basis: str) -> DataFrame | None:
         tabel = tabel.merge(deel[["meetreeks_id", "model_type", f"familie_{staart}"]],
                             on=["meetreeks_id", "model_type"], how="left")
         tabel[f"familie_{staart}"] = tabel[f"familie_{staart}"].replace("", None).fillna("–")
+    return voeg_selectie_toe(tabel, _lees(basis, "model_selection").data, _in_gebruik(basis))
+
+
+SELECTIE_KOLOMMEN = ["passed", "pass_runs", "runaway", "d_aic", "d_aic_tarso", "selected", "reason"]
+
+
+def voeg_selectie_toe(tabel: DataFrame, selectie: DataFrame, in_gebruik: DataFrame) -> DataFrame:
+    """The stamp, the runaway check and which model the series uses, per row of `tabel`.
+
+    `stempel` is "passed" when the model passed R², memory, gain and bounds (the runs test is
+    shown apart); `in_gebruik` is "✓ automatisch" / "✓ handmatig" / "✓ standaard" on the model
+    the series uses, else "".
+    """
+    sleutel = ["meetreeks_id", "model_type"]
+    tabel = tabel.drop(columns=[c for c in (*SELECTIE_KOLOMMEN, "stempel", "in_gebruik") if c in tabel])
+    if not selectie.empty:
+        deel = selectie[[*sleutel, *[c for c in SELECTIE_KOLOMMEN if c in selectie]]]
+        tabel = tabel.merge(deel.drop_duplicates(sleutel, keep="last"), on=sleutel, how="left")
+    geslaagd = tabel["passed"].astype(str).str.lower().eq("true") if "passed" in tabel else False
+    tabel["stempel"] = pd.Series(geslaagd, index=tabel.index).map({True: "passed", False: ""})
+    gebruikt = in_gebruik.rename(columns={"bron": "in_gebruik"})[[*sleutel, "in_gebruik"]]
+    tabel = tabel.merge(gebruikt, on=sleutel, how="left")
+    tabel["in_gebruik"] = ("✓ " + tabel["in_gebruik"]).fillna("")
     return tabel
 
 
@@ -290,7 +326,7 @@ PLOT_TITELS = {
 
 def _extremenplots(basis: str, rij) -> None:
     """The figures run_extremes drew for this model, from the export in git."""
-    plots = {k: bron.plot(basis, rij.series_name, k) for k in PLOT_TITELS}
+    plots = {k: bron.plot(basis, rij.series_name, k, rij.model_type) for k in PLOT_TITELS}
     if not any(plots.values()):
         st.caption("Geen extremenplots in de export voor dit model (`export_results.py` kopieert ze uit de "
                    "run-mappen naar `pastas/results_export/<prefix>/plots/`).")
@@ -307,8 +343,8 @@ def _extremenplots(basis: str, rij) -> None:
 
 def _fitplots(basis: str, rij) -> None:
     """ml.plots.results() (and diagnostics) of the fit, from the export in git."""
-    resultaten = bron.plot(basis, rij.series_name, "results")
-    diagnostiek = bron.plot(basis, rij.series_name, "diagnostics")
+    resultaten = bron.plot(basis, rij.series_name, "results", rij.model_type)
+    diagnostiek = bron.plot(basis, rij.series_name, "diagnostics", rij.model_type)
     if resultaten is None and diagnostiek is None:
         st.caption("Geen ml.plots.results() in de export voor dit model (`export_results.py` met `results` in "
                    "`plot_kinds`).")
@@ -318,6 +354,74 @@ def _fitplots(basis: str, rij) -> None:
     if diagnostiek is not None:
         with st.expander("Diagnostiek van de residuen (ml.plots.diagnostics())"):
             st.image(str(diagnostiek), caption="ml.plots.diagnostics()")
+
+
+AUTOMATISCH = "automatisch"
+
+
+def _bewaar_modelkeuze(basis: str, meetreeks_id: str, series_name: str, sleutel: str, sleutel_notitie: str) -> None:
+    """on_change of the model pick: write it to the model_choice CSV straight away."""
+    gekozen = st.session_state[sleutel]
+    nieuw = selection.set_model_choice(
+        _modelkeuze(basis), meetreeks_id=meetreeks_id, series_name=series_name,
+        model_type=None if gekozen == AUTOMATISCH else gekozen, note=st.session_state.get(sleutel_notitie, ""),
+        chosen_by=getpass.getuser(), chosen_at=datetime.now(ZoneInfo("Europe/Amsterdam")).isoformat(timespec="seconds"))
+    selection.write_model_choice(bron.modelkeuze_pad(basis), nieuw)
+    st.toast(f"Model: {'automatische keuze' if gekozen == AUTOMATISCH else MODEL_LABELS.get(gekozen, gekozen)} · "
+             f"opgeslagen in {bron.modelkeuze_pad(basis).relative_to(bron.ROOT).as_posix()}")
+
+
+def _modelvergelijking(basis: str, rij) -> None:
+    """Every model type of this series side by side, and the pick of the one it uses."""
+    selectie = _lees(basis, "model_selection").data
+    eigen = selectie[selectie["meetreeks_id"] == rij.meetreeks_id] if not selectie.empty else selectie
+    if not eigen.empty and "run_id" in eigen:
+        eigen = eigen[eigen["run_id"] == eigen["run_id"].max()]
+    if eigen.empty:
+        st.info("Nog geen modelselectie voor deze reeks: draai de fit met meerdere `model_types` en daarna "
+                "`run_extremes.py` (die schrijft `<prefix>_model_selection`).")
+        return
+    tabel = eigen.assign(model=eigen["model_type"].map(lambda m: MODEL_LABELS.get(m, m))).sort_values("aic")
+    st.dataframe(tabel[[c for c in ("model", "selected", "passed", "pass_runs", "runaway", "n_param", "r2",
+                                    "r2_holdout", "aic", "d_aic", "d_aic_tarso", "dry_T100", "wet_T100", "reason")
+                        if c in tabel]], hide_index=True, width="stretch", column_config={
+        "selected": st.column_config.CheckboxColumn("automatisch gekozen"),
+        "passed": st.column_config.CheckboxColumn("passed", help="R² ≥ 0,7, geheugen, gain en grenzen gehaald"),
+        "pass_runs": st.column_config.CheckboxColumn("runs-test", help="Autocorrelatie van de residuen; zonder "
+                                                     "ruismodel vrijwel nooit gehaald, telt niet mee voor passed"),
+        "runaway": st.column_config.CheckboxColumn("loopt weg", help="T=100 meer dan 1,5 m buiten het gemeten bereik"),
+        "n_param": "parameters", "r2": st.column_config.NumberColumn("R²", format="%.3f"),
+        "r2_holdout": st.column_config.NumberColumn("R² holdout", format="%.3f",
+                                                    help="R² op de laatste 30 %, gefit op de rest"),
+        "aic": st.column_config.NumberColumn("AIC", format="%.1f"),
+        "d_aic": st.column_config.NumberColumn("ΔAIC", format="%+.1f", help="t.o.v. de laagste AIC van de reeks"),
+        "d_aic_tarso": st.column_config.NumberColumn("ΔAIC Tarso", format="%+.1f",
+                                                     help="negatief = beter dan Tarso; < −2 telt als beter"),
+        "dry_T100": st.column_config.NumberColumn("T100 droog", format="%.2f"),
+        "wet_T100": st.column_config.NumberColumn("T100 nat", format="%.2f"),
+        "reason": "waarom"})
+    st.caption("Automatische keuze: onder de modellen die de checks halen (anders alle), niet weggelopen en op de "
+               "holdout niet slechter dan Tarso, de laagste AIC; een model met minder parameters binnen 2 AIC wint.")
+
+    keuze = _modelkeuze(basis)
+    eigen_keuze = keuze[keuze["meetreeks_id"] == rij.meetreeks_id]
+    automatisch = eigen[eigen["selected"].astype(str).str.lower().eq("true")]["model_type"]
+    opties = [AUTOMATISCH, *[m for m in DEFAULT_MODEL_TYPES if m in set(eigen["model_type"])],
+              *sorted(set(eigen["model_type"]) - set(DEFAULT_MODEL_TYPES))]
+    sleutel, sleutel_notitie = f"pa_model_{basis}_{rij.meetreeks_id}", f"pa_model_not_{basis}_{rij.meetreeks_id}"
+    st.session_state[sleutel] = eigen_keuze["model_type"].iloc[0] if not eigen_keuze.empty and \
+        eigen_keuze["model_type"].iloc[0] in opties else AUTOMATISCH
+    st.session_state.setdefault(sleutel_notitie, eigen_keuze["note"].iloc[0] if not eigen_keuze.empty else "")
+    opslaan = {"on_change": _bewaar_modelkeuze, "disabled": common.read_only(),
+               "args": (basis, rij.meetreeks_id, rij.series_name, sleutel, sleutel_notitie)}
+    auto_label = MODEL_LABELS.get(automatisch.iloc[0], automatisch.iloc[0]) if len(automatisch) else "geen"
+    k1, k2 = st.columns([2, 3])
+    k1.selectbox("Model voor deze reeks", opties, key=sleutel, **opslaan,
+                 format_func=lambda m: f"automatisch ({auto_label})" if m == AUTOMATISCH else MODEL_LABELS.get(m, m),
+                 help="Het model waarvan de herhalingstijden in de Boxplots komen.")
+    k2.text_input("Notitie bij de modelkeuze", max_chars=80, key=sleutel_notitie, **opslaan)
+    st.caption("Kies daarna voor dát model de familie per staart (tab Herhalingstijden, of Familie kiezen): "
+               "de familiekeuze is per model.")
 
 
 def _detail(basis: str, rij) -> None:
@@ -332,9 +436,14 @@ def _detail(basis: str, rij) -> None:
     m[3].metric("Waarnemingen", f"{int(rij.nobs)}")
     if pd.notna(getattr(rij, "checks", None)):
         m[4].metric("Modelchecks", f"{int(rij.checks_ok)}/{int(rij.checks)} gehaald")
-    st.caption(f"run `{rij.run_id}` · {rij.tmin} t/m {rij.tmax} · `{rij.meetreeks_id}`")
+    st.caption(f"run `{rij.run_id}` · {rij.tmin} t/m {rij.tmax} · `{rij.meetreeks_id}`"
+               + (f" · **{rij.stempel}**" if getattr(rij, "stempel", "") else "")
+               + (f" · in gebruik ({rij.in_gebruik[2:]})" if getattr(rij, "in_gebruik", "") else ""))
 
-    tab_sim, tab_herh, tab_checks = st.tabs(["Gemeten en gesimuleerd", "Herhalingstijden en familie", "Modelchecks"])
+    tab_sim, tab_model, tab_herh, tab_checks = st.tabs(
+        ["Gemeten en gesimuleerd", "Modelvergelijking en keuze", "Herhalingstijden en familie", "Modelchecks"])
+    with tab_model:
+        _modelvergelijking(basis, rij)
     with tab_sim:
         _plot_simulatie(basis, rij)
         _fitplots(basis, rij)
@@ -363,19 +472,44 @@ def render_modellen() -> None:
     tabel = _overzicht(basis)
     if tabel is None:
         return
+    meerdere = tabel.groupby("meetreeks_id")["model_type"].nunique().max() > 1
+    k1, k2 = st.columns(2)
+    alleen_gebruikt = k1.toggle("Alleen het model in gebruik per reeks", value=bool(meerdere), key=f"pa_gebruikt_{basis}",
+                                disabled=not meerdere, help="Per reeks zijn meerdere modeltypen gefit; dit toont "
+                                "alleen het model waarvan de herhalingstijden gebruikt worden.")
+    alleen_passed = k2.toggle("Alleen modellen met stempel passed", key=f"pa_passed_{basis}")
+    if alleen_gebruikt:
+        tabel = tabel[tabel["in_gebruik"] != ""]
+    if alleen_passed:
+        tabel = tabel[tabel["stempel"] == "passed"]
     tabel = tabel.sort_values(["success", "r2"], ascending=[False, False], ignore_index=True)
+    if tabel.empty:
+        st.caption("Geen modellen met deze filters.")
+        return
     labels = {f"{r.meetreeks_id}|{r.model_type}": _label(r) for r in tabel.itertuples()}
     gevraagd = st.query_params.get(MODEL_PARAM)
     gevraagd = next((k for k in labels if k.startswith(f"{gevraagd}|")), None) if gevraagd else None
     sleutel = st.selectbox("Zoek een model", list(labels), index=list(labels).index(gevraagd) if gevraagd else None,
                            format_func=labels.get, placeholder="dwarsprofiel (BE_0072…), code, locatienaam of series_…")
 
-    kolommen = [c for c in ("profielnaam", "code", "cs_naam", "model_type", "success", "evp", "r2", "rmse", "nobs", "checks_ok",
-                            "checks", "familie_dry", "familie_wet", "series_name") if c in tabel]
+    kolommen = [c for c in ("profielnaam", "code", "cs_naam", "model_type", "in_gebruik", "stempel", "success", "evp",
+                            "r2", "r2_holdout", "d_aic_tarso", "n_param", "rmse", "nobs", "checks_ok", "checks",
+                            "familie_dry", "familie_wet", "series_name") if c in tabel]
     gekozen = st.dataframe(tabel[kolommen], hide_index=True, width="stretch", height=320, on_select="rerun",
                            selection_mode="single-row", key=f"pa_tabel_{basis}", column_config={
                                "evp": st.column_config.NumberColumn("EVP %", format="%.1f"),
                                "r2": st.column_config.NumberColumn("R²", format="%.3f"),
+                               "r2_holdout": st.column_config.NumberColumn(
+                                   "R² holdout", format="%.3f", help="R² op de laatste 30 %, gefit op de rest"),
+                               "d_aic_tarso": st.column_config.NumberColumn(
+                                   "ΔAIC Tarso", format="%+.1f", help="negatief = beter dan Tarso; < −2 telt"),
+                               "n_param": "parameters",
+                               "in_gebruik": st.column_config.TextColumn(
+                                   "in gebruik", help="Het model waarvan de herhalingstijden in de Boxplots komen: "
+                                   "automatisch gekozen, of handmatig (tab Modelvergelijking)"),
+                               "stempel": st.column_config.TextColumn(
+                                   "stempel", help="passed: R² ≥ 0,7, geheugen, gain en parametergrenzen gehaald "
+                                   "(de runs-test telt niet mee)"),
                                "rmse": st.column_config.NumberColumn("RMSE", format="%.3f"),
                                "familie_dry": "familie droog", "familie_wet": "familie nat",
                                "profielnaam": st.column_config.TextColumn(

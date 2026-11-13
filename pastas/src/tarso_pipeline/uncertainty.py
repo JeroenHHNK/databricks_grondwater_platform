@@ -138,7 +138,11 @@ def tail_uncertainty(
 
 
 def read_pooled(directory: str | Path, series_name: str) -> dict[str, np.ndarray]:
-    """The pooled extremes ``run_extremes`` wrote for one model, per tail (head units)."""
+    """The pooled extremes ``run_extremes`` wrote for one model, per tail (head units).
+
+    ``series_name`` is the file stem: ``<series_name>_<model_type>`` (``pooled_series``),
+    or the bare series name for a run from before the files carried their model type.
+    """
     out = {}
     for tail in TAILS:
         path = Path(directory) / f"{series_name}_{tail}.csv"
@@ -151,7 +155,8 @@ def read_pooled(directory: str | Path, series_name: str) -> dict[str, np.ndarray
 
 
 def pooled_series(directory: str | Path) -> list[str]:
-    """Every series with at least one pooled tail in ``pooled_extremes/``."""
+    """Every model (file stem) with at least one pooled tail in ``pooled_extremes/``;
+    ``extremes_run.split_stem`` turns one into (series_name, model_type)."""
     names = set()
     for path in Path(directory).glob("*.csv"):
         for tail in TAILS:

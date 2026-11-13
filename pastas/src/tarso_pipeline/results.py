@@ -35,8 +35,10 @@ from tarso_pipeline.paths import (
 )
 
 EXPORT_DIRNAME = "results_export"
-# The extremes figures, copied from the run folders into results_export/<prefix>/plots/
-# as <series_name>_<kind>.png: one file per model and kind, from the most recent run.
+# The figures, copied from the run folders into results_export/<prefix>/plots/ as
+# <series_name>_<model_type>_<kind>.png: one file per model and kind, from the most recent
+# run. Runs from before the files carried their model type wrote <series_name>_<kind>.png
+# for the extremes (Tarso was the only model then); ``find_plot`` falls back to those.
 PLOTS_DIRNAME = "plots"
 PLOT_KINDS = {
     # kind:          (folder in the run folder, suffix of the file run_extremes writes)
@@ -45,8 +47,8 @@ PLOT_KINDS = {
     "threshold": (THRESHOLD_PLOTS_DIR, "_threshold.png"),
     "confidence": (CONFIDENCE_PLOTS_DIR, "_return_level.png"),  # explore_shape_and_uncertainty
     # The fit itself (fit_pastas_models): ml.plots.results() and ml.plots.diagnostics().
-    "results": (RESULTS_DIR, "_tarso_results.png"),
-    "diagnostics": (DIAGNOSTICS_DIR, "_tarso_diagnostics.png"),
+    "results": (RESULTS_DIR, "_results.png"),
+    "diagnostics": (DIAGNOSTICS_DIR, "_diagnostics.png"),
 }
 FAMILY_CHOICE_DIRNAME = "family_choice"
 # What the app needs, and the file each is exported to (export_results.py).
@@ -56,6 +58,7 @@ EXPORT_FILES = {
     "evt_selection": "evt_selection.csv",
     "return_levels": "return_levels.csv",
     "simulations": "simulations.parquet",
+    "model_selection": "model_selection.csv",
 }
 FAMILIES = ("gpd", "exp", "gev", "emp")
 # What a person can pick per tail: how to extrapolate past EMPIRICAL_MAX_T.
@@ -114,10 +117,24 @@ def plots_dir(root: str | Path, basis: str) -> Path:
 
 
 def plot_path(root: str | Path, basis: str, series_name: str, kind: str) -> Path:
-    """Where the exported ``kind`` figure of one model lives (it may not exist)."""
+    """Where the exported ``kind`` figure of one file stem lives (it may not exist).
+
+    ``series_name`` is the stem: ``<series_name>_<model_type>`` (``find_plot`` builds it).
+    """
     if kind not in PLOT_KINDS:
         raise ValueError(f"kind must be one of {tuple(PLOT_KINDS)}, got {kind!r}")
     return plots_dir(root, basis) / f"{series_name}_{kind}.png"
+
+
+def find_plot(root: str | Path, basis: str, series_name: str, model_type: str, kind: str) -> Path | None:
+    """The exported ``kind`` figure of one model, or None.
+
+    ``<series>_<model_type>_<kind>.png``; for Tarso also the older ``<series>_<kind>.png``.
+    """
+    candidates = [plot_path(root, basis, f"{series_name}_{model_type}", kind)]
+    if model_type == "tarso":
+        candidates.append(plot_path(root, basis, series_name, kind))
+    return next((p for p in candidates if p.is_file()), None)
 
 
 def _check_kinds(kinds) -> tuple[str, ...]:
@@ -129,7 +146,9 @@ def _check_kinds(kinds) -> tuple[str, ...]:
 
 
 def latest_plots(basis_volume_dir: str | Path, kinds=None) -> dict[tuple[str, str], Path]:
-    """The newest figure per (series_name, kind) over every run folder of one data basis.
+    """The newest figure per (file stem, kind) over every run folder of one data basis.
+
+    The stem is ``<series_name>_<model_type>`` (or a bare series name for an old run).
 
     Newest by modification time, not by folder name, so a run folder with a custom name
     (``run_folder`` widget) counts too. ``kinds`` limits it to some of ``PLOT_KINDS``.

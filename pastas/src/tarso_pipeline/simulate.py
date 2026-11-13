@@ -1,9 +1,12 @@
-"""Driving a calibrated Tarso model with new forcing (handoff section 4).
+"""Driving a calibrated model with new forcing (handoff section 4).
 
-The `.pas` file is loaded, the two stresses inside its Tarso stressmodel are
-**replaced** with an ensemble member's series, and ``simulate()`` is called over
+The `.pas` file is loaded, the two stresses inside its Tarso or Recharge
+stressmodel (``find_forcing_key``; every model type of ``tarso_pipeline.fit`` has
+one) are **replaced** with an ensemble member's series, and ``simulate()`` is called over
 the member's period. Fitted parameters are untouched: this is simulation, not
-re-calibration and not extrapolation.
+re-calibration and not extrapolation. A non-linear recharge model was fitted on
+mm/day, so its members are scaled from m/day the same way (``forcing_scale``). A
+noise model in the `.pas` plays no part: ``simulate()`` does not use it.
 
 The stress is replaced by assigning ``series_original`` rather than adding a new
 stressmodel, so Pastas keeps its own settings (fill method, sample rate) for that
@@ -45,6 +48,31 @@ def find_tarso_key(model) -> str:
     if len(keys) > 1:
         raise ValueError(f"Expected one Tarso stressmodel, found {keys}")
     return keys[0]
+
+
+def find_forcing_key(model) -> str:
+    """The stressmodel that takes precipitation and evaporation: Tarso or Recharge.
+
+    Every model type of ``tarso_pipeline.fit`` has exactly one; a model with more than
+    one two-stress stressmodel is ambiguous and refused.
+    """
+    keys = [k for k, sm in model.stressmodels.items()
+            if getattr(sm, "_name", None) in ("TarsoModel", "RechargeModel")]
+    if len(keys) != 1:
+        raise ValueError(
+            f"Expected one Tarso or Recharge stressmodel, found {keys or list(model.stressmodels)}"
+        )
+    return keys[0]
+
+
+# Recharge models whose parameters assume mm/day (tarso_pipeline.fit.NONLINEAR_RECHARGE).
+_MM_RECHARGE = ("Berendrecht", "Peterson", "FlexModel")
+
+
+def forcing_scale(stressmodel) -> float:
+    """1000 for a non-linear recharge model (fitted on mm/day), else 1 (the run's m/day)."""
+    recharge = getattr(stressmodel, "recharge", None)
+    return 1000.0 if type(recharge).__name__ in _MM_RECHARGE else 1.0
 
 
 def _median_step(series: pd.Series) -> pd.Timedelta | None:
@@ -91,13 +119,16 @@ def simulate_member(
     carries a memory of years, so the first ``warmup_years`` are computed but
     never read: ``warmup`` covers them and ``tmin`` starts after them.
     """
-    key = find_tarso_key(model)
+    key = find_forcing_key(model)
     stressmodel = model.stressmodels[key]
     if len(stressmodel.stress) < 2:
         raise ValueError(
-            f"Tarso stressmodel has {len(stressmodel.stress)} stress(es); expected 2"
+            f"{key} stressmodel has {len(stressmodel.stress)} stress(es); expected 2"
         )
 
+    scale = forcing_scale(stressmodel)
+    if scale != 1.0:
+        precipitation, evaporation = precipitation * scale, evaporation * scale
     precipitation = match_timestep(precipitation, stressmodel.stress[0].series_original)
     evaporation = match_timestep(evaporation, stressmodel.stress[1].series_original)
 

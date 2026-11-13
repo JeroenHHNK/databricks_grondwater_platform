@@ -11,7 +11,8 @@
 # MAGIC pastas/results_export/<prefix>/
 # MAGIC     fit_metrics.csv      model_checks.csv    evt_selection.csv
 # MAGIC     return_levels.csv    simulations.parquet (daily observed + simulated head)
-# MAGIC     plots/<series_name>_{return_periods,threshold,qq,confidence,results,diagnostics}.png
+# MAGIC     model_selection.csv  (per series x model type: the stamp, runaway check and the pick)
+# MAGIC     plots/<series_name>_<model_type>_{return_periods,threshold,qq,confidence,results,diagnostics}.png
 # MAGIC ```
 # MAGIC
 # MAGIC The plots are the figures drawn in the run folders on the volume: `results` and
@@ -31,7 +32,8 @@
 dbutils.widgets.dropdown("data_basis", "unvalidated", ["unvalidated", "validated"], "Results of")
 dbutils.widgets.text("output_catalog", "waterkeringbeheer_prd", "Output catalog")
 dbutils.widgets.text("output_schema", "jvanruitenbeek", "Output schema")
-dbutils.widgets.text("model_types", "tarso", "Model types to export (comma-separated)")
+dbutils.widgets.text("model_types", "tarso,linear_exp,linear_gamma,linear_dexp,linear_fourparam",
+                     "Model types to export (comma-separated)")
 dbutils.widgets.text("volume_base",
                      "/Volumes/waterkeringbeheer_prd/misc_files/misc_files/pastas_pipeline",
                      "Volume prefix (for the plots)")

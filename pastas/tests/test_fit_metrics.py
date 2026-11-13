@@ -132,7 +132,8 @@ def test_identity_fields_survive_a_failure():
 
 
 @pytest.mark.slow
-@pytest.mark.parametrize("model_type", ["tarso", "recharge"])
+@pytest.mark.parametrize("model_type", ["tarso", "linear_exp", "linear_gamma", "linear_dexp",
+                                        "linear_fourparam", "peterson_gamma", "recharge"])
 def test_a_real_fit_populates_the_metrics(tmp_path, model_type):
     import matplotlib
 
@@ -142,7 +143,7 @@ def test_a_real_fit_populates_the_metrics(tmp_path, model_type):
     simulations = []
     row = fit_series(
         "a" * 64, "well", raw("2020-01-01", 1200, per_day=3), p, e, "run",
-        model_type=model_type, run_directory=str(tmp_path), simulation_frames=simulations,
+        model_type=model_type, run_directory=str(tmp_path), simulation_frames=simulations, holdout=0.3,
     )
 
     assert row["success"] is True, row["error_message"]
@@ -159,6 +160,12 @@ def test_a_real_fit_populates_the_metrics(tmp_path, model_type):
         assert row[field] is not None, field
     assert row["freq"] == "D"
     assert json.loads(row["parameters"])  # parameters are JSON, not a repr
+    parameters, stderr = json.loads(row["parameters"]), json.loads(row["parameters_stderr"])
+    assert set(stderr) == set(parameters) == set(json.loads(row["parameters_bounds"]))
+    assert row["n_param"] == sum(v is not None for v in stderr.values()) or row["n_param"] > 0
+    assert row["t95_days"] > 0 and row["gain"] is not None
+    assert row["r2_holdout"] is not None and row["holdout_share"] == 0.3
+    assert row["noise_model"] == "none" and row["recharge"] in ("tarso", "linear", "peterson")
     t95_fields = ("t95_level0_days", "t95_level1_days", "t95_upper_regime_days")
     if model_type == "tarso":
         for field in t95_fields:
@@ -180,3 +187,39 @@ def test_a_real_fit_populates_the_metrics(tmp_path, model_type):
     import pastas as ps
 
     assert ps.io.load(row["model_path"]) is not None
+
+
+@pytest.mark.slow
+def test_a_noise_model_is_added_and_recorded():
+    p, e = forcing()
+    row = fit_series("a" * 64, "well", raw("2020-01-01", 1200), p, e, "run", model_type="linear_gamma", noise="ar1")
+    assert row["success"] is True, row["error_message"]
+    assert row["noise"] is True and row["noise_model"] == "ar1"
+    assert any(k.startswith("noise_") for k in json.loads(row["parameters"]))
+
+
+def test_an_unknown_noise_model_is_a_row_not_a_crash():
+    p, e = forcing()
+    row = fit_series("a" * 64, "s", raw("2021-01-01", 800), p, e, "run", model_type="linear_exp", noise="garch")
+    assert row["success"] is False and "noise" in row["error_message"]
+
+
+@pytest.mark.slow
+def test_the_ensemble_drives_every_model_type(tmp_path):
+    """simulate_member finds the Recharge stressmodel too, and scales mm models."""
+    import pastas as ps
+
+    from tarso_pipeline.fit import build_model
+    from tarso_pipeline.simulate import find_forcing_key, forcing_scale, simulate_member
+
+    p, e = forcing()
+    head = pd.Series(np.linspace(-2, -1, 1200), index=pd.date_range("2020-01-01", periods=1200, freq="D"))
+    for model_type, scale in (("linear_gamma", 1.0), ("peterson_gamma", 1000.0), ("tarso", 1.0)):
+        model = build_model(model_type, "well", head, p / 1000, e / 1000)
+        key = find_forcing_key(model)
+        assert forcing_scale(model.stressmodels[key]) == scale
+        model.solve(report=False)
+        path = tmp_path / f"well_{model_type}.pas"
+        model.to_file(str(path))
+        result = simulate_member(ps.io.load(str(path)), p / 1000, e / 1000, warmup_years=1)
+        assert result.head.notna().all() and len(result.head) > 300

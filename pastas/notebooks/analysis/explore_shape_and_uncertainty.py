@@ -165,7 +165,11 @@ elif "exclude_first" in summary.columns and summary["exclude_first"].notna().any
 else:
     raise ValueError(f"No exclude_first in {summary_path}; set the exclude_first widget.")
 
-models = pd.DataFrame({"series_name": pooled_series(POOLED_DIR)})
+from tarso_pipeline.extremes_run import split_stem  # noqa: E402
+
+stems = pooled_series(POOLED_DIR)
+models = pd.DataFrame([(stem, *split_stem(stem)) for stem in stems],
+                      columns=["stem", "series_name", "model_type"])
 if not selection.empty:
     ids = (selection[["series_name", "meetreeks_id", "run_id"]]
            .drop_duplicates("series_name", keep="last"))
@@ -196,13 +200,14 @@ shape_rows, level_rows, plot_paths = [], [], {}
 os.makedirs(extremes_dir(RUN_DIR, CONFIDENCE_PLOTS_DIR), exist_ok=True)
 
 for item in models.itertuples():
-    pooled = read_pooled(POOLED_DIR, item.series_name)
+    pooled = read_pooled(POOLED_DIR, item.stem)
     if not pooled:
-        print(f"{item.series_name}: no pooled extremes, skipped")
+        print(f"{item.stem}: no pooled extremes, skipped")
         continue
     shapes, levels, per_tail = model_uncertainty(
         pooled, item.meetreeks_id, item.series_name, item.run_id,
         exclude_first=EXCLUDE_FIRST, t_list=T_LIST, replicates=REPLICATES, seed=SEED,
+        model_type=item.model_type,
     )
     shape_rows.extend(shapes)
     level_rows.extend(levels)
@@ -217,11 +222,11 @@ for item in models.itertuples():
             tail: tail_tables(pooled[tail], tail, exclude_first=EXCLUDE_FIRST, t_list=T_LIST)
             for tail in per_tail
         }
-        plot_paths[item.series_name] = confidence_plot(
+        plot_paths[item.stem] = confidence_plot(
             figure_tails,
             Path(extremes_dir(RUN_DIR, CONFIDENCE_PLOTS_DIR))
-            / f"{item.series_name}_return_level.png",
-            f"Return level with 95% CI - {item.series_name}",
+            / f"{item.series_name}_{item.model_type}_return_level.png",
+            f"Return level with 95% CI - {item.series_name} ({item.model_type})",
             resamples={tail: result["resamples"] for tail, result in per_tail.items()},
         )
 

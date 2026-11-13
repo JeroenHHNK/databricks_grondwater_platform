@@ -8,7 +8,7 @@
 # MAGIC
 # MAGIC - did it work, and where did it fail?
 # MAGIC - are the fits any good?
-# MAGIC - did Tarso beat the plain recharge baseline?
+# MAGIC - how do the model types (Tarso, Linear + four responses) compare per series?
 # MAGIC - did the cleaning do what we think?
 # MAGIC - can a saved `.pas` be loaded back?
 # MAGIC
@@ -192,23 +192,19 @@ else:
 # COMMAND ----------
 
 # MAGIC %md
-# MAGIC ## 4. Tarso vs the recharge baseline
+# MAGIC ## 4. The model types side by side
 # MAGIC
-# MAGIC Only meaningful if both model types were run. If the baseline matches or beats
-# MAGIC Tarso, the extra complexity is not earning its place on that series.
+# MAGIC R2 and AIC per series and model type. Which one a series uses is in
+# MAGIC `<prefix>_model_selection` (written by `run_extremes`): the checks, no runaway, then
+# MAGIC the lowest AIC with a simpler model winning within 2 AIC.
 
 # COMMAND ----------
 
-pivot = (
-    good.groupBy("series_name")
-    .pivot("model_type", ["tarso", "recharge"])
-    .agg(F.round(F.first("r2"), 3))
-)
-if "recharge" in pivot.columns and "tarso" in pivot.columns:
-    display(
-        pivot.withColumn("tarso_better", F.col("tarso") > F.col("recharge"))
-        .orderBy(F.col("tarso").desc())
-    )
+model_types = [r.model_type for r in good.select("model_type").distinct().collect()]
+if len(model_types) > 1:
+    for value in ("r2", "aic"):
+        display(good.groupBy("series_name").pivot("model_type", sorted(model_types))
+                .agg(F.round(F.first(value), 3)).orderBy("series_name"))
 else:
     print("only one model type in this run; nothing to compare")
 

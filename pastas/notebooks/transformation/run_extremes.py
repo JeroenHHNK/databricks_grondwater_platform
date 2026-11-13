@@ -22,12 +22,19 @@
 # MAGIC
 # MAGIC Writes `<prefix>_evt_selection`, `<prefix>_extremes_summary` and
 # MAGIC `<prefix>_return_levels` (one row per tail x family x return period: what the app and
-# MAGIC Boxplots read, so a chosen family is a WHERE, not a column name).
+# MAGIC Boxplots read, so a chosen family is a WHERE, not a column name), per model: every
+# MAGIC model type the fit stage wrote a `.pas` for (`model_types` limits it).
+# MAGIC
+# MAGIC Then `<prefix>_model_selection`: per series x model type the "passed" stamp, the
+# MAGIC runaway check on these extremes and which model the series uses
+# MAGIC (`tarso_pipeline.selection`): among the models that pass the checks (else all), no
+# MAGIC runaway, not worse than Tarso on the holdout, the lowest AIC - a simpler model within
+# MAGIC 2 AIC wins. A person can overrule it in the app (`pastas/model_choice/`).
 # MAGIC
 # MAGIC ### What this is, and is not
 # MAGIC
 # MAGIC It is **simulation, not extrapolation**. Each `.pas` is loaded, the two stresses
-# MAGIC in its Tarso stressmodel are replaced with one IMPREX ensemble member's forcing,
+# MAGIC in its Tarso or Recharge stressmodel are replaced with one IMPREX ensemble member's forcing,
 # MAGIC and `simulate()` is called. Fitted parameters are untouched.
 # MAGIC
 # MAGIC The model is the only calibrated thing here. The forcing is synthetic, the heads
@@ -97,6 +104,8 @@ dbutils.widgets.text("warmup_years", "5", "Spin-up years dropped per member")
 dbutils.widgets.text("exclude_first", "450", "Least-extreme values trimmed per tail")
 dbutils.widgets.text("t_list", "2 5 10 25 50 100 250 500 1000", "Return periods")
 dbutils.widgets.text("limit_models", "0", "Max models (0 = all)")
+dbutils.widgets.text("model_types", "", "Model types (blank = every .pas in the run folder)")
+dbutils.widgets.dropdown("select_models", "true", ["true", "false"], "Write the model selection?")
 
 dbutils.widgets.text("kept_grid", "100 150 200 250 300 350 400",
                      "Years above the threshold to scan (n_kept)")
@@ -175,6 +184,8 @@ WARMUP_YEARS = int(dbutils.widgets.get("warmup_years"))
 EXCLUDE_FIRST = int(dbutils.widgets.get("exclude_first"))
 T_LIST = tuple(int(t) for t in dbutils.widgets.get("t_list").split())
 LIMIT_MODELS = int(dbutils.widgets.get("limit_models"))
+MODEL_TYPES = [m.strip() for m in dbutils.widgets.get("model_types").split(",") if m.strip()] or None
+SELECT_MODELS = dbutils.widgets.get("select_models") == "true"
 
 KEPT_GRID = tuple(int(k) for k in dbutils.widgets.get("kept_grid").split())
 MAKE_PLOTS = dbutils.widgets.get("make_plots") == "true"
@@ -191,6 +202,8 @@ METRICS_TABLE = (dbutils.widgets.get("metrics_table").strip()
 SELECTION_TABLE = output_table(BASIS, "evt_selection", CATALOG, SCHEMA)
 SUMMARY_TABLE = output_table(BASIS, "extremes_summary", CATALOG, SCHEMA)
 RETURN_LEVELS_TABLE = output_table(BASIS, "return_levels", CATALOG, SCHEMA)
+CHECKS_TABLE = output_table(BASIS, "model_checks", CATALOG, SCHEMA)
+MODEL_SELECTION_TABLE = output_table(BASIS, "model_selection", CATALOG, SCHEMA)
 
 print(f"basis         {BASIS}")
 print(f"run_id        {RUN_ID}")
@@ -208,7 +221,7 @@ print(f"pastas        {ps.__version__}")
 
 # COMMAND ----------
 
-models = discover_models(RUN_DIR)
+models = discover_models(RUN_DIR, MODEL_TYPES)
 if LIMIT_MODELS:
     models = models.head(LIMIT_MODELS)
 print(f"{len(models)} model(s) in {RUN_DIR}/pas_files")
@@ -265,7 +278,7 @@ print(f"\nartefact folders ready under {RUN_DIR}")
 summaries, selections, parameters, levels = [], [], [], []
 
 for item in models.itertuples():
-    print(f"\n{item.series_name}")
+    print(f"\n{item.series_name}  {item.model_type}")
     result = run_model(
         model_path=item.model_path,
         meetreeks_id=item.meetreeks_id,
@@ -280,6 +293,7 @@ for item in models.itertuples():
         kept_grid=KEPT_GRID,
         make_plots=MAKE_PLOTS,
         forcing=FORCING,
+        model_type=item.model_type,
     )
     summaries.append(result.summary)
     selections.extend(result.selection)
@@ -333,7 +347,7 @@ display(selection_frame)
 
 display(
     summary_frame[
-        ["series_name", "status", "n_members", "n_dry", "n_wet", "first_year", "last_year",
+        ["series_name", "model_type", "status", "n_members", "n_dry", "n_wet", "first_year", "last_year",
          "dr_flag", "dr_gpd_shape", "dr_emp_T100", "dr_gpd_T1000", "dr_exp_T1000",
          "wet_flag", "wet_gpd_shape", "wet_emp_T100", "wet_gpd_T1000", "wet_exp_T1000", "review_flag"]
     ]
@@ -366,6 +380,46 @@ else:
             .saveAsTable(table)
         )
         print(f"appended {len(frame)} rows to {table}")
+
+# COMMAND ----------
+
+# MAGIC %md
+# MAGIC ## Which model per series
+# MAGIC
+# MAGIC The latest fit of every model type of these series (`<prefix>_fit_metrics`,
+# MAGIC `<prefix>_model_checks`) with the extremes of this run. `selected` marks the model a
+# MAGIC series uses unless a person picked another in the app.
+
+# COMMAND ----------
+
+from tarso_pipeline.results import latest_run_sql  # noqa: E402
+from tarso_pipeline.selection import select_models  # noqa: E402
+from tarso_pipeline.selection import spark_schema as selection_schema  # noqa: E402
+
+selection_models = pd.DataFrame()
+if not SELECT_MODELS:
+    print("select_models=false; no model selection written")
+elif not spark.catalog.tableExists(METRICS_TABLE):
+    print(f"no {METRICS_TABLE}; no model selection")
+else:
+    ids = sorted(set(models["meetreeks_id"]))
+    quoted_ids = ", ".join("'" + i.replace("'", "") + "'" for i in ids)
+    fit_rows = spark.sql(f"SELECT * FROM ({latest_run_sql(METRICS_TABLE)}) "
+                         f"WHERE meetreeks_id IN ({quoted_ids})").toPandas()
+    check_rows = (spark.sql(f"SELECT * FROM ({latest_run_sql(CHECKS_TABLE)}) "
+                            f"WHERE meetreeks_id IN ({quoted_ids})").toPandas()
+                  if spark.catalog.tableExists(CHECKS_TABLE) else pd.DataFrame())
+    selection_models = select_models(fit_rows, check_rows, summary_frame, run_id=RUN_ID)
+    chosen = selection_models[selection_models["selected"]]
+    print(f"{len(chosen)} series: {chosen['model_type'].value_counts().to_dict()}; "
+          f"passed {int(chosen['passed'].sum())}, runaway models {int(selection_models['runaway'].sum())}")
+    display(selection_models[["series_name", "model_type", "n_param", "r2", "r2_holdout", "aic", "d_aic",
+                              "d_aic_tarso", "passed", "pass_runs", "runaway", "selected", "reason"]])
+    if WRITE_TABLES and not selection_models.empty:
+        (spark.createDataFrame(selection_models.astype(object).where(pd.notna(selection_models), None),
+                               schema=selection_schema())
+         .write.format("delta").mode("append").option("mergeSchema", "true").saveAsTable(MODEL_SELECTION_TABLE))
+        print(f"appended {len(selection_models)} rows to {MODEL_SELECTION_TABLE}")
 
 # COMMAND ----------
 

@@ -4,16 +4,37 @@
 metrics row. It **never raises**. A failure becomes a row with ``success=False``
 and the message, because one malformed series must not abort a run over twenty.
 
-Two model types:
+Model types (``MODEL_SPECS``), one ``.pas`` and one metrics row each per series:
 
-``tarso``     ``ps.TarsoModel`` -- the target, with per-series drainage levels.
-``recharge``  ``ps.RechargeModel`` with an Exponential response -- the plain
-              Pastas baseline the handover asks for as a comparison. Cheap, and
-              it tells you whether a poor Tarso fit is the model or the data.
+``tarso``              ``ps.TarsoModel`` -- per-series drainage levels; Pastas fixes
+                       its response to an Exponential and allows nothing beside it.
+``linear_<rfunc>``     ``ps.RechargeModel`` with linear recharge ``R = P - f E`` and
+                       the response ``exp`` (Exponential), ``gamma``, ``dexp``
+                       (DoubleExponential) or ``fourparam`` (FourParam), plus a constant.
+``peterson_gamma``     non-linear (Peterson) recharge with a Gamma response. Not in the
+                       default set: it wins AIC but predicts the unseen part worse.
+``recharge``           the old name of ``linear_exp``; still accepted.
+
+The grid test on the validated series (Tarso, Linear, Berendrecht, Peterson, FlexModel
+x four responses) is why the default set is Tarso and the four Linear models:
+Berendrecht hit its parameter bounds on every series and ran away in the extremes,
+FlexModel fitted worse, Peterson overfitted. Which model a series uses is decided
+afterwards (``tarso_pipeline.selection``), not here.
+
+``noise=True`` adds a noise model (``NOISE_MODELS``: AR(1) or ARMA(1,1)), so the
+residuals are modelled rather than assumed white. AIC is then computed on the noise:
+compare AIC only between fits with the same ``noise`` setting. Off by default: on the
+validated series it did not make the runs test pass and it lowered the R2 of the
+simulation (the noise model absorbs what the response should explain).
+
+``holdout`` (e.g. 0.3) fits the same model a second time on the first 70 % of the
+observations and scores its simulation on the last 30 % (``r2_holdout``): what the
+model does on data it has not seen, which AIC alone does not tell.
 """
 
 from __future__ import annotations
 
+from dataclasses import dataclass
 from pathlib import Path
 
 import pandas as pd
@@ -28,9 +49,57 @@ from tarso_pipeline.fit_metrics import (
 )
 from tarso_pipeline.model_checks import run_checks
 
-MODEL_TYPES = ("tarso", "recharge")
 STRESSMODEL_NAME = "Tarso"
 RECHARGE_NAME = "Recharge"
+
+
+@dataclass(frozen=True)
+class ModelSpec:
+    recharge: str         # "tarso", "linear", "peterson", ...
+    rfunc: str            # "exp", "gamma", "dexp", "fourparam"
+    forcing_scale: float  # P and E (m/day) are multiplied by this before they go in
+
+
+RFUNCS = {"exp": "Exponential", "gamma": "Gamma", "dexp": "DoubleExponential", "fourparam": "FourParam"}
+# Non-linear recharge assumes P and E in mm/day (its default parameters do).
+NONLINEAR_RECHARGE = {"berendrecht": "Berendrecht", "peterson": "Peterson", "flex": "FlexModel"}
+MODEL_SPECS: dict[str, ModelSpec] = {
+    "tarso": ModelSpec("tarso", "exp", 1.0),
+    "linear_exp": ModelSpec("linear", "exp", 1.0),
+    "linear_gamma": ModelSpec("linear", "gamma", 1.0),
+    "linear_dexp": ModelSpec("linear", "dexp", 1.0),
+    "linear_fourparam": ModelSpec("linear", "fourparam", 1.0),
+    "peterson_gamma": ModelSpec("peterson", "gamma", 1000.0),
+    "recharge": ModelSpec("linear", "exp", 1.0),  # the old name of linear_exp
+}
+MODEL_TYPES = tuple(MODEL_SPECS)
+DEFAULT_MODEL_TYPES = ("tarso", "linear_exp", "linear_gamma", "linear_dexp", "linear_fourparam")
+MODEL_LABELS = {
+    "tarso": "Tarso",
+    "linear_exp": "Lineair + exponentieel",
+    "linear_gamma": "Lineair + gamma",
+    "linear_dexp": "Lineair + dubbel exponentieel",
+    "linear_fourparam": "Lineair + FourParam",
+    "peterson_gamma": "Peterson + gamma",
+    "recharge": "Lineair + exponentieel (oud)",
+}
+NOISE_MODELS = {"ar1": "ArNoiseModel", "arma": "ArmaNoiseModel"}
+
+
+def model_spec(model_type: str) -> ModelSpec:
+    if model_type not in MODEL_SPECS:
+        raise ValueError(f"Unknown model_type {model_type!r}; use one of {MODEL_TYPES}")
+    return MODEL_SPECS[model_type]
+
+
+def _noise_kind(noise) -> str | None:
+    """``False``/``None``/"" -> no noise model; ``True`` -> AR(1); or a key of NOISE_MODELS."""
+    if not noise or noise == "none":
+        return None
+    kind = "ar1" if noise is True else str(noise)
+    if kind not in NOISE_MODELS:
+        raise ValueError(f"noise must be one of {('none', *NOISE_MODELS)}, got {noise!r}")
+    return kind
 
 
 def build_model(
@@ -39,11 +108,18 @@ def build_model(
     head: pd.Series,
     precipitation: pd.Series,
     evaporation: pd.Series,
+    noise: bool | str = False,
 ):
-    """Construct an unsolved model of the requested type."""
+    """Construct an unsolved model of the requested type.
+
+    ``precipitation`` and ``evaporation`` in the units of the run (m/day by default);
+    the non-linear recharge models get them multiplied by ``forcing_scale``.
+    """
     import pastas as ps
 
-    if model_type == "tarso":
+    spec = model_spec(model_type)
+    kind = _noise_kind(noise)
+    if spec.recharge == "tarso":
         # constant=False: TarsoModel brings its own drainage levels, so a Pastas
         # constant would be redundant and unidentifiable. dmin/dmax are this
         # series' own observed range, not global constants.
@@ -58,19 +134,42 @@ def build_model(
         # somewhere physically meaningless.
         model.set_parameter("Tarso_a0", pmin=0.0, pmax=200.0)
         model.set_parameter("Tarso_a1", pmin=10.0, pmax=200.0)
-        return model
-
-    if model_type == "recharge":
+    else:
+        rfunc = getattr(ps, RFUNCS[spec.rfunc])()
+        recharge = (ps.rch.Linear() if spec.recharge == "linear"
+                    else getattr(ps.rch, NONLINEAR_RECHARGE[spec.recharge])())
         model = ps.Model(head, name=series_name)
         model.add_stressmodel(
             ps.RechargeModel(
-                precipitation, evaporation,
-                rfunc=ps.Exponential(), name=RECHARGE_NAME,
+                precipitation * spec.forcing_scale, evaporation * spec.forcing_scale,
+                rfunc=rfunc, recharge=recharge, name=RECHARGE_NAME,
             )
         )
-        return model
+    if kind is not None:
+        model.add_noisemodel(getattr(ps, NOISE_MODELS[kind])())
+    return model
 
-    raise ValueError(f"Unknown model_type {model_type!r}; use one of {MODEL_TYPES}")
+
+def holdout_r2(model_type: str, series_name: str, head: pd.Series, precipitation: pd.Series,
+               evaporation: pd.Series, tmin: str, holdout: float, noise: bool | str = False) -> float | None:
+    """R2 on the last ``holdout`` share of the observations, of a fit on the rest.
+
+    The simulation runs on over the held-out part with the forcing only, as it would
+    for the IMPREX members. None when the held-out part is too short or flat.
+    """
+    if not 0 < holdout < 1:
+        return None
+    split = head.index[int(len(head) * (1 - holdout))]
+    later = head[head.index > split]
+    if len(later) < 10:
+        return None
+    model = build_model(model_type, series_name, head, precipitation, evaporation, noise=noise)
+    model.solve(tmin=tmin, tmax=split.strftime("%Y-%m-%d"), report=False)
+    observed, simulated = later.align(model.simulate(tmin=head.index[0], tmax=head.index[-1]), join="inner")
+    spread = float(((observed - observed.mean()) ** 2).sum())
+    if len(observed) < 10 or spread == 0:
+        return None
+    return float(1 - ((observed - simulated) ** 2).sum() / spread)
 
 
 def _save_plot(model, kind: str, path: Path) -> str | None:
@@ -146,10 +245,15 @@ def fit_series(
     forcing_station: str | None = None,
     forcing_units: str = "m",
     save_plot: bool = True,
+    noise: bool | str = False,
+    holdout: float = 0.0,
     check_rows: list | None = None,
     simulation_frames: list | None = None,
 ) -> dict:
     """Clean, fit, save and report one series. Never raises.
+
+    ``noise`` adds a noise model (``True`` = AR(1), or "ar1" / "arma"); ``holdout``
+    (0..1) adds ``r2_holdout``, the R2 on that last share of a second fit on the rest.
 
     Pass a list as ``check_rows`` to have the Brakenhoff (2022) checklist run on
     the solved model and its `pastas_model_checks` rows appended to it. A fit
@@ -208,7 +312,7 @@ def fit_series(
         row["days_trimmed_from_end"] = int(coverage.days_trimmed_from_end)
         row["warmup_available_days"] = int(coverage.available_warmup_days)
 
-        model = build_model(model_type, series_name, head, precipitation, evaporation)
+        model = build_model(model_type, series_name, head, precipitation, evaporation, noise=noise)
         model.solve(
             tmin=coverage.tmin.strftime("%Y-%m-%d"),
             tmax=coverage.tmax.strftime("%Y-%m-%d"),
@@ -217,6 +321,14 @@ def fit_series(
 
         metrics = extract_metrics(model, model_type=model_type)
         row.update(metrics)
+        row["noise_model"] = _noise_kind(noise) or "none"
+        if holdout:
+            row["holdout_share"] = float(holdout)
+            try:
+                row["r2_holdout"] = holdout_r2(model_type, series_name, head, precipitation, evaporation,
+                                               coverage.tmin.strftime("%Y-%m-%d"), holdout, noise=noise)
+            except Exception:  # noqa: BLE001 - a failed second fit must not lose the first
+                row["r2_holdout"] = None
         row.update(
             {
                 "run_id": run_id,

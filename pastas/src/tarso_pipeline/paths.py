@@ -110,6 +110,8 @@ TABLE_KINDS = (
     "shape_uncertainty",  # explore: Hessian vs bootstrap shape SE and family, per tail
     "return_level_ci",   # explore: GEV level with its 95% bootstrap band, per tail x T
     "family_choice",     # the family a person picked per model and tail (from git)
+    "model_selection",   # stage 2: per series x model type the stamp, runaway check and the pick
+    "model_choice",      # the model a person picked per series, overruling the pick (from git)
 )
 
 

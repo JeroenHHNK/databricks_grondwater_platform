@@ -152,14 +152,27 @@ def test_plot_path_rejects_an_unknown_kind(tmp_path):
         plot_path(tmp_path, "validated", "series_a", "histogram")
 
 
-def test_the_fit_plots_are_found_without_their_model_type(tmp_path):
+def test_the_plots_are_kept_per_model_type(tmp_path):
     from tarso_pipeline.results import latest_plots
 
     results = _png(tmp_path / "run_1" / "results_files" / "series_a_tarso_results.png", b"r", 1000)
+    gamma = _png(tmp_path / "run_1" / "results_files" / "series_a_linear_gamma_results.png", b"g", 1000)
     diagnostics = _png(tmp_path / "run_1" / "diagnostics_files" / "series_a_tarso_diagnostics.png", b"d", 1000)
     found = latest_plots(tmp_path)
-    assert found[("series_a", "results")] == results
-    assert found[("series_a", "diagnostics")] == diagnostics
+    assert found[("series_a_tarso", "results")] == results
+    assert found[("series_a_linear_gamma", "results")] == gamma
+    assert found[("series_a_tarso", "diagnostics")] == diagnostics
+
+
+def test_find_plot_falls_back_to_the_old_tarso_name(tmp_path):
+    from tarso_pipeline.results import find_plot, plots_dir
+
+    target = plots_dir(tmp_path, "validated")
+    old = _png(target / "series_a_return_periods.png", b"old", 1000)
+    assert find_plot(tmp_path, "validated", "series_a", "tarso", "return_periods") == old
+    assert find_plot(tmp_path, "validated", "series_a", "linear_gamma", "return_periods") is None
+    new = _png(target / "series_a_tarso_return_periods.png", b"new", 2000)
+    assert find_plot(tmp_path, "validated", "series_a", "tarso", "return_periods") == new
 
 
 def test_syncing_some_kinds_leaves_the_others_alone(tmp_path):

@@ -35,8 +35,26 @@
 # MAGIC
 # MAGIC Artefacts are grouped by **kind**, not by series, so all 20 `.pas` files sit
 # MAGIC together and all 20 plots sit together. The model type is in the filename
-# MAGIC because one series can be fitted with more than one, and the folders are shared
-# MAGIC across series - without it a `recharge` run would overwrite the `tarso` one.
+# MAGIC because one series is fitted with more than one, and the folders are shared
+# MAGIC across series - without it a `linear_gamma` fit would overwrite the `tarso` one.
+# MAGIC
+# MAGIC ### Model types
+# MAGIC
+# MAGIC `model_types` defaults to Tarso and the four Linear recharge models (`linear_exp`,
+# MAGIC `linear_gamma`, `linear_dexp`, `linear_fourparam`; `tarso_pipeline.fit.MODEL_SPECS`).
+# MAGIC All are fitted per series; which one a series *uses* is decided after the extremes run
+# MAGIC (`run_extremes` -> `<prefix>_model_selection`, `tarso_pipeline.selection`): the checks,
+# MAGIC no runaway in the extremes, then the lowest AIC, a simpler model winning within 2 AIC.
+# MAGIC `peterson_gamma` is available but off: it wins AIC and predicts unseen data worse.
+# MAGIC It is fitted on mm/day, so it assumes `forcing_units=m` (it scales by 1000 itself).
+# MAGIC
+# MAGIC `holdout` (default 0.3) fits each model a second time on the first 70 % of the
+# MAGIC observations and scores it on the last 30 % (`r2_holdout`): the selection uses it to
+# MAGIC refuse a lower AIC bought with worse prediction. It doubles the fit time; 0 turns it off.
+# MAGIC
+# MAGIC `noise` adds a noise model (`ar1` or `arma`). Off by default: on the validated
+# MAGIC series neither made the runs test pass (2-5 of 25), and both lowered the R2 of the
+# MAGIC simulation. AIC is computed on the noise then, so never compare AIC across noise settings.
 # MAGIC
 # MAGIC > Two runs on the **same day** share a run folder and overwrite each other's
 # MAGIC > artefacts, while `<prefix>_fit_metrics` keeps both rows. Set the `run_folder`
@@ -54,8 +72,8 @@
 # MAGIC
 # MAGIC Fits run **sequentially on the driver**, so wall-clock time is
 # MAGIC `series x len(model_types) x seconds-to-minutes each`. Check the count the
-# MAGIC manifest reports before launching an uncapped run, and drop `model_types` to
-# MAGIC `tarso` alone to halve it.
+# MAGIC manifest reports before launching an uncapped run. The Linear models take about a
+# MAGIC second each; Tarso and `linear_fourparam` a few. `model_types=tarso` alone is the old run.
 # MAGIC
 # MAGIC ### Forcing units
 # MAGIC
@@ -110,7 +128,11 @@ dbutils.widgets.text("station", "249", "KNMI station")
 dbutils.widgets.dropdown("forcing_units", "m", ["m", "mm"], "Forcing units")
 dbutils.widgets.text("warmup_days", "3650", "Warmup in days")
 
-dbutils.widgets.multiselect("model_types", "tarso", ["tarso", "recharge"], "Model types")
+dbutils.widgets.multiselect("model_types", "tarso,linear_exp,linear_gamma,linear_dexp,linear_fourparam",
+                            ["tarso", "linear_exp", "linear_gamma", "linear_dexp", "linear_fourparam",
+                             "peterson_gamma"], "Model types")
+dbutils.widgets.dropdown("noise", "none", ["none", "ar1", "arma"], "Noise model")
+dbutils.widgets.text("holdout", "0.3", "Holdout share for r2_holdout (0 = off)")
 dbutils.widgets.text("limit_series", "0", "Cap on series (0 = the whole manifest)")
 dbutils.widgets.text("run_folder", "", "Run folder (blank = run_yy_mm_dd)")
 
@@ -203,6 +225,8 @@ FORCING_UNITS = dbutils.widgets.get("forcing_units")
 WARMUP_DAYS = int(dbutils.widgets.get("warmup_days"))
 
 MODEL_TYPES = [m for m in dbutils.widgets.get("model_types").split(",") if m.strip()]
+NOISE = dbutils.widgets.get("noise")
+HOLDOUT = float(dbutils.widgets.get("holdout") or 0)
 LIMIT_SERIES = int(dbutils.widgets.get("limit_series"))
 DEDUP_METHOD = dbutils.widgets.get("dedup_method")
 RESAMPLE_RULE = dbutils.widgets.get("resample_rule")
@@ -229,6 +253,7 @@ print(f"volume       {VOLUME_BASE}")
 print(f"run folder   {RUN_DIR}")
 print(f"forcing      {FORCING_FILE}  ({FORCING_UNITS})")
 print(f"model types  {MODEL_TYPES}   series cap: {LIMIT_SERIES or 'none'}")
+print(f"noise model  {NOISE}   holdout {HOLDOUT:g}")
 print(f"cleaning     dedup={DEDUP_METHOD}, resample={RESAMPLE_RULE}/{RESAMPLE_METHOD}")
 print(f"pastas       {ps.__version__}")
 
@@ -359,13 +384,16 @@ for item in work.itertuples():
             forcing_station=STATION,
             forcing_units=FORCING_UNITS,
             save_plot=SAVE_PLOTS,
+            noise=NOISE,
+            holdout=HOLDOUT,
             check_rows=check_rows,
             simulation_frames=simulation_frames,
         )
         rows.append(row)
         if row["success"]:
-            print(f"   {model_type:9} OK   EVP={row['evp']:.1f}%  R2={row['r2']:.3f}  "
-                  f"RMSE={row['rmse']:.3f}  nobs={row['nobs']}  "
+            holdout_text = "" if row.get("r2_holdout") is None else f"  R2 holdout={row['r2_holdout']:.3f}"
+            print(f"   {model_type:9} OK   EVP={row['evp']:.1f}%  R2={row['r2']:.3f}{holdout_text}  "
+                  f"AIC={row['aic']:.1f}  k={row['n_param']}  RMSE={row['rmse']:.3f}  nobs={row['nobs']}  "
                   f"(dedup removed {row['n_duplicate_timestamps']:,})")
             failed = [c["check"] for c in check_rows
                       if c["series_name"] == series_name

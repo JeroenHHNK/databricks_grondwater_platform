@@ -2,8 +2,9 @@
 Return levels from the Pastas models, drawn per well in the Boxplots cross section.
 
 For every well of the cross section, the series Boxplots shows for it (the same choice as
-the heads, `databricks_reeksen.kies_reeksen`) is looked up in the Pastas results; its
-return levels in the family picked per tail (`pastas/family_choice/`, set on Pastas ->
+the heads, `databricks_reeksen.kies_reeksen`) is looked up in the Pastas results; the
+levels of the model that series uses (a person's pick on Pastas -> Modellen, else the
+automatic pick of `<prefix>_model_selection`, else Tarso) in the family picked per tail (`pastas/family_choice/`, set on Pastas ->
 Familie kiezen) are drawn as one line per tail and return period across the wells: solid
 for the wet tail (high heads), dashed for the dry tail, a triangle at each well. A tail
 without a pick has no family and is left out. The figure from boxplots is copied, never
@@ -32,17 +33,23 @@ RAMP = {"wet": ["#9ec5f0", "#5b9be3", "#2a78d6", "#1a56a3", "#0e3870"],
 SYMBOOL = {"wet": "triangle-up", "dry": "triangle-down"}
 
 
-def punten(putten: DataFrame, niveaus: DataFrame, perioden: list[int]) -> DataFrame:
-    """One row per well x tail x T: x_profiel, peilbuis, level, family.
+def punten(putten: DataFrame, niveaus: DataFrame, perioden: list[int],
+           in_gebruik: DataFrame | None = None) -> DataFrame:
+    """One row per well x tail x T: x_profiel, peilbuis, level, family, model_type.
 
     `putten` has meetreeks_id, x_profiel, peilbuis, diepte_niveau (the Stijghoogtes
-    catalogue); `niveaus` is `results.chosen_levels(...)`.
+    catalogue); `niveaus` is `results.chosen_levels(...)`; `in_gebruik` the model per
+    series (`selection.model_in_use`: meetreeks_id, model_type). Without it: Tarso.
     """
     kolommen = ["x_profiel", "peilbuis", "diepte_niveau", "tail", "return_period", "level", "family",
-                "meetreeks_id"]
+                "meetreeks_id", "model_type"]
     if putten.empty or niveaus.empty:
         return DataFrame(columns=kolommen)
-    lv = niveaus[(niveaus["model_type"] == MODEL_TYPE) & niveaus["return_period"].isin(perioden)]
+    lv = niveaus[niveaus["return_period"].isin(perioden)]
+    if in_gebruik is None or in_gebruik.empty:
+        lv = lv[lv["model_type"] == MODEL_TYPE]
+    else:
+        lv = lv.merge(in_gebruik[["meetreeks_id", "model_type"]], on=["meetreeks_id", "model_type"], how="inner")
     uit = putten.dropna(subset=["meetreeks_id", "x_profiel"]).merge(lv, on="meetreeks_id", how="inner")
     return uit.dropna(subset=["level"])[kolommen].sort_values(["tail", "return_period", "x_profiel"],
                                                              ignore_index=True)
@@ -62,7 +69,9 @@ def _lijn(g: DataFrame) -> DataFrame:
     return (g.groupby("x_profiel", sort=True)
             .agg(level=("level", "mean"),
                  tekst=("peilbuis", lambda p: ", ".join(dict.fromkeys(p))),
-                 familie=("family", lambda f: ", ".join(dict.fromkeys(f))))
+                 familie=("family", lambda f: ", ".join(dict.fromkeys(f))),
+                 model=("model_type", lambda m: ", ".join(dict.fromkeys(m))) if "model_type" in g
+                 else ("family", lambda f: ""))
             .reset_index())
 
 
@@ -85,9 +94,10 @@ def voeg_toe(figuur: go.Figure, pt: DataFrame) -> go.Figure:
                 legendgrouptitle_text=f"Herhalingstijd {'nat' if staart == 'wet' else 'droog'} (Pastas)",
                 line={"color": kleur, "width": 2.5, "dash": "solid" if staart == "wet" else "dash"},
                 marker={"symbol": SYMBOOL[staart], "size": 11, "color": kleur, "line": {"width": 1, "color": "#222"}},
-                customdata=lijn[["tekst", "familie"]].to_numpy(dtype=object),
+                customdata=lijn[["tekst", "familie", "model"]].to_numpy(dtype=object),
                 hovertemplate=(f"%{{customdata[0]}} · T={T} {'nat' if staart == 'wet' else 'droog'}: "
-                               "%{y:.2f} m NAP<br>familie %{customdata[1]}<extra></extra>"),
+                               "%{y:.2f} m NAP<br>familie %{customdata[1]} · model %{customdata[2]}"
+                               "<extra></extra>"),
             ))
     # The profile figure fixes its y range; widen it so every line is in view.
     bereik = fig.layout.yaxis.range
@@ -109,7 +119,7 @@ def _putten(project: str, profiel_id: str) -> DataFrame:
 
 def in_profiel(figuren, project: str, profiel_id: str):
     """Controls above the Boxplots plot; returns `figuren` with the return levels added (or as is)."""
-    from .pastas_pagina import _keuze, _lees
+    from .pastas_pagina import _in_gebruik, _keuze, _lees
 
     k1, k2, k3 = st.columns([1, 2, 2], vertical_alignment="bottom")
     aan = k1.toggle("Herhalingstijden", value=True, help="Uit de Pastas-modellen van de peilbuizen in dit "
@@ -132,7 +142,7 @@ def in_profiel(figuren, project: str, profiel_id: str):
     except Exception as fout:  # noqa: BLE001 - the plot itself must still show
         st.caption(f"Peilbuizen van dit dwarsprofiel niet gevonden: {fout}")
         return figuren
-    pt = punten(putten, results.chosen_levels(lv.data, _keuze(basis)), perioden)
+    pt = punten(putten, results.chosen_levels(lv.data, _keuze(basis)), perioden, _in_gebruik(basis))
     met = pt["peilbuis"].nunique() if not pt.empty else 0
     zonder = sorted(set(putten.dropna(subset=["meetreeks_id"])["peilbuis"]) - set(pt["peilbuis"]))
     st.caption(f"Herhalingstijden voor {met} van {putten['peilbuis'].nunique()} peilbuizen · "

@@ -118,13 +118,19 @@ def fit_pooled(
     t_list=DEFAULT_T_LIST,
     kept_grid=DEFAULT_KEPT_GRID,
     make_plots: bool = True,
+    model_type: str = "tarso",
 ) -> ModelResult:
-    """Fit both tails of pooled extremes and write the artefacts (when ``run_directory``)."""
+    """Fit both tails of pooled extremes and write the artefacts (when ``run_directory``).
+
+    Every artefact is named ``<series_name>_<model_type>_...``: one series has a model
+    per model type, and they share the folders.
+    """
     failures = list(failures or [])
+    stem = model_stem(series_name, model_type)
     if n_members == 0:
         return ModelResult(
             summary=summary_row(meetreeks_id, series_name, run_id, pooled, {}, 0,
-                                failures, "error", exclude_first, t_list)
+                                failures, "error", exclude_first, t_list, model_type=model_type)
         )
 
     per_tail: dict[str, dict] = {}
@@ -145,10 +151,10 @@ def fit_pooled(
     status = "ok" if not failures else ("partial" if per_tail else "error")
     result = ModelResult(
         summary=summary_row(meetreeks_id, series_name, run_id, pooled, per_tail,
-                            n_members, failures, status, exclude_first, t_list),
-        selection=selection_rows(meetreeks_id, series_name, run_id, per_tail),
-        parameters=tail_parameter_rows(meetreeks_id, series_name, run_id, per_tail),
-        levels=return_level_rows(meetreeks_id, series_name, run_id, per_tail),
+                            n_members, failures, status, exclude_first, t_list, model_type=model_type),
+        selection=selection_rows(meetreeks_id, series_name, run_id, per_tail, model_type=model_type),
+        parameters=tail_parameter_rows(meetreeks_id, series_name, run_id, per_tail, model_type=model_type),
+        levels=return_level_rows(meetreeks_id, series_name, run_id, per_tail, model_type=model_type),
         per_tail=per_tail,
     )
     if per_tail:
@@ -163,37 +169,37 @@ def fit_pooled(
             if frame is not None and not frame.empty:
                 result.paths[f"pooled_{tail}"] = _write(
                     frame, extremes_dir(run_directory, POOLED_EXTREMES_DIR),
-                    f"{series_name}_{tail}.csv",
+                    f"{stem}_{tail}.csv",
                 )
 
         used = used_extremes_table(pooled, exclude_first)
         if not used.empty:
             result.paths["used_extremes"] = _write(
                 used, extremes_dir(run_directory, USED_EXTREMES_DIR),
-                f"used_extremes_{series_name}.csv", index=False,
+                f"used_extremes_{stem}.csv", index=False,
             )
 
         if result.return_table is not None:
             result.paths["return_periods"] = _write(
                 result.return_table, extremes_dir(run_directory, RETURN_CSV_DIR),
-                f"{series_name}_return_periods.csv",
+                f"{stem}_return_periods.csv",
             )
 
         if make_plots and per_tail:
             result.paths["return_plot"] = return_period_plot(
                 per_tail,
-                Path(extremes_dir(run_directory, RETURN_PLOTS_DIR)) / f"{series_name}_return_periods.png",
-                f"Return periods - {series_name}",
+                Path(extremes_dir(run_directory, RETURN_PLOTS_DIR)) / f"{stem}_return_periods.png",
+                f"Return periods - {series_name} ({model_type})",
             )
             result.paths["threshold_plot"] = threshold_plot(
                 per_tail,
-                Path(extremes_dir(run_directory, THRESHOLD_PLOTS_DIR)) / f"{series_name}_threshold.png",
-                f"Threshold choice - {series_name}",
+                Path(extremes_dir(run_directory, THRESHOLD_PLOTS_DIR)) / f"{stem}_threshold.png",
+                f"Threshold choice - {series_name} ({model_type})",
             )
             result.paths["qq_plot"] = qq_plot(
                 per_tail,
-                Path(extremes_dir(run_directory, QQ_PLOTS_DIR)) / f"{series_name}_qq.png",
-                f"QQ - {series_name}",
+                Path(extremes_dir(run_directory, QQ_PLOTS_DIR)) / f"{stem}_qq.png",
+                f"QQ - {series_name} ({model_type})",
             )
     except Exception as exc:  # noqa: BLE001 - artefacts must not lose the fit
         result.summary["failure_detail"] = "; ".join(
@@ -219,6 +225,7 @@ def run_model(
     kept_grid=DEFAULT_KEPT_GRID,
     make_plots: bool = True,
     forcing: dict | None = None,
+    model_type: str = "tarso",
 ) -> ModelResult:
     """Simulate, pool, fit and write everything for one model. Never raises."""
     try:
@@ -226,14 +233,39 @@ def run_model(
     except Exception as exc:  # noqa: BLE001 - e.g. pastas missing
         return ModelResult(
             summary=summary_row(meetreeks_id, series_name, run_id, {}, {}, 0,
-                                [("simulate", f"{type(exc).__name__}: {exc}")], "error", exclude_first, t_list)
+                                [("simulate", f"{type(exc).__name__}: {exc}")], "error", exclude_first, t_list,
+                                model_type=model_type)
         )
     return fit_pooled(pooled, meetreeks_id, series_name, run_directory, run_id, n_members, failures,
-                      exclude_first=exclude_first, t_list=t_list, kept_grid=kept_grid, make_plots=make_plots)
+                      exclude_first=exclude_first, t_list=t_list, kept_grid=kept_grid, make_plots=make_plots,
+                      model_type=model_type)
 
 
-def discover_models(run_directory: str) -> pd.DataFrame:
-    """Every ``.pas`` in a run folder's ``pas_files``, as (series_name, path)."""
+def model_stem(series_name: str, model_type: str) -> str:
+    """``<series_name>_<model_type>``: the stem of every file of one model."""
+    return f"{series_name}_{model_type}"
+
+
+def split_stem(stem: str) -> tuple[str, str]:
+    """``series_<hash>_<model_type>`` -> (series_name, model_type).
+
+    The model type is matched against the known ones, longest first, because it may
+    itself contain underscores (``linear_gamma``). A stem without one is a file from
+    before the artefacts carried their model type, when every model was Tarso.
+    """
+    from tarso_pipeline.fit import MODEL_TYPES
+
+    for model_type in sorted(MODEL_TYPES, key=len, reverse=True):
+        if stem.endswith(f"_{model_type}"):
+            return stem[: -len(model_type) - 1], model_type
+    return stem, "tarso"
+
+
+def discover_models(run_directory: str, model_types=None) -> pd.DataFrame:
+    """Every ``.pas`` in a run folder's ``pas_files``, as (series_name, model_type, path).
+
+    ``model_types`` keeps only those types (None: all).
+    """
     from tarso_pipeline.paths import PAS_DIR, artefact_dir
 
     directory = Path(artefact_dir(run_directory, PAS_DIR))
@@ -243,10 +275,9 @@ def discover_models(run_directory: str) -> pd.DataFrame:
         )
     rows = []
     for path in sorted(directory.glob("*.pas")):
-        stem = path.stem
-        # series_<hash>_<model_type> -> strip the trailing model type
-        series_name = stem.rsplit("_", 1)[0] if "_" in stem else stem
-        rows.append(
-            {"series_name": series_name, "model_path": str(path), "model_file": path.name}
-        )
-    return pd.DataFrame(rows, columns=["series_name", "model_path", "model_file"])
+        series_name, model_type = split_stem(path.stem)
+        if model_types is not None and model_type not in model_types:
+            continue
+        rows.append({"series_name": series_name, "model_type": model_type, "model_path": str(path),
+                     "model_file": path.name})
+    return pd.DataFrame(rows, columns=["series_name", "model_type", "model_path", "model_file"])

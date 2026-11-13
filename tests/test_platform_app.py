@@ -200,6 +200,35 @@ def test_return_levels_land_on_the_wells_of_the_cross_section():
     assert tuple(uit.layout.yaxis.range) == (-2.3, 1.1)               # widened to show every marker
 
 
+def test_the_return_levels_come_from_the_model_each_series_uses():
+    from platform_app import herhalingstijden as h
+
+    putten = pd.DataFrame({"meetreeks_id": ["r1", "r2"], "x_profiel": [10.0, 30.0], "peilbuis": ["PB1", "PB2"],
+                           "diepte_niveau": "hoofd"})
+    niveaus = pd.DataFrame({"meetreeks_id": ["r1", "r1", "r2", "r2"],
+                            "model_type": ["tarso", "linear_gamma", "tarso", "linear_gamma"],
+                            "tail": "wet", "family": "emp", "return_period": 10, "level": [1.0, 2.0, 3.0, 4.0]})
+    gebruikt = pd.DataFrame({"meetreeks_id": ["r1", "r2"], "model_type": ["linear_gamma", "tarso"]})
+    pt = h.punten(putten, niveaus, [10], gebruikt).set_index("peilbuis")
+    assert pt["level"].to_dict() == {"PB1": 2.0, "PB2": 3.0}
+    assert pt["model_type"].to_dict() == {"PB1": "linear_gamma", "PB2": "tarso"}
+    assert h.punten(putten, niveaus, [10])["level"].tolist() == [1.0, 3.0]   # no selection: Tarso
+
+
+def test_the_models_table_gets_the_stamp_and_the_model_in_use():
+    from platform_app.pastas_pagina import voeg_selectie_toe
+
+    tabel = pd.DataFrame({"meetreeks_id": ["r1", "r1"], "model_type": ["tarso", "linear_dexp"]})
+    selectie = pd.DataFrame({"meetreeks_id": ["r1", "r1"], "model_type": ["tarso", "linear_dexp"],
+                             "passed": [False, True], "selected": [False, True], "d_aic_tarso": [0.0, -297.0]})
+    gebruikt = pd.DataFrame({"meetreeks_id": ["r1"], "model_type": ["linear_dexp"], "bron": ["automatisch"]})
+    uit = voeg_selectie_toe(tabel, selectie, gebruikt).set_index("model_type")
+    assert uit.loc["linear_dexp", ["stempel", "in_gebruik"]].tolist() == ["passed", "✓ automatisch"]
+    assert uit.loc["tarso", ["stempel", "in_gebruik"]].tolist() == ["", ""]
+    leeg = voeg_selectie_toe(tabel, pd.DataFrame(), gebruikt.iloc[:0])     # a run from before the selection
+    assert leeg["stempel"].tolist() == ["", ""] and leeg["in_gebruik"].tolist() == ["", ""]
+
+
 def test_a_return_period_is_one_line_across_the_wells_sorted_by_x():
     import plotly.graph_objects as go
     from platform_app import herhalingstijden as h
