@@ -25,6 +25,7 @@ PLOT_KLEUREN_STANDAARD: dict[str, str] = {
     "meanpoint": "#E69F00",
     "median": "#CC79A7",
     "deep_gw_line": "#8A2BE2",  # paars
+    "gw_band": "rgba(0, 114, 178, 0.18)",  # gw_line, transparant: laagste tot hoogste stand
 }
 
 # Eén kleur per peilbuis, dezelfde in de profielplot (buis en filter) en de
@@ -49,6 +50,7 @@ ONDERDELEN_STANDAARD: dict[str, bool] = {
     "mediaan": False,
     "uitschieters": False,
     "terugkeertijden": False,
+    "bereik": True,  # blauwe band van de laagste tot de hoogste gemeten stand
 }
 
 # Koppelt de tijdslider van de profielplot (boven) aan een verticale markeringslijn in de
@@ -195,6 +197,7 @@ def maak_profiel_plot(plot_data: dict, plot_config: dict):
     x_peilbuis: list[float] = plot_data["x_peilbuis"]
     stijghoogtes: list[np.ndarray] = plot_data["stijghoogtes"]
     gem_waterstanden: DataFrame = plot_data["gem_waterstanden"]
+    bereik_lijnen: dict[str, DataFrame] = plot_data.get("bereik_lijnen") or {}
     freatische_lijn: None = plot_data["freatische_lijn"]
     plot_schematisatie: bool = plot_data["plot_schematisatie"]
     x_ts_min: float = plot_data.get("x_ts_min")
@@ -547,6 +550,25 @@ def maak_profiel_plot(plot_data: dict, plot_config: dict):
             line=dict(color=peilbuis_kleur(idx), width=2),
             fillcolor=peilbuis_kleur(idx),
             layer="above",
+        )
+
+    # Band van de laagste tot de hoogste gemeten stand rond de gemiddelde freatische lijn.
+    # Eén gesloten vlak (hoogste lijn heen, laagste lijn terug), zodat de band ook klopt als
+    # de twee lijnen op een ander x-raster liggen.
+    laagste, hoogste = bereik_lijnen.get("min"), bereik_lijnen.get("max")
+    if ONDERDELEN["bereik"] and laagste is not None and hoogste is not None and not laagste.empty:
+        figuur.add_trace(
+            go.Scatter(
+                x=list(hoogste["x"]) + list(laagste["x"])[::-1],
+                y=list(hoogste["y"]) + list(laagste["y"])[::-1],
+                fill="toself",
+                mode="lines",
+                line=dict(width=0),
+                fillcolor=PLOT_KLEUREN["gw_band"],
+                name="Bereik metingen (laagste–hoogste)",
+                legendgroup="gw_band",
+                hoverinfo="skip",
+            )
         )
 
     # Waterstandslijnen

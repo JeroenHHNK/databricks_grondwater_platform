@@ -128,9 +128,10 @@ dbutils.widgets.text("station", "249", "KNMI station")
 dbutils.widgets.dropdown("forcing_units", "m", ["m", "mm"], "Forcing units")
 dbutils.widgets.text("warmup_days", "3650", "Warmup in days")
 
-dbutils.widgets.multiselect("model_types", "tarso,linear_exp,linear_gamma,linear_dexp,linear_fourparam",
-                            ["tarso", "linear_exp", "linear_gamma", "linear_dexp", "linear_fourparam",
-                             "peterson_gamma"], "Model types")
+# A text widget, as in run_extremes and export_results: a Databricks multiselect only takes
+# one choice as its default, so it cannot default to all five.
+dbutils.widgets.text("model_types", "tarso,linear_exp,linear_gamma,linear_dexp,linear_fourparam",
+                     "Model types (comma-separated; also peterson_gamma)")
 dbutils.widgets.dropdown("noise", "none", ["none", "ar1", "arma"], "Noise model")
 dbutils.widgets.text("holdout", "0.3", "Holdout share for r2_holdout (0 = off)")
 dbutils.widgets.text("limit_series", "0", "Cap on series (0 = the whole manifest)")
@@ -195,7 +196,7 @@ import pandas as pd
 import pastas as ps
 from pyspark.sql import functions as F
 
-from tarso_pipeline.fit import fit_series
+from tarso_pipeline.fit import MODEL_SPECS, fit_series
 from tarso_pipeline.fit_metrics import rows_to_frame, spark_schema
 from tarso_pipeline.forcing import check_coverage, forcing_file, load_forcing_pair
 from tarso_pipeline.meting import series_rows_sql
@@ -225,7 +226,10 @@ STATION = dbutils.widgets.get("station").strip()
 FORCING_UNITS = dbutils.widgets.get("forcing_units")
 WARMUP_DAYS = int(dbutils.widgets.get("warmup_days"))
 
-MODEL_TYPES = [m for m in dbutils.widgets.get("model_types").split(",") if m.strip()]
+MODEL_TYPES = [m.strip() for m in dbutils.widgets.get("model_types").split(",") if m.strip()]
+_unknown = [m for m in MODEL_TYPES if m not in MODEL_SPECS]
+if not MODEL_TYPES or _unknown:
+    raise ValueError(f"model_types: unknown {_unknown or '(empty)'}; choose from {sorted(MODEL_SPECS)}")
 NOISE = dbutils.widgets.get("noise")
 HOLDOUT = float(dbutils.widgets.get("holdout") or 0)
 LIMIT_SERIES = int(dbutils.widgets.get("limit_series"))
