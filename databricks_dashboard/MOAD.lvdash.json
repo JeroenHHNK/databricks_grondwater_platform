@@ -1,0 +1,2075 @@
+{
+  "datasets": [
+    {
+      "name": "488d3fc6",
+      "displayName": "Inventarisatie_CSO: Projectcodes na 2022",
+      "queryLines": [
+        "SELECT\r\n",
+        "  regexp_extract(code, '^(_?[^_]+)_', 1) AS project_code,\r\n",
+        "  COUNT(*) AS count\r\n",
+        "FROM gold_prd.hl_cs_objecten.meetlocatie\r\n",
+        "WHERE ingevoerd_datum_utc > '2022-12-31T23:59:59.000Z'\r\n",
+        "  AND compartiment_naam = 'Grondwater'\r\n",
+        "  AND meetreeks_actief = 'Ja'\r\n",
+        "GROUP BY 1\r\n",
+        "ORDER BY count DESC"
+      ]
+    },
+    {
+      "name": "20ea33a5",
+      "displayName": "Inventarisatie_CSO: Verdeling Leveranciers",
+      "queryLines": [
+        "SELECT\r\n",
+        "  CASE \r\n",
+        "    WHEN code LIKE '\\\\_%' THEN 'Wiertsema'\r\n",
+        "    ELSE 'Fugro'\r\n",
+        "  END AS supplier,\r\n",
+        "  COUNT(*) AS count\r\n",
+        "FROM gold_prd.hl_cs_objecten.meetlocatie\r\n",
+        "WHERE ingevoerd_datum_utc > TIMESTAMP '2022-12-31 23:59:59'\r\n",
+        "  AND compartiment_naam = 'Grondwater'\r\n",
+        "  AND meetreeks_actief = 'Ja'\r\n",
+        "GROUP BY supplier\r\n",
+        "ORDER BY count DESC"
+      ]
+    },
+    {
+      "name": "930d6f27",
+      "displayName": "Inventarisatie_CSO: Compleetheid_CSO",
+      "queryLines": [
+        "SELECT\r\n",
+        "  COUNT(*)                     AS totaal_rijen,\r\n",
+        "  COUNT(id)                    AS id_gevuld,\r\n",
+        "  COUNT(code)                  AS code_gevuld,\r\n",
+        "  COUNT(bovenkant_peilbuis)    AS bovenkant_peilbuis_gevuld,\r\n",
+        "  COUNT(bovenkant_filter)      AS bovenkant_filter_gevuld,\r\n",
+        "  COUNT(onderkant_filter)      AS onderkant_filter_gevuld\r\n",
+        "FROM gold_prd.hl_cs_objecten.meetlocatie\r\n",
+        "WHERE ingevoerd_datum_utc > '2022-12-31T23:59:59.000Z'\r\n",
+        "  AND compartiment_naam = 'Grondwater'\r\n",
+        "  AND meetreeks_actief = 'Ja'"
+      ]
+    },
+    {
+      "name": "a23ae5ec",
+      "displayName": "Inventarisatie_CSO: Aantal peilbuizen na 2022",
+      "queryLines": [
+        "-- %sql\r\n",
+        "SELECT *\r\n",
+        "FROM `gold_prd`.`hl_cs_objecten`.`meetlocatie`\r\n",
+        "WHERE `ingevoerd_datum_utc` > '2022-12-31T23:59:59.000Z'\r\n",
+        "AND `compartiment_naam` = 'Grondwater'\r\n",
+        "AND `meetreeks_actief` = 'Ja'; \r\n",
+        "-- Code om te laten zien hoeveel sensoren er in CSO zitten, en na 2023 + compartiment_naam = Grondwater hebbe"
+      ]
+    },
+    {
+      "name": "e4067ac9",
+      "displayName": "Inventarisatie_CSO: Locaties Peilbuizen",
+      "queryLines": [
+        "-- %sql\r\n",
+        "SELECT *\r\n",
+        "FROM `gold_prd`.`hl_cs_objecten`.`meetlocatie`\r\n",
+        "WHERE `ingevoerd_datum_utc` > '2022-12-31T23:59:59.000Z'\r\n",
+        "AND `compartiment_naam` = 'Grondwater'\r\n",
+        "AND `meetreeks_actief` = 'Ja'; \r\n",
+        "-- Code om te laten zien hoeveel sensoren er in CSO zitten, en na 2022 + compartiment_naam = Grondwater hebben"
+      ]
+    },
+    {
+      "name": "634ed94b",
+      "displayName": "Inventarisatie_CSO: Matched vs unmatched",
+      "queryLines": [
+        "SELECT\r\n",
+        "  COUNT(*) AS total_meetreeks_rows,\r\n",
+        "  COUNT(m.code) AS matched_rows,\r\n",
+        "  COUNT(*) - COUNT(m.code) AS unmatched_rows\r\n",
+        "FROM `gold_prd`.`hl_grondwaterpeilmeting`.`meetreeks` AS r\r\n",
+        "LEFT JOIN `gold_prd`.`hl_cs_objecten`.`meetlocatie` AS m\r\n",
+        "  ON r.meetlocatie_code = m.code"
+      ]
+    },
+    {
+      "name": "173b442d",
+      "displayName": "Inventarisatie_CSO: Linked_Unlinked",
+      "queryLines": [
+        "SELECT\r\n",
+        "  ROW_NUMBER() OVER (ORDER BY r.meetlocatie_code) AS row_num,\r\n",
+        "  r.*,\r\n",
+        "  CASE WHEN m.code IS NULL THEN 'Unlinked' ELSE 'Linked' END AS link_status\r\n",
+        "FROM `gold_prd`.`hl_grondwaterpeilmeting`.`meetreeks` AS r\r\n",
+        "LEFT JOIN `gold_prd`.`hl_cs_objecten`.`meetlocatie` AS m\r\n",
+        "  ON r.meetlocatie_code = m.code"
+      ]
+    },
+    {
+      "name": "6853c062",
+      "displayName": "Inventarisatie_CSO: Linked_Unlinked",
+      "queryLines": [
+        "WITH filtered_meetlocatie AS (\r\n",
+        "  SELECT *\r\n",
+        "  FROM `gold_prd`.`hl_cs_objecten`.`meetlocatie`\r\n",
+        "  WHERE `compartiment_naam` = 'Grondwater'\r\n",
+        "    AND `meetreeks_actief` = 'Ja'\r\n",
+        ")\r\n",
+        "\r\n",
+        "SELECT\r\n",
+        "  ROW_NUMBER() OVER (ORDER BY r.meetlocatie_code) AS row_num,\r\n",
+        "  r.*,\r\n",
+        "  m.code                     AS meetlocatie_code_matched,\r\n",
+        "  m.naam                     AS meetlocatie_naam,\r\n",
+        "  m.wgs84_xcoordinaat        AS meetlocatie_wgs84_x,\r\n",
+        "  m.wgs84_ycoordinaat        AS meetlocatie_wgs84_y,\r\n",
+        "  m.geometrie                AS meetlocatie_geometrie,\r\n",
+        "  CASE WHEN m.code IS NULL THEN 'Unlinked' ELSE 'Linked' END AS link_status\r\n",
+        "FROM `gold_prd`.`hl_grondwaterpeilmeting`.`meetreeks` AS r\r\n",
+        "LEFT JOIN filtered_meetlocatie AS m\r\n",
+        "  ON r.meetlocatie_code = m.code;"
+      ]
+    },
+    {
+      "name": "eb755266",
+      "displayName": "Fugro: API_Data_Delivery",
+      "queryLines": [
+        "WITH daily AS (\r\n",
+        "  SELECT\r\n",
+        "    m.meetreeks_id,\r\n",
+        "    DATE(m.tijdstempel_utc) AS d,\r\n",
+        "    COUNT(*) AS cnt\r\n",
+        "  FROM gold_prd.hl_grondwaterpeilmeting.meting m\r\n",
+        "  WHERE m.tijdstempel_utc >= DATE_SUB(CURRENT_DATE, 14)\r\n",
+        "    AND m.tijdstempel_utc <  CURRENT_DATE\r\n",
+        "  GROUP BY m.meetreeks_id, DATE(m.tijdstempel_utc)\r\n",
+        "),\r\n",
+        "series AS (\r\n",
+        "  SELECT *\r\n",
+        "  FROM (\r\n",
+        "    SELECT\r\n",
+        "      r.id AS meetreeks_id,\r\n",
+        "      CONCAT(o.code, '_', r.code) AS object_meetreeks_code\r\n",
+        "    FROM gold_prd.hl_grondwaterpeilmeting.meetreeks r\r\n",
+        "    LEFT JOIN gold_prd.hl_grondwaterpeilmeting.object o\r\n",
+        "      ON o.id = r.object_id\r\n",
+        "    WHERE r.bronsysteem = 'Fugro'\r\n",
+        "  )\r\n",
+        "  WHERE UPPER(object_meetreeks_code) NOT LIKE '%HANDWAARNEMING%'\r\n",
+        "),\r\n",
+        "calendar AS (\r\n",
+        "  SELECT explode(\r\n",
+        "    sequence(DATE_SUB(CURRENT_DATE, 14), DATE_SUB(CURRENT_DATE, 1), interval 1 day)\r\n",
+        "  ) AS d\r\n",
+        ")\r\n",
+        "SELECT\r\n",
+        "  s.meetreeks_id,\r\n",
+        "  s.object_meetreeks_code,\r\n",
+        "  CONCAT('-', CAST(DATEDIFF(CURRENT_DATE, c.d) AS STRING), 'd') AS day_bucket, -- -14d .. -1d\r\n",
+        "  COALESCE(d.cnt, 0) AS cnt\r\n",
+        "FROM series s\r\n",
+        "CROSS JOIN calendar c\r\n",
+        "LEFT JOIN daily d\r\n",
+        "  ON d.meetreeks_id = s.meetreeks_id\r\n",
+        " AND d.d = c.d\r\n",
+        "ORDER BY\r\n",
+        "  s.meetreeks_id,\r\n",
+        "  c.d;"
+      ]
+    },
+    {
+      "name": "8f184403",
+      "displayName": "Wiertsema: API_Data_Delivery",
+      "queryLines": [
+        "WITH daily AS (\r\n",
+        "  SELECT\r\n",
+        "    m.meetreeks_id,\r\n",
+        "    DATE(m.tijdstempel_utc) AS d,\r\n",
+        "    COUNT(*) AS cnt\r\n",
+        "  FROM gold_prd.hl_grondwaterpeilmeting.meting m\r\n",
+        "  WHERE m.tijdstempel_utc >= DATE_SUB(CURRENT_DATE, 14)\r\n",
+        "    AND m.tijdstempel_utc <  CURRENT_DATE\r\n",
+        "  GROUP BY m.meetreeks_id, DATE(m.tijdstempel_utc)\r\n",
+        "),\r\n",
+        "series AS (\r\n",
+        "  SELECT *\r\n",
+        "  FROM (\r\n",
+        "    SELECT\r\n",
+        "      r.id AS meetreeks_id,\r\n",
+        "      CONCAT(o.code, '_', r.code) AS object_meetreeks_code\r\n",
+        "    FROM gold_prd.hl_grondwaterpeilmeting.meetreeks r\r\n",
+        "    LEFT JOIN gold_prd.hl_grondwaterpeilmeting.object o\r\n",
+        "      ON o.id = r.object_id\r\n",
+        "    WHERE r.bronsysteem = 'Wiertsema'\r\n",
+        "  )\r\n",
+        "  WHERE UPPER(object_meetreeks_code) NOT LIKE '%HANDWAARNEMING%'\r\n",
+        "),\r\n",
+        "calendar AS (\r\n",
+        "  SELECT explode(\r\n",
+        "    sequence(DATE_SUB(CURRENT_DATE, 14), DATE_SUB(CURRENT_DATE, 1), interval 1 day)\r\n",
+        "  ) AS d\r\n",
+        ")\r\n",
+        "SELECT\r\n",
+        "  s.meetreeks_id,\r\n",
+        "  s.object_meetreeks_code,\r\n",
+        "  CONCAT('-', CAST(DATEDIFF(CURRENT_DATE, c.d) AS STRING), 'd') AS day_bucket, -- -14d .. -1d\r\n",
+        "  COALESCE(d.cnt, 0) AS cnt\r\n",
+        "FROM series s\r\n",
+        "CROSS JOIN calendar c\r\n",
+        "LEFT JOIN daily d\r\n",
+        "  ON d.meetreeks_id = s.meetreeks_id\r\n",
+        " AND d.d = c.d\r\n",
+        "ORDER BY\r\n",
+        "  s.meetreeks_id,\r\n",
+        "  c.d;"
+      ]
+    },
+    {
+      "name": "d950223d",
+      "displayName": "Wiertsema: API_Data_Quality",
+      "queryLines": [
+        "WITH base AS (\r\n",
+        "  SELECT\r\n",
+        "    m.meetreeks_id,\r\n",
+        "    CONCAT(o.code, '_', r.code) AS object_meetreeks_code,\r\n",
+        "    m.tijdstempel_utc AS ts,\r\n",
+        "    m.waarde,\r\n",
+        "    TRY_CAST(r.eind_filter AS DOUBLE)        AS onderkant_filter,\r\n",
+        "    TRY_CAST(r.bovenkant_peilbuis AS DOUBLE) AS bovenkant_peilbuis\r\n",
+        "  FROM gold_prd.hl_grondwaterpeilmeting.meting m\r\n",
+        "  JOIN gold_prd.hl_grondwaterpeilmeting.meetreeks r\r\n",
+        "    ON m.meetreeks_id = r.id\r\n",
+        "  LEFT JOIN gold_prd.hl_grondwaterpeilmeting.object o\r\n",
+        "    ON o.id = r.object_id\r\n",
+        "  WHERE r.bronsysteem = 'Wiertsema'\r\n",
+        "),\r\n",
+        "calc AS (\r\n",
+        "  SELECT\r\n",
+        "    *,\r\n",
+        "    waarde - LAG(waarde) OVER (PARTITION BY meetreeks_id ORDER BY ts) AS delta_waarde,\r\n",
+        "    LAG(waarde) OVER (PARTITION BY meetreeks_id ORDER BY ts)          AS prev_waarde\r\n",
+        "  FROM base\r\n",
+        "),\r\n",
+        "flags AS (\r\n",
+        "  SELECT\r\n",
+        "    meetreeks_id,\r\n",
+        "    object_meetreeks_code,\r\n",
+        "    ts,\r\n",
+        "\r\n",
+        "    CASE\r\n",
+        "      WHEN (bovenkant_peilbuis IS NOT NULL AND waarde > bovenkant_peilbuis)\r\n",
+        "        OR (onderkant_filter   IS NOT NULL AND waarde < onderkant_filter)\r\n",
+        "      THEN 1 ELSE 0\r\n",
+        "    END AS v1_flag,\r\n",
+        "\r\n",
+        "    CASE\r\n",
+        "      WHEN prev_waarde IS NOT NULL AND (delta_waarde > 0.3 OR delta_waarde < -0.05)\r\n",
+        "      THEN 1 ELSE 0\r\n",
+        "    END AS v2_flag,\r\n",
+        "\r\n",
+        "    CASE\r\n",
+        "      WHEN onderkant_filter IS NOT NULL\r\n",
+        "       AND waarde >= onderkant_filter\r\n",
+        "       AND waarde <= onderkant_filter + 0.20\r\n",
+        "      THEN 1 ELSE 0\r\n",
+        "    END AS v3_flag\r\n",
+        "  FROM calc\r\n",
+        ")\r\n",
+        "SELECT\r\n",
+        "  object_meetreeks_code,\r\n",
+        "  meetreeks_id,\r\n",
+        "  COUNT(*)     AS metingen,\r\n",
+        "  SUM(v1_flag) AS v1_out_of_bounds,\r\n",
+        "  SUM(v2_flag) AS v2_step_change,\r\n",
+        "  SUM(v3_flag) AS v3_droogstand,\r\n",
+        "  MAX(ts)      AS last_ts\r\n",
+        "FROM flags\r\n",
+        "GROUP BY object_meetreeks_code, meetreeks_id\r\n",
+        "ORDER BY (v1_out_of_bounds + v2_step_change + v3_droogstand) DESC, object_meetreeks_code"
+      ]
+    },
+    {
+      "name": "0569adea",
+      "displayName": "Wiertsema: API_Data_Quality_14d",
+      "queryLines": [
+        "WITH base AS (\r\n",
+        "  SELECT\r\n",
+        "    m.meetreeks_id,\r\n",
+        "    CONCAT(o.code, '_', r.code) AS object_meetreeks_code,\r\n",
+        "    m.tijdstempel_utc AS ts,\r\n",
+        "    m.waarde,\r\n",
+        "    TRY_CAST(r.eind_filter AS DOUBLE)        AS onderkant_filter,\r\n",
+        "    TRY_CAST(r.bovenkant_peilbuis AS DOUBLE) AS bovenkant_peilbuis\r\n",
+        "  FROM gold_prd.hl_grondwaterpeilmeting.meting m\r\n",
+        "  JOIN gold_prd.hl_grondwaterpeilmeting.meetreeks r\r\n",
+        "    ON m.meetreeks_id = r.id\r\n",
+        "  LEFT JOIN gold_prd.hl_grondwaterpeilmeting.object o\r\n",
+        "    ON o.id = r.object_id\r\n",
+        "  WHERE r.bronsysteem = 'Wiertsema'\r\n",
+        "),\r\n",
+        "calc AS (\r\n",
+        "  SELECT\r\n",
+        "    *,\r\n",
+        "    waarde - LAG(waarde) OVER (PARTITION BY meetreeks_id ORDER BY ts) AS delta_waarde,\r\n",
+        "    LAG(waarde) OVER (PARTITION BY meetreeks_id ORDER BY ts)          AS prev_waarde\r\n",
+        "  FROM base\r\n",
+        "),\r\n",
+        "flags AS (\r\n",
+        "  SELECT\r\n",
+        "    meetreeks_id,\r\n",
+        "    object_meetreeks_code,\r\n",
+        "    ts,\r\n",
+        "\r\n",
+        "    CASE\r\n",
+        "      WHEN (bovenkant_peilbuis IS NOT NULL AND waarde > bovenkant_peilbuis)\r\n",
+        "        OR (onderkant_filter   IS NOT NULL AND waarde < onderkant_filter)\r\n",
+        "      THEN 1 ELSE 0\r\n",
+        "    END AS v1_flag,\r\n",
+        "\r\n",
+        "    CASE\r\n",
+        "      WHEN prev_waarde IS NOT NULL AND (delta_waarde > 0.3 OR delta_waarde < -0.05)\r\n",
+        "      THEN 1 ELSE 0\r\n",
+        "    END AS v2_flag,\r\n",
+        "\r\n",
+        "    CASE\r\n",
+        "      WHEN onderkant_filter IS NOT NULL\r\n",
+        "       AND waarde >= onderkant_filter\r\n",
+        "       AND waarde <= onderkant_filter + 0.20\r\n",
+        "      THEN 1 ELSE 0\r\n",
+        "    END AS v3_flag\r\n",
+        "  FROM calc\r\n",
+        ")\r\n",
+        "SELECT\r\n",
+        "  object_meetreeks_code,\r\n",
+        "  meetreeks_id,\r\n",
+        "  COUNT(*)     AS metingen,\r\n",
+        "  SUM(v1_flag) AS v1_out_of_bounds,\r\n",
+        "  SUM(v2_flag) AS v2_step_change,\r\n",
+        "  SUM(v3_flag) AS v3_droogstand,\r\n",
+        "  MAX(ts)      AS last_ts\r\n",
+        "FROM flags\r\n",
+        "WHERE ts >= DATE_SUB(CURRENT_DATE, 14)\r\n",
+        "  AND ts <  CURRENT_DATE\r\n",
+        "GROUP BY object_meetreeks_code, meetreeks_id\r\n",
+        "ORDER BY (v1_out_of_bounds + v2_step_change + v3_droogstand) DESC, object_meetreeks_code"
+      ]
+    },
+    {
+      "name": "dcd6f99a",
+      "displayName": "Wiertsema: API_Data_Trend14d",
+      "queryLines": [
+        "WITH wiertsema AS (\r\n",
+        "  SELECT m.meetreeks_id, m.tijdstempel_utc AS ts, m.waarde,\r\n",
+        "         CONCAT(o.code, '_', r.code) AS object_meetreeks_code\r\n",
+        "  FROM gold_prd.hl_grondwaterpeilmeting.meting m\r\n",
+        "  JOIN gold_prd.hl_grondwaterpeilmeting.meetreeks r ON r.id = m.meetreeks_id\r\n",
+        "  LEFT JOIN gold_prd.hl_grondwaterpeilmeting.object o ON o.id = r.object_id\r\n",
+        "  WHERE r.bronsysteem = 'Wiertsema'\r\n",
+        "    AND m.waarde IS NOT NULL\r\n",
+        "),\r\n",
+        "baseline AS (          -- gemiddelde over dag -14 t/m -2\r\n",
+        "  SELECT meetreeks_id, AVG(waarde) AS baseline_avg, COUNT(*) AS baseline_n\r\n",
+        "  FROM wiertsema\r\n",
+        "  WHERE ts >= DATE_SUB(CURRENT_DATE, 14)\r\n",
+        "    AND ts <  DATE_SUB(CURRENT_DATE, 1)     -- t/m eind van dag -2\r\n",
+        "  GROUP BY meetreeks_id\r\n",
+        "),\r\n",
+        "recent AS (            -- gemiddelde over de laatste 24 uur\r\n",
+        "  SELECT meetreeks_id, AVG(waarde) AS recent_avg, COUNT(*) AS recent_n,\r\n",
+        "         MAX(ts) AS last_ts\r\n",
+        "  FROM wiertsema\r\n",
+        "  WHERE ts >= CURRENT_TIMESTAMP - INTERVAL 24 HOURS\r\n",
+        "  GROUP BY meetreeks_id\r\n",
+        ")\r\n",
+        "SELECT\r\n",
+        "  w.object_meetreeks_code,\r\n",
+        "  b.meetreeks_id,\r\n",
+        "  ROUND(b.baseline_avg, 3) AS baseline_avg,\r\n",
+        "  ROUND(r.recent_avg,  3) AS recent_avg,\r\n",
+        "  ROUND(r.recent_avg - b.baseline_avg, 3) AS delta,   -- >0 stijging, <0 daling\r\n",
+        "  b.baseline_n,\r\n",
+        "  r.recent_n,\r\n",
+        "  r.last_ts\r\n",
+        "FROM baseline b\r\n",
+        "JOIN recent r ON r.meetreeks_id = b.meetreeks_id\r\n",
+        "LEFT JOIN (SELECT DISTINCT meetreeks_id, object_meetreeks_code FROM wiertsema) w\r\n",
+        "  ON w.meetreeks_id = b.meetreeks_id\r\n",
+        "ORDER BY delta DESC"
+      ]
+    },
+    {
+      "name": "9ed7255e",
+      "displayName": "Wiertsema: API_Data_Wet_Dry",
+      "queryLines": [
+        "WITH wiertsema AS (\r\n",
+        "  SELECT m.meetreeks_id, m.tijdstempel_utc AS ts, m.waarde,\r\n",
+        "         CONCAT(o.code, '_', r.code) AS object_meetreeks_code\r\n",
+        "  FROM gold_prd.hl_grondwaterpeilmeting.meting m\r\n",
+        "  JOIN gold_prd.hl_grondwaterpeilmeting.meetreeks r ON r.id = m.meetreeks_id\r\n",
+        "  LEFT JOIN gold_prd.hl_grondwaterpeilmeting.object o ON o.id = r.object_id\r\n",
+        "  WHERE r.bronsysteem = 'Wiertsema'\r\n",
+        "    AND m.waarde IS NOT NULL\r\n",
+        "),\r\n",
+        "stats AS (                       -- \"normaal\": mediaan, min en max over de hele reeks\r\n",
+        "  SELECT meetreeks_id,\r\n",
+        "         percentile(waarde, 0.5) AS mediaan,\r\n",
+        "         MIN(waarde) AS min_w,\r\n",
+        "         MAX(waarde) AS max_w,\r\n",
+        "         COUNT(*)    AS hist_n\r\n",
+        "  FROM wiertsema\r\n",
+        "  GROUP BY meetreeks_id\r\n",
+        "),\r\n",
+        "recent AS (                      -- huidige waarde: gemiddelde laatste 24 uur\r\n",
+        "  SELECT meetreeks_id,\r\n",
+        "         AVG(waarde) AS huidige_waarde,\r\n",
+        "         COUNT(*)    AS recent_n,\r\n",
+        "         MAX(ts)     AS last_ts\r\n",
+        "  FROM wiertsema\r\n",
+        "  WHERE ts >= CURRENT_TIMESTAMP - INTERVAL 24 HOURS\r\n",
+        "  GROUP BY meetreeks_id\r\n",
+        ")\r\n",
+        "SELECT\r\n",
+        "  w.object_meetreeks_code,\r\n",
+        "  s.meetreeks_id,\r\n",
+        "  ROUND(r.huidige_waarde, 3) AS huidige_waarde,\r\n",
+        "  ROUND(s.mediaan, 3) AS mediaan,\r\n",
+        "  ROUND(s.min_w, 3)   AS min_normaal,\r\n",
+        "  ROUND(s.max_w, 3)   AS max_normaal,\r\n",
+        "  -- natheid-index: +100 = max (nat), 0 = mediaan, -100 = min (droog)\r\n",
+        "  ROUND(\r\n",
+        "    GREATEST(-100, LEAST(100,\r\n",
+        "      CASE\r\n",
+        "        WHEN r.huidige_waarde >= s.mediaan\r\n",
+        "          THEN  100.0 * (r.huidige_waarde - s.mediaan) / NULLIF(s.max_w - s.mediaan, 0)\r\n",
+        "        ELSE -100.0 * (s.mediaan - r.huidige_waarde) / NULLIF(s.mediaan - s.min_w, 0)\r\n",
+        "      END\r\n",
+        "    )), 1\r\n",
+        "  ) AS natheid_index,\r\n",
+        "  s.hist_n,\r\n",
+        "  r.recent_n,\r\n",
+        "  r.last_ts\r\n",
+        "FROM stats s\r\n",
+        "JOIN recent r ON r.meetreeks_id = s.meetreeks_id\r\n",
+        "LEFT JOIN (SELECT DISTINCT meetreeks_id, object_meetreeks_code FROM wiertsema) w\r\n",
+        "  ON w.meetreeks_id = s.meetreeks_id\r\n",
+        "ORDER BY natheid_index DESC"
+      ]
+    },
+    {
+      "name": "914429be",
+      "displayName": "Inventarisatie_CSO: Data_hl_grondwaterpeilmeting",
+      "queryLines": [
+        "SELECT\r\n",
+        "  COUNT(*)                        AS totaal_rijen,\r\n",
+        "  COUNT(id)                       AS id_gevuld,\r\n",
+        "  COUNT(code)                     AS code_gevuld,\r\n",
+        "  COUNT(begin_filter)             AS begin_filter_gevuld,\r\n",
+        "  COUNT(eind_filter)              AS eind_filter_gevuld,\r\n",
+        "  COUNT(bovenkant_peilbuis)       AS bovenkant_peilbuis_gevuld,\r\n",
+        "  COUNT(bronsysteem)              AS bronsysteem_gevuld,\r\n",
+        "  COUNT(meetlocatie_code)         AS meetlocatie_code_gevuld,\r\n",
+        "  COUNT(sensor_meetlocatie_sleutel)      AS sensor_meetlocatie_sleutel_gevuld\r\n",
+        "FROM gold_prd.hl_grondwaterpeilmeting.meetreeks"
+      ]
+    },
+    {
+      "name": "4de0c7ad",
+      "displayName": "pastas_fit_metrics",
+      "config": {
+        "version": "1.1",
+        "source": "waterkeringbeheer_prd.jvanruitenbeek.pastas_fit_metrics",
+        "dimensions": [
+          {
+            "expr": "source.*"
+          }
+        ],
+        "measures": [
+          {
+            "name": "count",
+            "expr": "COUNT(*)",
+            "comment": "Represents the total number of rows in the dataset. Use this measure to count all",
+            "displayName": "Count"
+          }
+        ]
+      }
+    }
+  ],
+  "relationshipGraphs": [
+    {
+      "sources": [
+        {
+          "name": "Untitled_dataset",
+          "datasetName": "488d3fc6"
+        },
+        {
+          "name": "Untitled_dataset_1",
+          "datasetName": "20ea33a5"
+        },
+        {
+          "name": "Untitled_dataset_1_1",
+          "datasetName": "a23ae5ec"
+        },
+        {
+          "name": "Untitled_dataset_2",
+          "datasetName": "e4067ac9"
+        },
+        {
+          "name": "Untitled_dataset_3",
+          "datasetName": "634ed94b"
+        },
+        {
+          "name": "Untitled_dataset_5",
+          "datasetName": "173b442d"
+        },
+        {
+          "name": "Untitled_dataset_7",
+          "datasetName": "6853c062"
+        },
+        {
+          "name": "Untitled_dataset_4",
+          "datasetName": "eb755266"
+        },
+        {
+          "name": "Untitled_dataset_2_1",
+          "datasetName": "8f184403"
+        },
+        {
+          "name": "Untitled_dataset_2_2",
+          "datasetName": "d950223d"
+        },
+        {
+          "name": "Untitled_dataset_1_2",
+          "datasetName": "0569adea"
+        },
+        {
+          "name": "Untitled_dataset_2_3",
+          "datasetName": "dcd6f99a"
+        },
+        {
+          "name": "Untitled_dataset_2_4",
+          "datasetName": "9ed7255e"
+        },
+        {
+          "name": "Untitled_dataset_1_3",
+          "datasetName": "930d6f27"
+        },
+        {
+          "name": "Untitled_dataset_6",
+          "datasetName": "914429be"
+        },
+        {
+          "name": "pastas_fit_metrics",
+          "datasetName": "4de0c7ad"
+        }
+      ]
+    }
+  ],
+  "pages": [
+    {
+      "name": "98feceaf",
+      "displayName": "Inventarisatie_CSO_API",
+      "layout": [
+        {
+          "widget": {
+            "name": "7eb598e4",
+            "queries": [
+              {
+                "name": "main_query",
+                "query": {
+                  "fields": [
+                    {
+                      "name": "Untitled_dataset__count",
+                      "expression": "`Untitled_dataset`.`count`"
+                    },
+                    {
+                      "name": "Untitled_dataset__project_code",
+                      "expression": "`Untitled_dataset`.`project_code`"
+                    }
+                  ],
+                  "disaggregated": true
+                }
+              }
+            ],
+            "spec": {
+              "version": 3,
+              "widgetType": "bar",
+              "encodings": {
+                "x": {
+                  "fieldName": "Untitled_dataset__count",
+                  "scale": {
+                    "type": "quantitative"
+                  }
+                },
+                "y": {
+                  "fieldName": "Untitled_dataset__project_code",
+                  "scale": {
+                    "type": "categorical",
+                    "sort": {
+                      "by": "x-reversed"
+                    }
+                  }
+                }
+              },
+              "data": {
+                "queryName": "main_query"
+              }
+            }
+          },
+          "position": {
+            "x": 0,
+            "y": 3,
+            "width": 6,
+            "height": 8
+          }
+        },
+        {
+          "widget": {
+            "name": "38cb23e5",
+            "queries": [
+              {
+                "name": "main_query",
+                "query": {
+                  "fields": [
+                    {
+                      "name": "count(Untitled_dataset_1_1__*)",
+                      "expression": "COUNT(STRUCT(`Untitled_dataset_1_1`.`*`))"
+                    }
+                  ],
+                  "disaggregated": false
+                }
+              }
+            ],
+            "spec": {
+              "frame": {
+                "showDescription": true,
+                "showTitle": true,
+                "title": {
+                  "value": "Aantal peilbuizen in CS\\_Objecten na 31 december 2022 ",
+                  "fields": []
+                },
+                "description": {
+                  "value": "Peilbuizen na 2022, met Domein == 'Grondwater' en die 'Meetreeks' == 'Actief",
+                  "fields": []
+                }
+              },
+              "version": 2,
+              "widgetType": "counter",
+              "encodings": {
+                "value": {
+                  "fieldName": "count(Untitled_dataset_1_1__*)"
+                }
+              },
+              "data": {
+                "queryName": "main_query"
+              }
+            }
+          },
+          "position": {
+            "x": 0,
+            "y": 0,
+            "width": 6,
+            "height": 3
+          }
+        },
+        {
+          "widget": {
+            "name": "0aa32658",
+            "queries": [
+              {
+                "name": "main_query",
+                "query": {
+                  "fields": [
+                    {
+                      "name": "Untitled_dataset_3__matched_rows",
+                      "expression": "`Untitled_dataset_3`.`matched_rows`"
+                    },
+                    {
+                      "name": "Untitled_dataset_3__total_meetreeks_rows",
+                      "expression": "`Untitled_dataset_3`.`total_meetreeks_rows`"
+                    },
+                    {
+                      "name": "Untitled_dataset_3__unmatched_rows",
+                      "expression": "`Untitled_dataset_3`.`unmatched_rows`"
+                    }
+                  ],
+                  "disaggregated": true
+                }
+              }
+            ],
+            "spec": {
+              "frame": {
+                "showDescription": true,
+                "description": {
+                  "value": "hl\\_grondwaterpeilmeting gematched met ",
+                  "fields": []
+                }
+              },
+              "version": 2,
+              "widgetType": "table",
+              "encodings": {
+                "columns": [
+                  {
+                    "fieldName": "Untitled_dataset_3__matched_rows"
+                  },
+                  {
+                    "fieldName": "Untitled_dataset_3__total_meetreeks_rows"
+                  },
+                  {
+                    "fieldName": "Untitled_dataset_3__unmatched_rows"
+                  }
+                ]
+              },
+              "data": {
+                "queryName": "main_query"
+              }
+            }
+          },
+          "position": {
+            "x": 6,
+            "y": 0,
+            "width": 6,
+            "height": 3
+          }
+        },
+        {
+          "widget": {
+            "name": "7dd10633",
+            "queries": [
+              {
+                "name": "main_query",
+                "query": {
+                  "fields": [
+                    {
+                      "name": "Untitled_dataset_5__row_num",
+                      "expression": "`Untitled_dataset_5`.`row_num`"
+                    },
+                    {
+                      "name": "Untitled_dataset_5__meetlocatie_code",
+                      "expression": "`Untitled_dataset_5`.`meetlocatie_code`"
+                    },
+                    {
+                      "name": "Untitled_dataset_5__code",
+                      "expression": "`Untitled_dataset_5`.`code`"
+                    },
+                    {
+                      "name": "Untitled_dataset_5__link_status",
+                      "expression": "`Untitled_dataset_5`.`link_status`"
+                    }
+                  ],
+                  "disaggregated": true
+                }
+              }
+            ],
+            "spec": {
+              "frame": {
+                "showDescription": true,
+                "description": {
+                  "value": "join key is meetlocatie\\_code in the meetreeks table matched against code in the meetlocatie table. Dus er zijn 392 bestanden die overeenkomen. Zie ook mail Bram",
+                  "fields": []
+                }
+              },
+              "version": 2,
+              "widgetType": "table",
+              "encodings": {
+                "columns": [
+                  {
+                    "fieldName": "Untitled_dataset_5__row_num"
+                  },
+                  {
+                    "fieldName": "Untitled_dataset_5__meetlocatie_code"
+                  },
+                  {
+                    "fieldName": "Untitled_dataset_5__code"
+                  },
+                  {
+                    "fieldName": "Untitled_dataset_5__link_status"
+                  }
+                ]
+              },
+              "data": {
+                "queryName": "main_query"
+              }
+            }
+          },
+          "position": {
+            "x": 0,
+            "y": 28,
+            "width": 12,
+            "height": 16
+          }
+        },
+        {
+          "widget": {
+            "name": "e9e8bc58",
+            "queries": [
+              {
+                "name": "main_query",
+                "query": {
+                  "fields": [
+                    {
+                      "name": "sum(Untitled_dataset_1_3__totaal_rijen)",
+                      "expression": "SUM(`Untitled_dataset_1_3`.`totaal_rijen`)"
+                    },
+                    {
+                      "name": "sum(Untitled_dataset_1_3__bovenkant_filter_gevuld)",
+                      "expression": "SUM(`Untitled_dataset_1_3`.`bovenkant_filter_gevuld`)"
+                    },
+                    {
+                      "name": "sum(Untitled_dataset_1_3__bovenkant_peilbuis_gevuld)",
+                      "expression": "SUM(`Untitled_dataset_1_3`.`bovenkant_peilbuis_gevuld`)"
+                    },
+                    {
+                      "name": "sum(Untitled_dataset_1_3__code_gevuld)",
+                      "expression": "SUM(`Untitled_dataset_1_3`.`code_gevuld`)"
+                    },
+                    {
+                      "name": "sum(Untitled_dataset_1_3__onderkant_filter_gevuld)",
+                      "expression": "SUM(`Untitled_dataset_1_3`.`onderkant_filter_gevuld`)"
+                    }
+                  ],
+                  "disaggregated": false
+                }
+              }
+            ],
+            "spec": {
+              "frame": {
+                "showTitle": true,
+                "showDescription": true,
+                "title": {
+                  "value": "Velden in CS\\_Objecten na 31 december 2022",
+                  "fields": []
+                },
+                "description": {
+                  "value": "Peilbuizen waarvan de metadata correct is ",
+                  "fields": []
+                }
+              },
+              "version": 3,
+              "mark": {
+                "layout": "group"
+              },
+              "widgetType": "bar",
+              "encodings": {
+                "x": {
+                  "scale": {
+                    "type": "quantitative"
+                  },
+                  "fields": [
+                    {
+                      "fieldName": "sum(Untitled_dataset_1_3__totaal_rijen)"
+                    },
+                    {
+                      "fieldName": "sum(Untitled_dataset_1_3__bovenkant_filter_gevuld)"
+                    },
+                    {
+                      "fieldName": "sum(Untitled_dataset_1_3__bovenkant_peilbuis_gevuld)"
+                    },
+                    {
+                      "fieldName": "sum(Untitled_dataset_1_3__code_gevuld)"
+                    },
+                    {
+                      "fieldName": "sum(Untitled_dataset_1_3__onderkant_filter_gevuld)"
+                    }
+                  ]
+                }
+              },
+              "data": {
+                "queryName": "main_query"
+              }
+            }
+          },
+          "position": {
+            "x": 0,
+            "y": 11,
+            "width": 12,
+            "height": 7
+          }
+        },
+        {
+          "widget": {
+            "name": "a23f72ca",
+            "queries": [
+              {
+                "name": "main_query",
+                "query": {
+                  "fields": [
+                    {
+                      "name": "Untitled_dataset_1__supplier",
+                      "expression": "`Untitled_dataset_1`.`supplier`"
+                    },
+                    {
+                      "name": "sum(Untitled_dataset_1__count)",
+                      "expression": "SUM(`Untitled_dataset_1`.`count`)"
+                    }
+                  ],
+                  "disaggregated": false
+                }
+              }
+            ],
+            "spec": {
+              "frame": {
+                "showTitle": false
+              },
+              "version": 3,
+              "mark": {
+                "colors": [
+                  {
+                    "themeColorType": "visualizationColors",
+                    "position": 1
+                  }
+                ]
+              },
+              "widgetType": "bar",
+              "encodings": {
+                "x": {
+                  "fieldName": "Untitled_dataset_1__supplier",
+                  "scale": {
+                    "type": "categorical"
+                  }
+                },
+                "y": {
+                  "fieldName": "sum(Untitled_dataset_1__count)",
+                  "scale": {
+                    "type": "quantitative"
+                  }
+                },
+                "color": {
+                  "fieldName": "Untitled_dataset_1__supplier",
+                  "scale": {
+                    "type": "categorical"
+                  }
+                }
+              },
+              "data": {
+                "queryName": "main_query"
+              }
+            }
+          },
+          "position": {
+            "x": 6,
+            "y": 3,
+            "width": 6,
+            "height": 8
+          }
+        },
+        {
+          "widget": {
+            "name": "8cfe6cf3",
+            "queries": [
+              {
+                "name": "main_query",
+                "query": {
+                  "fields": [
+                    {
+                      "name": "sum(Untitled_dataset_6__totaal_rijen)",
+                      "expression": "SUM(`Untitled_dataset_6`.`totaal_rijen`)"
+                    },
+                    {
+                      "name": "sum(Untitled_dataset_6__bronsysteem_gevuld)",
+                      "expression": "SUM(`Untitled_dataset_6`.`bronsysteem_gevuld`)"
+                    },
+                    {
+                      "name": "sum(Untitled_dataset_6__code_gevuld)",
+                      "expression": "SUM(`Untitled_dataset_6`.`code_gevuld`)"
+                    },
+                    {
+                      "name": "sum(Untitled_dataset_6__id_gevuld)",
+                      "expression": "SUM(`Untitled_dataset_6`.`id_gevuld`)"
+                    },
+                    {
+                      "name": "sum(Untitled_dataset_6__sensor_meetlocatie_sleutel_gevuld)",
+                      "expression": "SUM(`Untitled_dataset_6`.`sensor_meetlocatie_sleutel_gevuld`)"
+                    },
+                    {
+                      "name": "sum(Untitled_dataset_6__begin_filter_gevuld)",
+                      "expression": "SUM(`Untitled_dataset_6`.`begin_filter_gevuld`)"
+                    },
+                    {
+                      "name": "sum(Untitled_dataset_6__eind_filter_gevuld)",
+                      "expression": "SUM(`Untitled_dataset_6`.`eind_filter_gevuld`)"
+                    },
+                    {
+                      "name": "sum(Untitled_dataset_6__meetlocatie_code_gevuld)",
+                      "expression": "SUM(`Untitled_dataset_6`.`meetlocatie_code_gevuld`)"
+                    }
+                  ],
+                  "disaggregated": false
+                }
+              }
+            ],
+            "spec": {
+              "frame": {
+                "showTitle": true,
+                "showDescription": true,
+                "title": {
+                  "value": "Velden in de hl\\_grondwaterpeilmeting\t",
+                  "fields": []
+                },
+                "description": {
+                  "value": "Deze velden komen via de API binnen, en zouden dus overeen moeten komen met CS\\_Objecten",
+                  "fields": []
+                }
+              },
+              "version": 3,
+              "mark": {
+                "layout": "group"
+              },
+              "widgetType": "bar",
+              "encodings": {
+                "x": {
+                  "scale": {
+                    "type": "quantitative"
+                  },
+                  "fields": [
+                    {
+                      "fieldName": "sum(Untitled_dataset_6__totaal_rijen)"
+                    },
+                    {
+                      "fieldName": "sum(Untitled_dataset_6__bronsysteem_gevuld)"
+                    },
+                    {
+                      "fieldName": "sum(Untitled_dataset_6__code_gevuld)"
+                    },
+                    {
+                      "fieldName": "sum(Untitled_dataset_6__id_gevuld)"
+                    },
+                    {
+                      "fieldName": "sum(Untitled_dataset_6__sensor_meetlocatie_sleutel_gevuld)"
+                    },
+                    {
+                      "fieldName": "sum(Untitled_dataset_6__begin_filter_gevuld)"
+                    },
+                    {
+                      "fieldName": "sum(Untitled_dataset_6__eind_filter_gevuld)"
+                    },
+                    {
+                      "fieldName": "sum(Untitled_dataset_6__meetlocatie_code_gevuld)"
+                    }
+                  ]
+                }
+              },
+              "data": {
+                "queryName": "main_query"
+              }
+            }
+          },
+          "position": {
+            "x": 0,
+            "y": 18,
+            "width": 12,
+            "height": 10
+          }
+        },
+        {
+          "widget": {
+            "name": "5dc98d27",
+            "queries": [
+              {
+                "name": "main_query",
+                "query": {
+                  "disaggregated": true
+                }
+              }
+            ],
+            "spec": {
+              "data": {
+                "queryName": "main_query"
+              },
+              "version": 3,
+              "widgetType": "bar",
+              "encodings": {}
+            }
+          },
+          "position": {
+            "x": 2,
+            "y": 55,
+            "width": 6,
+            "height": 6
+          }
+        },
+        {
+          "widget": {
+            "name": "218032e1",
+            "queries": [
+              {
+                "name": "main_query",
+                "query": {
+                  "disaggregated": true
+                }
+              }
+            ],
+            "spec": {
+              "data": {
+                "queryName": "main_query"
+              },
+              "version": 3,
+              "widgetType": "bar",
+              "encodings": {}
+            }
+          },
+          "position": {
+            "x": 6,
+            "y": 49,
+            "width": 6,
+            "height": 6
+          }
+        }
+      ],
+      "pageType": "PAGE_TYPE_CANVAS",
+      "layoutVersion": "GRID_V1"
+    },
+    {
+      "name": "048caae8",
+      "displayName": "Fugro_API",
+      "layout": [
+        {
+          "widget": {
+            "name": "86afe286",
+            "queries": [
+              {
+                "name": "main_query",
+                "query": {
+                  "fields": [
+                    {
+                      "name": "count(Untitled_dataset_4__*)",
+                      "expression": "COUNT(STRUCT(`Untitled_dataset_4`.`*`))"
+                    },
+                    {
+                      "name": "Untitled_dataset_4__day_bucket",
+                      "expression": "`Untitled_dataset_4`.`day_bucket`"
+                    },
+                    {
+                      "name": "Untitled_dataset_4__object_meetreeks_code",
+                      "expression": "`Untitled_dataset_4`.`object_meetreeks_code`"
+                    }
+                  ],
+                  "disaggregated": false
+                }
+              }
+            ],
+            "spec": {
+              "version": 3,
+              "widgetType": "heatmap",
+              "encodings": {
+                "x": {
+                  "fieldName": "Untitled_dataset_4__day_bucket",
+                  "scale": {
+                    "type": "categorical"
+                  }
+                },
+                "y": {
+                  "fieldName": "Untitled_dataset_4__object_meetreeks_code",
+                  "scale": {
+                    "type": "categorical"
+                  }
+                },
+                "color": {
+                  "fieldName": "count(Untitled_dataset_4__*)",
+                  "scale": {
+                    "type": "quantitative",
+                    "colorRamp": {
+                      "mode": "scheme",
+                      "scheme": "redyellowgreen"
+                    }
+                  }
+                }
+              },
+              "data": {
+                "queryName": "main_query"
+              }
+            }
+          },
+          "position": {
+            "x": 0,
+            "y": 0,
+            "width": 12,
+            "height": 15
+          }
+        }
+      ],
+      "pageType": "PAGE_TYPE_CANVAS",
+      "layoutVersion": "GRID_V1"
+    },
+    {
+      "name": "f5bdf85b",
+      "displayName": "Wiertsema_API",
+      "layout": [
+        {
+          "widget": {
+            "name": "44941495",
+            "queries": [
+              {
+                "name": "main_query",
+                "query": {
+                  "fields": [
+                    {
+                      "name": "sum(Untitled_dataset_2_1__cnt)",
+                      "expression": "SUM(`Untitled_dataset_2_1`.`cnt`)"
+                    },
+                    {
+                      "name": "Untitled_dataset_2_1__day_bucket",
+                      "expression": "`Untitled_dataset_2_1`.`day_bucket`"
+                    },
+                    {
+                      "name": "Untitled_dataset_2_1__object_meetreeks_code",
+                      "expression": "`Untitled_dataset_2_1`.`object_meetreeks_code`"
+                    }
+                  ],
+                  "disaggregated": false
+                }
+              }
+            ],
+            "spec": {
+              "version": 3,
+              "widgetType": "heatmap",
+              "encodings": {
+                "x": {
+                  "fieldName": "Untitled_dataset_2_1__day_bucket",
+                  "scale": {
+                    "type": "categorical",
+                    "sort": {
+                      "by": "custom-order",
+                      "orderedValues": [
+                        "-14d",
+                        "-13d",
+                        "-12d",
+                        "-11d",
+                        "-10d",
+                        "-9d",
+                        "-8d",
+                        "-6d",
+                        "-7d",
+                        "-5d",
+                        "-2d",
+                        "-4d",
+                        "-3d",
+                        "-1d"
+                      ]
+                    }
+                  }
+                },
+                "y": {
+                  "fieldName": "Untitled_dataset_2_1__object_meetreeks_code",
+                  "scale": {
+                    "type": "categorical"
+                  }
+                },
+                "color": {
+                  "fieldName": "sum(Untitled_dataset_2_1__cnt)",
+                  "scale": {
+                    "type": "quantitative",
+                    "colorRamp": {
+                      "mode": "scheme",
+                      "scheme": "redyellowgreen"
+                    },
+                    "domain": {
+                      "min": 0,
+                      "mid": 12,
+                      "max": 40
+                    }
+                  }
+                },
+                "label": {
+                  "show": false
+                }
+              },
+              "data": {
+                "queryName": "main_query"
+              }
+            }
+          },
+          "position": {
+            "x": 0,
+            "y": 0,
+            "width": 12,
+            "height": 39
+          }
+        },
+        {
+          "widget": {
+            "name": "79fa727a",
+            "queries": [
+              {
+                "name": "main_query",
+                "query": {
+                  "fields": [
+                    {
+                      "name": "Untitled_dataset_2_2__object_meetreeks_code",
+                      "expression": "`Untitled_dataset_2_2`.`object_meetreeks_code`"
+                    },
+                    {
+                      "name": "sum(Untitled_dataset_2_2__v1_out_of_bounds)",
+                      "expression": "SUM(`Untitled_dataset_2_2`.`v1_out_of_bounds`)"
+                    },
+                    {
+                      "name": "sum(Untitled_dataset_2_2__v2_step_change)",
+                      "expression": "SUM(`Untitled_dataset_2_2`.`v2_step_change`)"
+                    },
+                    {
+                      "name": "sum(Untitled_dataset_2_2__v3_droogstand)",
+                      "expression": "SUM(`Untitled_dataset_2_2`.`v3_droogstand`)"
+                    }
+                  ],
+                  "disaggregated": false
+                }
+              }
+            ],
+            "spec": {
+              "frame": {
+                "showDescription": true,
+                "showTitle": true,
+                "title": {
+                  "value": "Data kwaliteit Wiertsema Complete Reeks",
+                  "fields": []
+                },
+                "description": {
+                  "value": "Aantal metingen welke geflagged worden doordat ze buiten meetbereik zijn, onrealistische step change hebben of droogstaan. \n\n- Zit nog een glitch in, omdat sommige data vanuit het CSO niet beschikbaar zijn e.g. bovenkant filter werkt de out of bounds conditie niet vlekkeloos",
+                  "fields": []
+                }
+              },
+              "version": 3,
+              "mark": {
+                "colors": [
+                  {
+                    "themeColorType": "visualizationColors",
+                    "position": 4
+                  },
+                  {
+                    "themeColorType": "visualizationColors",
+                    "position": 1
+                  },
+                  {
+                    "themeColorType": "visualizationColors",
+                    "position": 2
+                  }
+                ]
+              },
+              "widgetType": "bar",
+              "encodings": {
+                "x": {
+                  "fieldName": "Untitled_dataset_2_2__object_meetreeks_code",
+                  "axis": {
+                    "hideLabels": true
+                  },
+                  "scale": {
+                    "type": "categorical",
+                    "sort": {
+                      "by": "y-reversed"
+                    }
+                  }
+                },
+                "y": {
+                  "scale": {
+                    "type": "quantitative",
+                    "fn": {
+                      "type": "symlog"
+                    }
+                  },
+                  "fields": [
+                    {
+                      "fieldName": "sum(Untitled_dataset_2_2__v1_out_of_bounds)"
+                    },
+                    {
+                      "fieldName": "sum(Untitled_dataset_2_2__v2_step_change)"
+                    },
+                    {
+                      "fieldName": "sum(Untitled_dataset_2_2__v3_droogstand)"
+                    }
+                  ]
+                },
+                "label": {
+                  "show": false
+                }
+              },
+              "data": {
+                "queryName": "main_query"
+              }
+            }
+          },
+          "position": {
+            "x": 0,
+            "y": 80,
+            "width": 12,
+            "height": 6
+          }
+        },
+        {
+          "widget": {
+            "name": "84c88feb",
+            "queries": [
+              {
+                "name": "main_query",
+                "query": {
+                  "fields": [
+                    {
+                      "name": "Untitled_dataset_1_2__object_meetreeks_code",
+                      "expression": "`Untitled_dataset_1_2`.`object_meetreeks_code`"
+                    },
+                    {
+                      "name": "sum(Untitled_dataset_1_2__v1_out_of_bounds)",
+                      "expression": "SUM(`Untitled_dataset_1_2`.`v1_out_of_bounds`)"
+                    },
+                    {
+                      "name": "sum(Untitled_dataset_1_2__v2_step_change)",
+                      "expression": "SUM(`Untitled_dataset_1_2`.`v2_step_change`)"
+                    },
+                    {
+                      "name": "sum(Untitled_dataset_1_2__v3_droogstand)",
+                      "expression": "SUM(`Untitled_dataset_1_2`.`v3_droogstand`)"
+                    }
+                  ],
+                  "disaggregated": false
+                }
+              }
+            ],
+            "spec": {
+              "frame": {
+                "showDescription": true,
+                "showTitle": true,
+                "title": {
+                  "value": "Data kwaliteit Wiertsema 14d",
+                  "fields": []
+                },
+                "description": {
+                  "value": "Aantal metingen welke geflagged worden doordat ze buiten meetbereik zijn, onrealistische step change hebben of droogstaan",
+                  "fields": []
+                }
+              },
+              "version": 3,
+              "mark": {
+                "colors": [
+                  {
+                    "themeColorType": "visualizationColors",
+                    "position": 4
+                  },
+                  {
+                    "themeColorType": "visualizationColors",
+                    "position": 1
+                  },
+                  {
+                    "themeColorType": "visualizationColors",
+                    "position": 2
+                  }
+                ]
+              },
+              "widgetType": "bar",
+              "encodings": {
+                "x": {
+                  "fieldName": "Untitled_dataset_1_2__object_meetreeks_code",
+                  "axis": {
+                    "hideLabels": true
+                  },
+                  "scale": {
+                    "type": "categorical",
+                    "sort": {
+                      "by": "y-reversed"
+                    }
+                  }
+                },
+                "y": {
+                  "scale": {
+                    "type": "quantitative",
+                    "fn": {
+                      "type": "symlog"
+                    }
+                  },
+                  "fields": [
+                    {
+                      "fieldName": "sum(Untitled_dataset_1_2__v1_out_of_bounds)"
+                    },
+                    {
+                      "fieldName": "sum(Untitled_dataset_1_2__v2_step_change)"
+                    },
+                    {
+                      "fieldName": "sum(Untitled_dataset_1_2__v3_droogstand)"
+                    }
+                  ]
+                },
+                "label": {
+                  "show": false
+                }
+              },
+              "data": {
+                "queryName": "main_query"
+              }
+            }
+          },
+          "position": {
+            "x": 0,
+            "y": 39,
+            "width": 12,
+            "height": 6
+          }
+        },
+        {
+          "widget": {
+            "name": "ddd26c64",
+            "queries": [
+              {
+                "name": "main_query",
+                "query": {
+                  "fields": [
+                    {
+                      "name": "sum(Untitled_dataset_2_3__delta)",
+                      "expression": "SUM(`Untitled_dataset_2_3`.`delta`)"
+                    },
+                    {
+                      "name": "Untitled_dataset_2_3__object_meetreeks_code",
+                      "expression": "`Untitled_dataset_2_3`.`object_meetreeks_code`"
+                    }
+                  ],
+                  "disaggregated": false
+                }
+              }
+            ],
+            "spec": {
+              "frame": {
+                "showTitle": true,
+                "showDescription": true,
+                "title": {
+                  "value": "Stijging en daling in de laatste 14 dagen",
+                  "fields": []
+                },
+                "description": {
+                  "value": "Deze grafiek laat de stijging of daling zien in de GWS per serie, op basis van metingen in de laatste 14 dagen. De laatste 24 uur wordt vergeleken met het gemiddelde van de laatste 14 dagen, m.u.v. de laatste dag. ",
+                  "fields": []
+                }
+              },
+              "version": 3,
+              "mark": {
+                "colors": [
+                  {
+                    "themeColorType": "visualizationColors",
+                    "position": 1
+                  }
+                ]
+              },
+              "widgetType": "bar",
+              "encodings": {
+                "x": {
+                  "fieldName": "sum(Untitled_dataset_2_3__delta)",
+                  "scale": {
+                    "type": "quantitative"
+                  }
+                },
+                "y": {
+                  "fieldName": "Untitled_dataset_2_3__object_meetreeks_code",
+                  "formatTemplate": "{{ @formatted }}",
+                  "scale": {
+                    "type": "categorical",
+                    "sort": {
+                      "by": "custom-order",
+                      "orderedValues": [
+                        "HB_SC0341+0_BIKR_GMW_PB1_F-285_MSLV8_oc5601",
+                        "B_SC0156+50_BIKR_GMW_PB1_F-302_MSLV8_oc5630",
+                        "HB_SC0264+50_BUKR_GMW_PB1_F-444_MSLV8_oc5741",
+                        "B_SC0341+0_BUKR_GMW_PB1_F-303_MSLV8_oc5585",
+                        "B_SC0081+0_BIKR_GMW_PB1_F-198_MSLV8_oc5584",
+                        "HB_SC0081+0_BUKR_GMW_PB1_F-249_MSLV8_oc5569",
+                        "B_SC0009+0_BIKR_GMW_PB1_F-297_MSLV8_oc5594",
+                        "HB_SC0298+0_INBIB_GMW_PB1_F-514_MSLV8_oc5683",
+                        "HB_SC0234+0_BIT_GMW_PB2_F-698_MSLV8_oc5700",
+                        "B_SC0234+0_BUKR_GMW_PB2_F-717_MSLV8_oc5686",
+                        "B_BE0328+2_BIT_GMW_PB1_F-651_MSLV8_o54151",
+                        "B_PU0128+25_INBIB_GMW_PB1_F-5.52_MSLV8_o74377",
+                        "B_WPO0067+0_INBIB_GMW_PB1_F-204_MSLV8_p68057",
+                        "HB_BE0188+24_BUKR_GMW_PB1_F-352_MSLV8_o54161",
+                        "HB_PU0082+0_BIKR_GMW_PB1_F-3.92_MSLV8_o74473",
+                        "B_D12-DP_16+187_BIKR_GMW_PB1_F-1.41_MSLV8_p57527",
+                        "B_D11-DP_79+1_BIKR_GMW_PB1_F-1.76_MSLV8_p57540",
+                        "B_BE0213+9_BIKR_GMW_PB1_F-513_MSLV8_p98542",
+                        "HB_SC0035+55_BUKR_GMW_PB01_F-296_MSLV8_oc5745",
+                        "HB_SC0029+0_BITA_GMW_PB1_F-306_MSLV8_oc5607",
+                        "HB_PU0118+99_BUKR_GMW_PB1_F-3.14_MSLV8_o74476",
+                        "B_D11-DP_82+148_BIKR_GMW_PB1_F-1.17_MSLV8_p57504",
+                        "BE0280+00_BIT_GMW_PB1_F-592_MSLV5_k75120",
+                        "HB_SC0035+55_BIKR_GMW_PB1_F-437_MSLV8_oc5682",
+                        "B_BE0263+75_BIT_GMW_PB1_F-452_MSLV8_o54208",
+                        "HB_SC0096+0_BIT_GMW_PB1_F-523_MSLV8_oc5628",
+                        "HB_SC0298+0_BIKR_GMW_PB1_F-367_MSLV8_oc5720",
+                        "B_BE0195+80_KR_GMW_PB1_F-215_MSLV8_o54156",
+                        "HB_D12-DP_12+1_BUKR_GMW_PB1_F-1.16_MSLV8_p57531",
+                        "BE0341+40_BIT_GMW_PB1_F-616_MSLV5_k74884",
+                        "B_PU0118+99_INBIB_GMW_PB2_F-9.21_MSLM7_m20249_TOP",
+                        "HB_BE0166+95_BIB_GMW_PB1_F-602_MSLV5_jc4256",
+                        "HB_BLM0020+100_BUKR_GMW_PB1_F-394_MSLV7_lb0899",
+                        "B_SC0140+0_BUKR_GMW_PB3_F-2096_MSLV8_oc5719",
+                        "B_SC0140+0_BUKR_GMW_PB1_F-326_MSLV8_oc5706",
+                        "HB_SC0219+50_BIT_GMW_PB1_F-520_MSLV8_oc5639",
+                        "HB_PU0203+0_BIKR_GMW_PB1_F-4.05_MSLV8_o74434",
+                        "B_D11-DP_75+6_BIKR_GMW_PB1_F-1.58_MSLV8_p57487",
+                        "HB_PU0138+0_INBIB_GMW_PB1_F-5.56_MSLV8_o74488",
+                        "HB_BLM0019+100_BIKR_GMW_PB1_F-509_MSLV7_lb0855",
+                        "HB_DP46-5+76_BIKR_GMW_PB1_F-268_MSLV8_o74679",
+                        "HB_PU0128+25_KRBIB_GMW_PB1_F-5.37_MSLV8_o74613",
+                        "HB_BE0147+68_BIB_GMW_PB1_F-654_MSLV8_o54316",
+                        "HB_PU0138+0_BUKR_GMW_PB1_F-2.76_MSLV8_o74491",
+                        "HB_BLM0020+69_BIKR_GMW_PB1_F-514_MSLV7_lb0797",
+                        "PB_MB_DP 170+10 m_KR_1_MSLV8_oc5923",
+                        "B_SC0219+50_BUKR_GMW_PB2_F-851_MSLV8_oc5722",
+                        "HB_BLM0019+88_BIKR_GMW_PB1_F-416_MSLV7_lb0623",
+                        "B_PU0098+0_BIKR_GMW_PB1_F-3.54_MSLV8_o74461",
+                        "HB_WPO0067+0_BUKR_GMW_PB1_F-207_MSLV5_k74920",
+                        "HB_BLM0021+2_BIT_GMW_PB1_F-704_MSLV7_lb0775",
+                        "HB_SC0081+0_BIT_GMW_PB1_F-406_MSLV8_oc5606",
+                        "HB_D11-DP_82+150_BIT_GMW_PB1_F-4.25_MSLV8_p57509",
+                        "B_PU0118+99_INBIB_GMW_PB3_F-13.71_MSLM7_m20249_BOTTOM",
+                        "HB_PU0098+0_INBIB_GMW_PB1_F-5.30_MSLV8_o74459",
+                        "HB_PU0203+0_INBIB_GMW_PB1_F-5.45_MSLV8_o74427",
+                        "HB_SC0121+0_INBIB_GMW_PB1_F-418_MSLV8_oc5605",
+                        "BE0341+40_INST_B_GMW_PB1_F-599_MSLV5_i30725",
+                        "HB_BE0188+23_BIB_GMW_PB1_F-689_MSLV8_ma0147",
+                        "B_BE0213+10_BUKR_GMW_PB1_F-451_MSLV8_o54140",
+                        "HB_SC0156+50_INSD_GMW_PB1_F-442_MSLV8_oc5725",
+                        "B_SC0140+0_BUKR_GMW_PB2_F-786_MSLV8_oc5687",
+                        "HB_SC0156+50_BUKR_GMW_PB1_F-296_MSLV8_oc5566",
+                        "B_SC0096+0_BIKR_GMW_PB1_F-269_MSLV8_oc5620",
+                        "HB_PU0207+0_BUKR_GMW_PB1_F-4.28_MSLV8_o74449",
+                        "HB_PU0098+0_BUKR_GMW_PB1_F-3.66_MSLV8_o74429",
+                        "B_SC0219+50_BUKR_GMW_PB1_F-331_MSLV8_oc5685",
+                        "HB_BE0242+7_BIT_GMW_PB1_F-654_MSLV8_o54204",
+                        "B_D11-DP_75+6_BUKR_GMW_PB2_F-8.08_MSLV8_p68087",
+                        "HB_BLM0020+2_BIT_GMW_PB1_F-692_MSLV7_lb0820",
+                        "HB_BE0235+10_BIKR_GMW_PB1_F-235_MSLV8_o54163",
+                        "B_D11-DP_79+1_BIKR_GMW_PB2_F-4.26_MSLV8_p68073",
+                        "B_PU0063+0_KRBIB_GMW_PB1_F-5.27_MSLV5_j63709",
+                        "HB_PU0150+0_BIKR_GMW_PB1_F-5.48_MSLV8_o74415",
+                        "B_PU0207+0_BIKR_GMW_PB1_F-6.06_MSLV8_o74457",
+                        "B_SC0121+0_BIKR_GMW_PB1_F-304_MSLV8_oc5583",
+                        "B_D12-DP_16+66_BUKR_GMW_PB1_F-1.23_MSLV8_p57545",
+                        "B_PU0150+0_BUKR_GMW_PB1_F-4.95_MSLV8_o74409",
+                        "B_BE0254+96_BIKR_GMW_PB1_F-396_MSLV8_o54173",
+                        "HB_SC0264+50_INBIB_GMW_PB1_F-527_MSLV8_oc5681",
+                        "HB_DP46-5+76_BUKR_GMW_PB1_F-186_MSLV8_p98739",
+                        "B_D14B-DP_104+41_INBIB_GMW_PB2_F-3.69_MSLV8_p57485",
+                        "HB_SC0219+50_BIKR_GMW_PB1_F-325_MSLV8_oc5718",
+                        "HB_BE0213+10_BIB_GMW_PB1_F-599_MSLV8_o54164",
+                        "B_PU0013+0_INBIB_GMW_PB1_F-5.97_MSLV8_o74447",
+                        "B_D15-DP_16+61_BUKR_GMW_PB2_F-12.38_MSLV8_p57550",
+                        "HB_PU0063+0_INBIB_GMW_PB1_F-5.23_MSLV5_kc5454",
+                        "B_D12-DP_16+66_BIKR_GMW_PB1_F-1.21_MSLV8_p57546",
+                        "B_BE0188+23_KR_GMW_PB1_F-547_MSLV8_o54144",
+                        "PB641-1 _F-1214_MSLV7_l50438",
+                        "B_BE0098+81_BUKR_GMW_PB2_F-647_MSLV8_o54326",
+                        "HB_SC0179+50_BIT_GMW_PB1_F-244_MSLV8_oc5746",
+                        "HB_DP46-5+76_BIT_GMW_PB1_F-545_MSLV8_p67790",
+                        "B_BE0166+93_BIKR_GMW_PB1_F-413_MSLV8_p98752",
+                        "HB_D13-DP_2+199_INBIB_GMW_PB1_F-2.5_MSLV8_p57561",
+                        "HB_SC0179+50_BIT_GMW_PB1_F-483_MSLV8_oc5603",
+                        "HB_SC0264+50_BIKR_GMW_PB1_F-397_MSLV8_oc5635",
+                        "B_BE0072+3_BUKR_GMW_PB1_F-385_MSLV8_o54154",
+                        "HB_SC0234+0_BIKR_GMW_PB1_F-246_MSLV8_oc5738",
+                        "HB_PU0118+99_KRBIB_GMW_PB1_F-5.19_MSLV8_o74453",
+                        "HB_PU0150+0_INBIB_GMW_PB1_F-5.38_MSLV8_o74436",
+                        "B_BE0328+3_BUKR_GMW_PB1_F-349_MSLV8_o54169",
+                        "HB_SC0054+90_BIKR_GMW_PB1_F-301_MSLV8_oc5680",
+                        "B_PU0118+99_INBIB_GMW_PB1_F-5.21_MSLV8_o74610",
+                        "B_D15-DP_16+118_BUKR_GMW_PB2_F-12.44_MSLV8_p67766",
+                        "HB_SC0096+0_BUKR_GMW_PB1_F-273_MSLV8_oc5616",
+                        "HB_SC0121+0_BUKR_GMW_PB1_F-247_MSLV8_oc5621",
+                        "HB_BLM0019+83_BIT_GMW_PB1_F-691_MSLV7_lb0850",
+                        "B_BE0098+81_BUKR_GMW_PB1_F-444_MSLV8_p98527",
+                        "HB_SC0200+50_INBIB_GMW_PB1_F-489_MSLV8_oc5701",
+                        "HB_SC0140+0_BIT_GMW_PB2_F-801_MSLV8_oc5726",
+                        "B_PU0207+0_BIT_GMW_PB1_F-5.12_MSLV8_o74485",
+                        "HB_BE0092+15_BIB_GMW_PB1_F-450_MSLV8_o54182",
+                        "HB_PU0138+0_KRBIB_GMW_PB1_F-5.91_MSLV8_o74432",
+                        "HB_PU0118+99_BIKR_GMW_PB1_F-3.59_MSLV8_o74788",
+                        "HB_SC0140+0_BIT_GMW_PB1_F-501_MSLV8_oc5629",
+                        "B_D13-DP_4+1_BIKR_GMW_PB2_F-7.01_MSLV8_p88210",
+                        "HB_WZ0007+15_BIB_GMW_PB1_F-250_MSLV8_p98717",
+                        "HB_PU0063+0_BUKR_GMW_PB1_F-4.00_MSLVR_o50632",
+                        "HB_WPO0007+63_BIB_GMW_PB1_F-572_MSLV5_kc5726",
+                        "HB_PU0128+25_BIKR_GMW_PB1_F-3.68_MSLV8_o74411",
+                        "HB_SC0054+90_INBIB_GMW_PB1_F-448_MSLV8_oc5632",
+                        "PB640-2 _F-1231_MSLV8_p68072",
+                        "HB_PU0203+0_BUKR_GMW_PB1_F-3.50_MSLV8_o74419",
+                        "HB_BLM0019+89_BUKR_GMW_PB1_F-397_MSLV7_lb0709",
+                        "HB_PU0081+99_INBIB_GMW_PB1_F-5.14_MSLV8_o74474",
+                        "HB_PU0128+25_BUKR_GMW_PB1_F-3.09_MSLV8_o74430",
+                        "B_D12-DP_16+187_BUKR_GMW_PB1_F-1.25_MSLV8_p57562",
+                        "HB_WZ0007+15_BIT_GMW_PB1_F-464_MSLV8_p98518",
+                        "HB_SC0179+50_BUKR_GMW_PB1_F-289_MSLV8_oc5588",
+                        "HB_D12-DP_12+0_INBIB_GMW_PB1_F-3.67_MSLV8_p88268",
+                        "B_SC0054+90_BUKR_GMW_PB1_F-279_MSLV8_oc5702",
+                        "B_SC0234+0_BUKR_GMW_PB1_F-317_MSLV8_oc5684",
+                        "HB_BE0195+81_BIT_GMW_PB1_F-601_MSLV8_o54217",
+                        "HB_BE0166+95_BIT_GMW_PB1_F-599_MSLV8_o54141",
+                        "HB_SC0029+0_KR_GMW_PB1_F-299_MSLV8_oc5619",
+                        "B_D13-DP_4+1_BIKR_GMW_PB1_F-0.21_MSLV8_p88242",
+                        "HB_WZ0007+15_BIKR_GMW_PB1_F-257_MSLV8_p98531",
+                        "B_PU0181+2_BIKR_GMW_PB1_F-5.95_MSLM7_m20275_BOTTOM",
+                        "HB_BE0235+10_BIT_GMW_PB1_F-648_MSLV8_o54160",
+                        "HB_SC0054+90_INSD_GMW_PB1_F-773_MSLV8_oc5757",
+                        "HB_BE0188+23_BIT_GMW_PB1_F-702_MSLV8_o54165",
+                        "HB_SC0035+60_BIT_GMW_PB1_F-567_MSLV8_oc5724",
+                        "B_BE0147+68_BIKR_GMW_PB1_F-342_MSLV8_o54186",
+                        "B_PU0181+2_BIKR_GMW_PB3_F-19.95_MSLV8_o74420",
+                        "B_SC0054+90_BUKR_GMW_PB2_F-749_MSLV8_oc5704",
+                        "HB_WPO0067+0_BIB_GMW_PB1_F-411_MSLV8_na3139",
+                        "B_BE0072+3_BIT_GMW_PB1_F-519_MSLV8_o54218",
+                        "HB_BLM0021+1_BIB_GMW_PB1_F-494_MSLV7_lb0877",
+                        "HB_WZ0007+15_BUKR_GMW_PB1_F-251_MSLV8_p98524",
+                        "B_PU0181+2_BIKR_GMW_PB2_F-9.95_MSLM7_m20275_TOP",
+                        "HB_SC0121+0_KRBIB_GMW_PB1_F-410_MSLV8_oc5563",
+                        "HB_SC0009+0_BUKR_GMW_PB1_F-250_MSLV8_oc5615",
+                        "BE0341+40_BIRK_GMW_PB1_F-497_MSLV5_kc5682",
+                        "B_D14B-DP_52+17_BUKR_GMW_PB1_F1.09_MSLV8_p57530",
+                        "B_PU0181+2_BIT_GMW_PB1_F-6.33_MSLV8_o74428",
+                        "B_D11-DP_79+6_BUKR_GMW_PB1_F-1.69_MSLV8_p57549",
+                        "B_D11-DP_77+164_BUKR_GMW_PB1_F-0.6_MSLV8_p57652",
+                        "B_BE0072+3_BIT_GMW_PB2_F-769_MSLV8_o54166",
+                        "BE0049+00_BIKR_GMW_PB1_F-227_MSLV5_jc4354",
+                        "HB_PU0082+0_BUKR_GMW_PB1_F-2.99_MSLV8_o74468",
+                        "HB_PU0181+3_BUKR_GMW_PB1_F-4.44_MSLV8_o74433",
+                        "B_D15-DP_16+118_BUKR_GMW_PB1_F-2.44_MSLV8_p68089",
+                        "HB_SC0341+0_INSD_GMW_PB1_F-673_MSLV8_oc5602",
+                        "HB_WPO0090+86_BIB_GMW_PB1_F-189_MSLV8_p98729",
+                        "HB_D14B-DP_52+19_BIT_GMW_PB1_F-4.62_MSLV8_p67770",
+                        "B_BE0092+15_BUKR_GMW_PB1_F-350_MSLV8_o54270",
+                        "B_D14B-DP_104+40_INBIB_GMW_PB1_F-7.65_MSLV8_p88213",
+                        "HB_BLM0019+99_BUKR_GMW_PB1_F-399_MSLV8_p88264",
+                        "HB_SC0298+0_BUKR_GMW_PB1_F-250_MSLV8_oc5739",
+                        "HB_WPO0007+64_BUKR_GMW_PB1_F-267_MSLV8_na3134",
+                        "B_D14B-DP_52+17_BUKR_GMW_PB2_F-4.91_MSLV8_p67762",
+                        "B_SC0341+0_BUKR_GMW_PB2_F-633_MSLV8_oc5567",
+                        "B_SC0179+50_BIKR_GMW_PB1_F-335_MSLV8_oc5578",
+                        "B_D15-DP_16+58_BIT_GMW_PB2_F-12.33_MSLV8_p68097",
+                        "HB_BE0147+67_BIT_GMW_PB1_F-650_MSLV8_o54152",
+                        "B_SC0200+50_BIKR_GMW_PB1_F-306_MSLV8_oc5747",
+                        "HB_BE0195+80_BUKR_GMW_PB1_F-207_MSLV8_o54290",
+                        "PB657-2 _F-700_MSLV8_na2846",
+                        "HB_BLM0019+87_BIB_GMW_PB1_F-474_MSLV7_lb0845",
+                        "HB_SC0029+0_BITA_GMW_PB2_F-756_MSLV8_oc5727",
+                        "HB_BE0147+68_BUKR_GMW_PB1_F-247_MSLV8_o54200",
+                        "HB_PU0181+2_INBIB_GMW_PB1_F-5.78_MSLV8_o74444",
+                        "HB_WPO0007+64_BIKR_GMW_PB1_F-363_MSLV8_q210091",
+                        "HB_BE0213+10_BIT_GMW_PB1_F-681_MSLV8_o54216",
+                        "HB_SC0028+95_BIT_GMW_PB1_F-448_MSLV8_oc5625",
+                        "HB_SC0028+95_INSD_GMW_PB1_F-699_MSLV8_oc5637",
+                        "B_BE0235+10_BUKR_GMW_PB1_F-260_MSLV8_o54157",
+                        "B_D15-DP_16+61_BUKR_GMW_PB1_F-4.68_MSLV8_p67798",
+                        "B_WPO0067+0_INBIB_GMW_PB2_F-704_MSLV5_k74865",
+                        "HB_PU0163+0_BUKR_GMW_PB1_F-3.595_MSLV8_o54327",
+                        "HB_PU0163+0_BIKR_GMW_PB1_F-3.66_MSLV8_o74437",
+                        "HB_WPO0090+85_BIT_GMW_PB1_F-214_MSLV8_p98532",
+                        "PB657-1 _F+139_MSLV8_p57495",
+                        "HB_WPO0090+86_BIKR_GMW_PB1_F-200_MSLV8_p98502",
+                        "HB_D13-DP_2+198_BIT_GMW_PB1_F-3.76_MSLV8_p57489",
+                        "HB_PU0163+0_BIT_GMW_PB1_F-5.16_MSLV8_o74376",
+                        "HB_BE0098+81_BIB_GMW_PB1_F-188_MSLV8_o54149",
+                        "HB_BLM0021+0_BIKR_GMW_PB1_F-407_MSLV8_o74756",
+                        "HB_BLM0020+33_BIKR_GMW_PB1_F-435_MSLV7_lb0838",
+                        "B_BE0072+3_BIKR_GMW_PB1_F-400_MSLV8_p98529",
+                        "B_D15-DP_16+120_BIKR_GMW_PB1_F-2.92_MSLV8_p68083",
+                        "HB_D14B-DP_52+18_BIKR_GMW_PB1_F1.06_MSLV8_p57513",
+                        "HB_WPO0090+86_BUKR_GMW_PB1_F-193_MSLV8_p98509",
+                        "B_D15-DP_16+58_INBIB_GMW_PB1_F-7.23_MSLV8_p67750",
+                        "B_D15-DP_16+58_BIT_GMW_PB1_F-5.83_MSLV8_p57538",
+                        "HB_SC0140+0_BIKR_GMW_PB1_F-296_MSLV8_oc5618",
+                        "BE0049+00_BUKR_GMW_PB1_F-229_MSLV8_o54178",
+                        "HB_BLM0020+0_BIB_GMW_PB1_F-466_MSLV7_lb0659",
+                        "B_D15-DP_16+78_INBIB_GMW_PB1_F-5.86_MSLV8_p57458"
+                      ]
+                    }
+                  }
+                },
+                "color": {
+                  "fieldName": "sum(Untitled_dataset_2_3__delta)",
+                  "scale": {
+                    "type": "quantitative",
+                    "colorRamp": {
+                      "mode": "scheme",
+                      "scheme": "redyellowblue"
+                    },
+                    "domain": {
+                      "max": -0.15,
+                      "min": 0.15
+                    },
+                    "reverse": true
+                  }
+                }
+              },
+              "data": {
+                "queryName": "main_query"
+              }
+            }
+          },
+          "position": {
+            "x": 0,
+            "y": 45,
+            "width": 12,
+            "height": 19
+          }
+        },
+        {
+          "widget": {
+            "name": "7605975a",
+            "queries": [
+              {
+                "name": "main_query",
+                "query": {
+                  "fields": [
+                    {
+                      "name": "Untitled_dataset_2_4__natheid_index",
+                      "expression": "`Untitled_dataset_2_4`.`natheid_index`"
+                    },
+                    {
+                      "name": "Untitled_dataset_2_4__object_meetreeks_code",
+                      "expression": "`Untitled_dataset_2_4`.`object_meetreeks_code`"
+                    }
+                  ],
+                  "disaggregated": true
+                }
+              }
+            ],
+            "spec": {
+              "version": 3,
+              "widgetType": "bar",
+              "encodings": {
+                "x": {
+                  "fieldName": "Untitled_dataset_2_4__natheid_index",
+                  "scale": {
+                    "type": "quantitative"
+                  }
+                },
+                "y": {
+                  "fieldName": "Untitled_dataset_2_4__object_meetreeks_code",
+                  "scale": {
+                    "type": "categorical",
+                    "sort": {
+                      "by": "x-reversed"
+                    }
+                  }
+                },
+                "color": {
+                  "fieldName": "Untitled_dataset_2_4__natheid_index",
+                  "scale": {
+                    "type": "quantitative",
+                    "colorRamp": {
+                      "mode": "scheme",
+                      "scheme": "redblue"
+                    },
+                    "domain": {
+                      "max": -75,
+                      "min": 75
+                    },
+                    "reverse": true
+                  }
+                }
+              },
+              "data": {
+                "queryName": "main_query"
+              }
+            }
+          },
+          "position": {
+            "x": 0,
+            "y": 64,
+            "width": 12,
+            "height": 16
+          }
+        }
+      ],
+      "pageType": "PAGE_TYPE_CANVAS",
+      "layoutVersion": "GRID_V1"
+    },
+    {
+      "name": "36e5afef",
+      "displayName": "Kaartje",
+      "layout": [
+        {
+          "widget": {
+            "name": "6fa4ed88",
+            "queries": [
+              {
+                "name": "main_query",
+                "query": {
+                  "fields": [
+                    {
+                      "name": "Untitled_dataset_2__wgs84_ycoordinaat",
+                      "expression": "`Untitled_dataset_2`.`wgs84_ycoordinaat`"
+                    },
+                    {
+                      "name": "Untitled_dataset_2__wgs84_xcoordinaat",
+                      "expression": "`Untitled_dataset_2`.`wgs84_xcoordinaat`"
+                    },
+                    {
+                      "name": "Untitled_dataset_2__code",
+                      "expression": "`Untitled_dataset_2`.`code`"
+                    },
+                    {
+                      "name": "Untitled_dataset_2__bouwjaar",
+                      "expression": "`Untitled_dataset_2`.`bouwjaar`"
+                    }
+                  ],
+                  "disaggregated": true
+                }
+              }
+            ],
+            "spec": {
+              "frame": {
+                "showDescription": true,
+                "description": {
+                  "value": "Code om te laten zien hoeveel sensoren er in CSO zitten, en na 2022 + compartiment\\_naam = Grondwater hebben",
+                  "fields": []
+                }
+              },
+              "version": 2,
+              "mark": {
+                "shape": "cross",
+                "size": -2.6
+              },
+              "widgetType": "symbol-map",
+              "encodings": {
+                "coordinates": {
+                  "latitude": {
+                    "fieldName": "Untitled_dataset_2__wgs84_ycoordinaat"
+                  },
+                  "longitude": {
+                    "fieldName": "Untitled_dataset_2__wgs84_xcoordinaat"
+                  }
+                },
+                "extra": [
+                  {
+                    "fieldName": "Untitled_dataset_2__code"
+                  },
+                  {
+                    "fieldName": "Untitled_dataset_2__bouwjaar"
+                  }
+                ]
+              },
+              "data": {
+                "queryName": "main_query"
+              }
+            }
+          },
+          "position": {
+            "x": 0,
+            "y": 10,
+            "width": 12,
+            "height": 9
+          }
+        },
+        {
+          "widget": {
+            "name": "8de5653a",
+            "queries": [
+              {
+                "name": "main_query",
+                "query": {
+                  "fields": [
+                    {
+                      "name": "Untitled_dataset_7__bronsysteem",
+                      "expression": "`Untitled_dataset_7`.`bronsysteem`"
+                    },
+                    {
+                      "name": "Untitled_dataset_7__meetlocatie_wgs84_y",
+                      "expression": "`Untitled_dataset_7`.`meetlocatie_wgs84_y`"
+                    },
+                    {
+                      "name": "Untitled_dataset_7__meetlocatie_wgs84_x",
+                      "expression": "`Untitled_dataset_7`.`meetlocatie_wgs84_x`"
+                    },
+                    {
+                      "name": "Untitled_dataset_7__meetlocatie_code",
+                      "expression": "`Untitled_dataset_7`.`meetlocatie_code`"
+                    }
+                  ],
+                  "disaggregated": true
+                }
+              }
+            ],
+            "spec": {
+              "frame": {
+                "showDescription": true,
+                "description": {
+                  "value": "Linken van grafieken ",
+                  "fields": []
+                }
+              },
+              "version": 2,
+              "mark": {
+                "shape": "cross",
+                "size": -1.9
+              },
+              "widgetType": "symbol-map",
+              "encodings": {
+                "coordinates": {
+                  "latitude": {
+                    "fieldName": "Untitled_dataset_7__meetlocatie_wgs84_y"
+                  },
+                  "longitude": {
+                    "fieldName": "Untitled_dataset_7__meetlocatie_wgs84_x"
+                  }
+                },
+                "color": {
+                  "fieldName": "Untitled_dataset_7__bronsysteem",
+                  "scale": {
+                    "type": "categorical"
+                  }
+                },
+                "extra": [
+                  {
+                    "fieldName": "Untitled_dataset_7__meetlocatie_code"
+                  }
+                ]
+              },
+              "data": {
+                "queryName": "main_query"
+              }
+            }
+          },
+          "position": {
+            "x": 0,
+            "y": 0,
+            "width": 12,
+            "height": 10
+          }
+        }
+      ],
+      "pageType": "PAGE_TYPE_CANVAS",
+      "layoutVersion": "GRID_V1"
+    },
+    {
+      "name": "a034b5d5",
+      "displayName": "Series_Specific",
+      "pageType": "PAGE_TYPE_CANVAS",
+      "layoutVersion": "GRID_V1"
+    },
+    {
+      "name": "9be1cb7c",
+      "displayName": "Untitled page",
+      "layout": [
+        {
+          "widget": {
+            "name": "ffbc55c3",
+            "spec": {
+              "version": 1,
+              "jsonSpec": {
+                "type": "vega-lite",
+                "spec": "{\n  \"$schema\": \"https://vega.github.io/schema/vega-lite/v6.json\",\n  \"mark\": \"bar\",\n  \"data\": {\n    \"name\": \"databricks_query\"\n  },\n  \"encoding\": {\n    \"x\": {\n      \"field\": \"$xField\",\n      \"type\": \"nominal\"\n    },\n    \"y\": {\n      \"field\": \"$yField\",\n      \"type\": \"quantitative\"\n    }\n  }\n}"
+              },
+              "widgetType": "custom-vega-viz",
+              "encodings": {},
+              "data": {
+                "queryName": "main_query"
+              }
+            }
+          },
+          "position": {
+            "x": 1,
+            "y": 0,
+            "width": 6,
+            "height": 6
+          }
+        }
+      ],
+      "pageType": "PAGE_TYPE_CANVAS",
+      "layoutVersion": "GRID_V1"
+    }
+  ],
+  "uiSettings": {
+    "theme": {
+      "widgetHeaderAlignment": "ALIGNMENT_UNSPECIFIED"
+    },
+    "applyModeEnabled": false
+  }
+}

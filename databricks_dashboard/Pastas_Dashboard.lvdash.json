@@ -1,0 +1,237 @@
+{
+  "datasets": [
+    {
+      "name": "dc899d94",
+      "displayName": "pastas_fit_metrics",
+      "queryLines": [
+        "WITH latest AS (\r\n",
+        "    SELECT max(run_id) AS run_id\r\n",
+        "    FROM waterkeringbeheer_prd.jvanruitenbeek.pastas_fit_metrics\r\n",
+        ")\r\n",
+        "SELECT\r\n",
+        "    f.*,\r\n",
+        "    r.meetlocatie_code,\r\n",
+        "    m.naam                      AS location_name,\r\n",
+        "    m.compartiment_naam,\r\n",
+        "    m.peilgebiedpraktijk_code,\r\n",
+        "    m.meetreeks_actief,\r\n",
+        "    m.wgs84_xcoordinaat,\r\n",
+        "    m.wgs84_ycoordinaat,\r\n",
+        "    m.rd_xcoordinaat,\r\n",
+        "    m.rd_ycoordinaat,\r\n",
+        "    r.begin_filter,\r\n",
+        "    r.eind_filter\r\n",
+        "FROM waterkeringbeheer_prd.jvanruitenbeek.pastas_fit_metrics f\r\n",
+        "JOIN latest l\r\n",
+        "  ON l.run_id = f.run_id\r\n",
+        "LEFT JOIN gold_prd.hl_grondwaterpeilmeting.meetreeks r\r\n",
+        "       ON r.id = f.meetreeks_id\r\n",
+        "LEFT JOIN gold_prd.hl_cs_objecten.meetlocatie m\r\n",
+        "       ON m.id   = r.meetlocatie_object_id\r\n",
+        "       OR m.code = trim(r.meetlocatie_code)\r\n",
+        "WHERE f.model_type = 'tarso'\r\n",
+        "ORDER BY f.evp DESC;"
+      ]
+    },
+    {
+      "name": "513fe129",
+      "displayName": "Untitled dataset",
+      "queryLines": [
+        "DESCRIBE TABLE waterkeringbeheer_prd.jvanruitenbeek.pastas_model_checks;"
+      ]
+    },
+    {
+      "name": "b2fc3dd2",
+      "displayName": "pastas_fit_map_2",
+      "queryLines": [
+        "WITH latest AS (\r\n",
+        "    SELECT max(run_id) AS run_id\r\n",
+        "    FROM waterkeringbeheer_prd.jvanruitenbeek.pastas_fit_metrics\r\n",
+        "),\r\n",
+        "checks AS (\r\n",
+        "    SELECT\r\n",
+        "        c.run_id,\r\n",
+        "        c.meetreeks_id,\r\n",
+        "        c.model_type,\r\n",
+        "\r\n",
+        "        -- response memory\r\n",
+        "        max(CASE WHEN c.`check` LIKE 'response_memory%' THEN c.statistic END)      AS response_memory_stat,\r\n",
+        "        max(CASE WHEN c.`check` LIKE 'response_memory%' THEN c.operator END)       AS response_memory_operator,\r\n",
+        "        max(CASE WHEN c.`check` LIKE 'response_memory%' THEN c.threshold END)      AS response_memory_threshold,\r\n",
+        "        bool_and(CASE WHEN c.`check` LIKE 'response_memory%' THEN c.passed END)    AS response_memory_pass,\r\n",
+        "\r\n",
+        "        -- parameter bounds (may be one row per parameter; failing if ANY is on a bound)\r\n",
+        "        count(CASE WHEN c.`check` LIKE 'parameter_bounds%' THEN 1 END)             AS parameter_bounds_n,\r\n",
+        "        count(CASE WHEN c.`check` LIKE 'parameter_bounds%' AND NOT c.passed THEN 1 END)\r\n",
+        "                                                                                   AS parameter_bounds_n_failed,\r\n",
+        "        bool_and(CASE WHEN c.`check` LIKE 'parameter_bounds%' THEN c.passed END)   AS parameter_bounds_pass,\r\n",
+        "        min(CASE WHEN c.`check` LIKE 'parameter_bounds%' THEN c.threshold_min END) AS parameter_bounds_threshold_min,\r\n",
+        "        max(CASE WHEN c.`check` LIKE 'parameter_bounds%' THEN c.threshold_max END) AS parameter_bounds_threshold_max,\r\n",
+        "        concat_ws(' | ', collect_list(\r\n",
+        "            CASE WHEN c.`check` LIKE 'parameter_bounds%' AND NOT c.passed\r\n",
+        "                 THEN coalesce(c.comment, c.`check`) END\r\n",
+        "        ))                                                                         AS parameter_bounds_failed_detail\r\n",
+        "    FROM waterkeringbeheer_prd.jvanruitenbeek.pastas_model_checks c\r\n",
+        "    JOIN latest l ON l.run_id = c.run_id\r\n",
+        "    GROUP BY c.run_id, c.meetreeks_id, c.model_type\r\n",
+        ")\r\n",
+        "SELECT\r\n",
+        "    f.*,\r\n",
+        "    ck.response_memory_stat,\r\n",
+        "    ck.response_memory_operator,\r\n",
+        "    ck.response_memory_threshold,\r\n",
+        "    ck.response_memory_pass,\r\n",
+        "    ck.parameter_bounds_n,\r\n",
+        "    ck.parameter_bounds_n_failed,\r\n",
+        "    ck.parameter_bounds_pass,\r\n",
+        "    ck.parameter_bounds_threshold_min,\r\n",
+        "    ck.parameter_bounds_threshold_max,\r\n",
+        "    ck.parameter_bounds_failed_detail,\r\n",
+        "    r.meetlocatie_code,\r\n",
+        "    m.naam                      AS location_name,\r\n",
+        "    m.compartiment_naam,\r\n",
+        "    m.peilgebiedpraktijk_code,\r\n",
+        "    m.meetreeks_actief,\r\n",
+        "    m.wgs84_xcoordinaat,\r\n",
+        "    m.wgs84_ycoordinaat,\r\n",
+        "    m.rd_xcoordinaat,\r\n",
+        "    m.rd_ycoordinaat,\r\n",
+        "    r.begin_filter,\r\n",
+        "    r.eind_filter\r\n",
+        "FROM waterkeringbeheer_prd.jvanruitenbeek.pastas_fit_metrics f\r\n",
+        "JOIN latest l\r\n",
+        "  ON l.run_id = f.run_id\r\n",
+        "LEFT JOIN checks ck\r\n",
+        "       ON ck.run_id       = f.run_id\r\n",
+        "      AND ck.meetreeks_id = f.meetreeks_id\r\n",
+        "      AND ck.model_type   = f.model_type\r\n",
+        "LEFT JOIN gold_prd.hl_grondwaterpeilmeting.meetreeks r\r\n",
+        "       ON r.id = f.meetreeks_id\r\n",
+        "LEFT JOIN gold_prd.hl_cs_objecten.meetlocatie m\r\n",
+        "       ON m.id   = r.meetlocatie_object_id\r\n",
+        "       OR m.code = trim(r.meetlocatie_code)\r\n",
+        "WHERE f.model_type = 'tarso'\r\n",
+        "ORDER BY f.evp DESC;"
+      ]
+    }
+  ],
+  "pages": [
+    {
+      "name": "466d1a49",
+      "displayName": "Kaart_test",
+      "layout": [
+        {
+          "widget": {
+            "name": "8cca37de",
+            "queries": [
+              {
+                "name": "main_query",
+                "query": {
+                  "datasetName": "dc899d94",
+                  "fields": [
+                    {
+                      "name": "r2",
+                      "expression": "`r2`"
+                    },
+                    {
+                      "name": "wgs84_ycoordinaat",
+                      "expression": "`wgs84_ycoordinaat`"
+                    },
+                    {
+                      "name": "wgs84_xcoordinaat",
+                      "expression": "`wgs84_xcoordinaat`"
+                    },
+                    {
+                      "name": "meetlocatie_code",
+                      "expression": "`meetlocatie_code`"
+                    },
+                    {
+                      "name": "first_entry",
+                      "expression": "`first_entry`"
+                    },
+                    {
+                      "name": "last_entry",
+                      "expression": "`last_entry`"
+                    },
+                    {
+                      "name": "span_days",
+                      "expression": "`span_days`"
+                    }
+                  ],
+                  "disaggregated": true
+                }
+              }
+            ],
+            "spec": {
+              "version": 2,
+              "mark": {
+                "size": -2.1
+              },
+              "widgetType": "symbol-map",
+              "encodings": {
+                "coordinates": {
+                  "coordinateType": "longitude-latitude",
+                  "latitude": {
+                    "fieldName": "wgs84_ycoordinaat"
+                  },
+                  "longitude": {
+                    "fieldName": "wgs84_xcoordinaat"
+                  }
+                },
+                "color": {
+                  "fieldName": "r2",
+                  "legend": {
+                    "position": "right"
+                  },
+                  "scale": {
+                    "type": "quantitative",
+                    "colorRamp": {
+                      "mode": "scheme",
+                      "scheme": "redyellowgreen"
+                    },
+                    "domain": {
+                      "mid": 0.7,
+                      "min": 0,
+                      "max": 1
+                    }
+                  }
+                },
+                "extra": [
+                  {
+                    "fieldName": "meetlocatie_code"
+                  },
+                  {
+                    "fieldName": "first_entry"
+                  },
+                  {
+                    "fieldName": "last_entry"
+                  },
+                  {
+                    "fieldName": "span_days"
+                  }
+                ]
+              },
+              "data": {
+                "queryName": "main_query"
+              }
+            }
+          },
+          "position": {
+            "x": 0,
+            "y": 0,
+            "width": 12,
+            "height": 9
+          }
+        }
+      ],
+      "pageType": "PAGE_TYPE_CANVAS",
+      "layoutVersion": "GRID_V1"
+    }
+  ],
+  "uiSettings": {
+    "theme": {
+      "widgetHeaderAlignment": "ALIGNMENT_UNSPECIFIED"
+    },
+    "applyModeEnabled": false
+  }
+}
