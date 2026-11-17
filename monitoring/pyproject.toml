@@ -1,0 +1,11 @@
+[project]
+name = "monitoring-lib"
+version = "0.1.0"
+description = "Daily monitoring tables and the Grondwater_Monitoring dashboard"
+requires-python = ">=3.11"
+dependencies = ["pandas", "numpy"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+# local_validation (the flag checks) and source_read live in data_validation/.
+pythonpath = ["src", "../data_validation", "../data_validation/databricks_code/lib"]
