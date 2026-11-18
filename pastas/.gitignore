@@ -27,3 +27,6 @@ dist/
 # (notebooks/analysis/export_results.py) and the family picks made in the app.
 !results_export/**/*.csv
 !family_choice/*.csv
+
+# Local runs of scripts/run_local.py (models, plots, tables)
+local_runs/

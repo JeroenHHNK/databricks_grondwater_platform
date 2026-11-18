@@ -9,9 +9,11 @@ all three projects.
 | [`boxplots/`](boxplots/README.md) | Boxplots peilbuizen | Cross-sections with soil build-up, wells and heads; the **Boxplots** section of the app, and its notebooks | `JeroenHHNK/databricks_boxplots-pipeline` (`development`) |
 | [`data_validation/`](data_validation/README.md) | Groundwater data validation | Source copy → automated checks → manual review; the **Data validation** section of the app, and its Databricks job | `JeroenHHNK/databricks_data_validation` (`main`) |
 | [`pastas/`](pastas/README.md) | Pastas/Tarso pipeline | Model fits and extremes on validated or unvalidated data, Databricks notebooks; the **Pastas** section of the app reads their results | `JeroenHHNK/databricks_pastas_pipeline` (`main`) |
+| [`monitoring/`](monitoring/README.md) | Monitoring | The daily job that writes the `monitoring_*` tables, and the generator of the `Grondwater_Monitoring` dashboard | new |
+| [`databricks_dashboard/`](databricks_dashboard/README.md) | Dashboards | The Databricks AI/BI dashboards (`.lvdash.json`): what each one monitors and with which data | new |
 
 Each project came in with its full git history (`git log -- boxplots/` shows it) and keeps
-its own `pyproject.toml`, `docs/`, notebooks, tests and data. Every project finds its
+its own `pyproject.toml`, notebooks, tests and data. Every project finds its
 files by walking up to its **own** `pyproject.toml`, so its notebooks and scripts work
 unchanged from inside its folder.
 
@@ -133,10 +135,18 @@ Add this repo once as a Git folder. Point notebooks and jobs at the project subf
 ## Tests
 
 ```bash
-uv run pytest tests                  # the central app's own code (platform_app/)
-cd data_validation && uv run --project .. pytest tests
-cd pastas && pip install -e ".[pastas,dev]" && pytest -m "not slow"
+uv sync
+uv run python scripts/run_tests.py          # every suite; skips the real Pastas fits
+uv run python scripts/run_tests.py --slow   # also the real fits
 ```
 
-The Databricks background docs (`docs/`) were nearly identical in the three projects
-and are kept per project for now.
+It runs the suites one after the other, each from its own folder with its own pytest settings:
+`tests/` (the central app), `data_validation/`, `monitoring/`, `boxplots/` and `pastas/`. The Pastas
+suite gets `pastas==1.12.*` on the fly (`uv run --with`): it is not in `uv.lock`, because the
+Databricks App installs from that lock and does not need it. GitHub Actions runs the same on every
+push and pull request (`.github/workflows/tests.yml`), on Python 3.11 like the App.
+
+The Databricks background docs are in [`docs/`](docs/), shared by all projects: the source
+schema (`DATABRICKS_HANDOFF.md` §2.0), the grants and volume layout (`DATABRICKS_PERMISSIONS.md`)
+and the location registry (`DATABRICKS_layer_cs_objecten.md`). `pastas/docs/PIPELINE_DATASETS.md`
+describes what the Pastas pipeline reads and writes.

@@ -2,12 +2,14 @@
 Return levels from the Pastas models, drawn per well in the Boxplots cross section.
 
 For every well of the cross section, the series Boxplots shows for it (the same choice as
-the heads, `databricks_reeksen.kies_reeksen`) is looked up in the Pastas results; its
-return levels in the family that applies per tail (the pick in
-`pastas/family_choice/`, else the automatic one) are drawn at the well's x position:
-a triangle up for the wet tail (high heads), down for the dry tail, one marker per
-return period. The figure from boxplots is copied, never changed, so its cache stays valid;
-the new traces come last, so the time slider (which restyles traces by index) is unaffected.
+the heads, `databricks_reeksen.kies_reeksen`) is looked up in the Pastas results; the
+levels of the model that series uses (a person's pick on Pastas -> Modellen, else the
+automatic pick of `<prefix>_model_selection`, else Tarso) in the family picked per tail (`pastas/family_choice/`, set on Pastas ->
+Familie kiezen) are drawn as one line per tail and return period across the wells: solid
+for the wet tail (high heads), dashed for the dry tail, a triangle at each well. A tail
+without a pick has no family and is left out. The figure from boxplots is copied, never
+changed, so its cache stays valid; the new traces come last, so the time slider (which
+restyles traces by index) is unaffected.
 """
 
 from __future__ import annotations
@@ -19,7 +21,7 @@ import streamlit as st
 from pandas import DataFrame
 
 from tarso_pipeline import results
-from tarso_pipeline.paths import DATA_BASES, UNVALIDATED
+from tarso_pipeline.paths import DATA_BASES, VALIDATED
 
 from . import pastas_bron as bron
 
@@ -31,17 +33,23 @@ RAMP = {"wet": ["#9ec5f0", "#5b9be3", "#2a78d6", "#1a56a3", "#0e3870"],
 SYMBOOL = {"wet": "triangle-up", "dry": "triangle-down"}
 
 
-def punten(putten: DataFrame, niveaus: DataFrame, perioden: list[int]) -> DataFrame:
-    """One row per well x tail x T: x_profiel, peilbuis, level, family, family_source.
+def punten(putten: DataFrame, niveaus: DataFrame, perioden: list[int],
+           in_gebruik: DataFrame | None = None) -> DataFrame:
+    """One row per well x tail x T: x_profiel, peilbuis, level, family, model_type.
 
     `putten` has meetreeks_id, x_profiel, peilbuis, diepte_niveau (the Stijghoogtes
-    catalogue); `niveaus` is `results.chosen_levels(...)`.
+    catalogue); `niveaus` is `results.chosen_levels(...)`; `in_gebruik` the model per
+    series (`selection.model_in_use`: meetreeks_id, model_type). Without it: Tarso.
     """
     kolommen = ["x_profiel", "peilbuis", "diepte_niveau", "tail", "return_period", "level", "family",
-                "family_source", "meetreeks_id"]
+                "meetreeks_id", "model_type"]
     if putten.empty or niveaus.empty:
         return DataFrame(columns=kolommen)
-    lv = niveaus[(niveaus["model_type"] == MODEL_TYPE) & niveaus["return_period"].isin(perioden)]
+    lv = niveaus[niveaus["return_period"].isin(perioden)]
+    if in_gebruik is None or in_gebruik.empty:
+        lv = lv[lv["model_type"] == MODEL_TYPE]
+    else:
+        lv = lv.merge(in_gebruik[["meetreeks_id", "model_type"]], on=["meetreeks_id", "model_type"], how="inner")
     uit = putten.dropna(subset=["meetreeks_id", "x_profiel"]).merge(lv, on="meetreeks_id", how="inner")
     return uit.dropna(subset=["level"])[kolommen].sort_values(["tail", "return_period", "x_profiel"],
                                                              ignore_index=True)
@@ -53,8 +61,22 @@ def _kleur(staart: str, i: int, n: int) -> str:
     return ramp[len(ramp) // 2] if n == 1 else ramp[round(i * (len(ramp) - 1) / (n - 1))]
 
 
+def _lijn(g: DataFrame) -> DataFrame:
+    """The points of one line: per x position the mean level, and every well there for the hover.
+
+    Two filters of one well share an x; the line goes through their mean instead of zigzagging.
+    """
+    return (g.groupby("x_profiel", sort=True)
+            .agg(level=("level", "mean"),
+                 tekst=("peilbuis", lambda p: ", ".join(dict.fromkeys(p))),
+                 familie=("family", lambda f: ", ".join(dict.fromkeys(f))),
+                 model=("model_type", lambda m: ", ".join(dict.fromkeys(m))) if "model_type" in g
+                 else ("family", lambda f: ""))
+            .reset_index())
+
+
 def voeg_toe(figuur: go.Figure, pt: DataFrame) -> go.Figure:
-    """A copy of `figuur` with one marker trace per tail x return period, and room for them."""
+    """A copy of `figuur` with one line per tail x return period across the wells, and room for them."""
     fig = go.Figure(figuur)
     if pt.empty:
         return fig
@@ -64,17 +86,20 @@ def voeg_toe(figuur: go.Figure, pt: DataFrame) -> go.Figure:
             g = pt[(pt["tail"] == staart) & (pt["return_period"] == T)]
             if g.empty:
                 continue
+            lijn = _lijn(g)
             kleur = _kleur(staart, i, len(perioden))
             fig.add_trace(go.Scatter(
-                x=g["x_profiel"], y=g["level"], mode="markers", name=f"T={T}",
+                x=lijn["x_profiel"], y=lijn["level"], mode="lines+markers", name=f"T={T}",
                 legendgroup=f"herhaling_{staart}",
                 legendgrouptitle_text=f"Herhalingstijd {'nat' if staart == 'wet' else 'droog'} (Pastas)",
-                marker={"symbol": SYMBOOL[staart], "size": 13, "color": kleur, "line": {"width": 1, "color": "#222"}},
-                customdata=g[["peilbuis", "family", "family_source"]].to_numpy(dtype=object),
+                line={"color": kleur, "width": 2.5, "dash": "solid" if staart == "wet" else "dash"},
+                marker={"symbol": SYMBOOL[staart], "size": 11, "color": kleur, "line": {"width": 1, "color": "#222"}},
+                customdata=lijn[["tekst", "familie", "model"]].to_numpy(dtype=object),
                 hovertemplate=(f"%{{customdata[0]}} · T={T} {'nat' if staart == 'wet' else 'droog'}: "
-                               "%{y:.2f} m NAP<br>familie %{customdata[1]} (%{customdata[2]})<extra></extra>"),
+                               "%{y:.2f} m NAP<br>familie %{customdata[1]} · model %{customdata[2]}"
+                               "<extra></extra>"),
             ))
-    # The profile figure fixes its y range; widen it so every marker is in view.
+    # The profile figure fixes its y range; widen it so every line is in view.
     bereik = fig.layout.yaxis.range
     if bereik is not None:
         laag = min(bereik[0], float(pt["level"].min()) - 0.3)
@@ -94,20 +119,20 @@ def _putten(project: str, profiel_id: str) -> DataFrame:
 
 def in_profiel(figuren, project: str, profiel_id: str):
     """Controls above the Boxplots plot; returns `figuren` with the return levels added (or as is)."""
-    from .pastas_pagina import _keuze, _lees
+    from .pastas_pagina import _in_gebruik, _keuze, _lees
 
     k1, k2, k3 = st.columns([1, 2, 2], vertical_alignment="bottom")
     aan = k1.toggle("Herhalingstijden", value=True, help="Uit de Pastas-modellen van de peilbuizen in dit "
-                    "dwarsprofiel, in de gekozen statistische familie (Pastas → Modellen).")
+                    "dwarsprofiel, in de statistische familie die per staart is gekozen (Pastas → Familie kiezen).")
     if not aan:
         return figuren
-    basis = k2.segmented_control("Pastas getraind op", list(DATA_BASES), default=UNVALIDATED,
+    basis = k2.segmented_control("Pastas getraind op", list(DATA_BASES), default=VALIDATED,
                                  format_func=lambda b: bron.BASIS_LABEL[b].split(" (")[0], key="bp_herh_basis") \
-        or UNVALIDATED
-    lv, sel = _lees(basis, "return_levels"), _lees(basis, "evt_selection")
-    if lv.data.empty or sel.data.empty:
+        or VALIDATED
+    lv = _lees(basis, "return_levels")
+    if lv.data.empty:
         st.caption(f"Geen herhalingstijden ({bron.BASIS_LABEL[basis].lower()}): "
-                   f"{lv.melding or sel.melding or 'nog geen extremenanalyse'}.")
+                   f"{lv.melding or 'nog geen extremenanalyse'}.")
         return figuren
     beschikbaar = sorted(int(t) for t in lv.data["return_period"].unique())
     perioden = k3.multiselect("Herhalingstijden (jaar)", beschikbaar,
@@ -117,12 +142,12 @@ def in_profiel(figuren, project: str, profiel_id: str):
     except Exception as fout:  # noqa: BLE001 - the plot itself must still show
         st.caption(f"Peilbuizen van dit dwarsprofiel niet gevonden: {fout}")
         return figuren
-    pt = punten(putten, results.chosen_levels(lv.data, sel.data, _keuze(basis)), perioden)
+    pt = punten(putten, results.chosen_levels(lv.data, _keuze(basis)), perioden, _in_gebruik(basis))
     met = pt["peilbuis"].nunique() if not pt.empty else 0
     zonder = sorted(set(putten.dropna(subset=["meetreeks_id"])["peilbuis"]) - set(pt["peilbuis"]))
     st.caption(f"Herhalingstijden voor {met} van {putten['peilbuis'].nunique()} peilbuizen · "
                f"{'live' if lv.bron == bron.LIVE else 'export'}"
-               + (f" · zonder model of extremen: {', '.join(zonder)}" if zonder else ""))
+               + (f" · zonder model of gekozen familie: {', '.join(zonder)}" if zonder else ""))
     if pt.empty:
         return figuren
     return dataclasses.replace(figuren, profiel_figuur=voeg_toe(figuren.profiel_figuur, pt))

@@ -1,0 +1,1 @@
+model_choice/<prefix>_model_choice.csv is written by the app (Pastas -> Modellen -> Modelvergelijking en keuze): the model a person picked for a series, over the automatic pick of <prefix>_model_selection (run_extremes.py). Loaded into Delta by notebooks/analysis/load_family_choice.py, with the view <prefix>_model_in_use.

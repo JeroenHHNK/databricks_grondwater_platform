@@ -5,7 +5,7 @@ types and meaning.
 
 > Renamed from `DATA_CATALOG.md` (2026-10-20). "Data catalog" read as if it described
 > Unity Catalog — the `gold_prd` source. It never did. The source schema is documented
-> in [`DATABRICKS_HANDOFF.md` §2.0](DATABRICKS_HANDOFF.md); this file is about **our**
+> in [`DATABRICKS_HANDOFF.md` §2.0](../../docs/DATABRICKS_HANDOFF.md); this file is about **our**
 > datasets.
 
 ## ⚠️ Section status

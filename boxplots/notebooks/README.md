@@ -17,7 +17,7 @@ De `db_notebook_`-bestanden draaien in de Databricks Git folder van deze repo.
 Ze schrijven in de Git folder; commit en push daarna vanuit Databricks. Ze
 lezen alleen uit `gold_prd` en schrijven daar nooit naartoe. De tabelnamen
 staan drie-delig in `modules/paths.py`, zie
-[`../docs/DATABRICKS_PERMISSIONS.md`](../docs/DATABRICKS_PERMISSIONS.md).
+[`docs/DATABRICKS_PERMISSIONS.md`](../../docs/DATABRICKS_PERMISSIONS.md).
 
 De app heeft de stijghoogte-export niet meer nodig: hij haalt ze live op. De
 export blijft de terugval, en de bron van `controleer_reeksen.py`.

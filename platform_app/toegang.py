@@ -19,7 +19,7 @@ from dataclasses import dataclass
 from modules import paths
 
 # Where validation results would go. The data validation notebooks write to the personal
-# schema today (see data_validation/docs/DATABRICKS_PERMISSIONS.md §3); a shared project
+# schema today (see docs/DATABRICKS_PERMISSIONS.md §3); a shared project
 # schema is a better home once the app writes there too.
 SCHEMA_VAR = "VALIDATION_SCHEMA"
 STANDAARD_SCHEMA = "waterkeringbeheer_prd.jvanruitenbeek"

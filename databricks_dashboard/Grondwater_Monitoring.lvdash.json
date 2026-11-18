@@ -1,0 +1,3663 @@
+{
+  "datasets": [
+    {
+      "name": "inv_totalen",
+      "displayName": "Inventaris: totalen",
+      "queryLines": [
+        "SELECT count_if(NOT is_handwaarneming)                                            AS sensoren,\n",
+        "       count_if(is_handwaarneming)                                    AS handwaarneming_reeksen,\n",
+        "       sum(metingen_ruw)                                              AS metingen,\n",
+        "       count_if(NOT is_handwaarneming AND status <> 'ok')                         AS sensoren_stil,\n",
+        "       count_if(NOT is_handwaarneming AND NOT metadata_compleet)                  AS metadata_incompleet,\n",
+        "       round(100 * count_if(leverancier = 'Wiertsema' AND gematcht)\n",
+        "             / nullif(count_if(leverancier = 'Wiertsema'), 0), 1)     AS pct_gekoppeld_wiertsema,\n",
+        "       round(100 * count_if(leverancier = 'Fugro' AND gematcht)\n",
+        "             / nullif(count_if(leverancier = 'Fugro'), 0), 1)         AS pct_gekoppeld_fugro,\n",
+        "       max(as_of)                                                     AS bijgewerkt\n",
+        "FROM waterkeringbeheer_prd.jvanruitenbeek.monitoring_series_status\n"
+      ]
+    },
+    {
+      "name": "inv_koppeling",
+      "displayName": "Inventaris: koppeling cs_objecten",
+      "queryLines": [
+        "SELECT leverancier,\n",
+        "       CASE WHEN gematcht THEN 'gekoppeld aan cs_objecten' ELSE 'niet gekoppeld' END AS koppeling,\n",
+        "       count(*) AS reeksen\n",
+        "FROM waterkeringbeheer_prd.jvanruitenbeek.monitoring_series_status WHERE NOT is_handwaarneming\n",
+        "GROUP BY 1, 2\n"
+      ]
+    },
+    {
+      "name": "inv_actief",
+      "displayName": "Inventaris: actief/inactief",
+      "queryLines": [
+        "SELECT leverancier, meetreeks_actief, count(*) AS reeksen\n",
+        "FROM waterkeringbeheer_prd.jvanruitenbeek.monitoring_series_status WHERE NOT is_handwaarneming\n",
+        "GROUP BY 1, 2\n"
+      ]
+    },
+    {
+      "name": "inv_metadata",
+      "displayName": "Inventaris: ontbrekende metadata",
+      "queryLines": [
+        "SELECT leverancier, veld, count(*) AS ontbreekt\n",
+        "FROM waterkeringbeheer_prd.jvanruitenbeek.monitoring_series_status\n",
+        "LATERAL VIEW stack(5, 'begin_filter', heeft_begin_filter, 'eind_filter', heeft_eind_filter,\n",
+        "                      'bovenkant_peilbuis', heeft_bovenkant_peilbuis,\n",
+        "                      'meetlocatie_code', heeft_meetlocatie_code, 'coordinaten', heeft_coordinaten) m AS veld, aanwezig\n",
+        "WHERE NOT is_handwaarneming AND NOT aanwezig\n",
+        "GROUP BY 1, 2\n"
+      ]
+    },
+    {
+      "name": "inv_kaart",
+      "displayName": "Inventaris: kaart status",
+      "queryLines": [
+        "SELECT reeks_label, cs_code, cs_naam, leverancier, status, meetreeks_actief,\n",
+        "       CAST(laatste_meting AS string) AS laatste_meting, uptime_7d_pct, lat, lon\n",
+        "FROM waterkeringbeheer_prd.jvanruitenbeek.monitoring_series_status WHERE NOT is_handwaarneming AND lat IS NOT NULL\n"
+      ]
+    },
+    {
+      "name": "inv_stil",
+      "displayName": "Inventaris: sensoren zonder recente data",
+      "queryLines": [
+        "SELECT reeks_label, cs_code, leverancier, meetreeks_actief, status,\n",
+        "       laatste_meting, dagen_stil, uren_7d, uptime_7d_pct\n",
+        "FROM waterkeringbeheer_prd.jvanruitenbeek.monitoring_series_status WHERE NOT is_handwaarneming AND status <> 'ok'\n",
+        "ORDER BY meetreeks_actief = 'Ja' DESC, dagen_stil\n"
+      ]
+    },
+    {
+      "name": "uptime_lijn",
+      "displayName": "Uptime per leverancier per dag",
+      "queryLines": [
+        "WITH d AS (SELECT datum, leverancier, avg(uptime_pct) AS uptime_pct\n",
+        "           FROM waterkeringbeheer_prd.jvanruitenbeek.monitoring_uptime_daily\n",
+        "           WHERE meetreeks_actief <> 'Nee' AND datum >= (SELECT max(datum) FROM waterkeringbeheer_prd.jvanruitenbeek.monitoring_uptime_daily) - INTERVAL 90 DAYS\n",
+        "           GROUP BY 1, 2)\n",
+        "SELECT datum, leverancier, round(uptime_pct, 1) AS uptime_pct FROM d\n",
+        "UNION ALL\n",
+        "SELECT DISTINCT datum, 'contractdoel', 95.0 FROM d\n"
+      ]
+    },
+    {
+      "name": "uptime_sensor",
+      "displayName": "Uptime per sensor",
+      "queryLines": [
+        "WITH m AS (SELECT max(datum) AS d FROM waterkeringbeheer_prd.jvanruitenbeek.monitoring_uptime_daily)\n",
+        "SELECT u.reeks_label, u.leverancier, u.meetreeks_actief,\n",
+        "       round(avg(CASE WHEN u.datum > m.d - INTERVAL 7 DAYS  THEN u.uptime_pct END), 1) AS uptime_7d,\n",
+        "       round(avg(CASE WHEN u.datum > m.d - INTERVAL 30 DAYS THEN u.uptime_pct END), 1) AS uptime_30d,\n",
+        "       round(avg(CASE WHEN u.datum > m.d - INTERVAL 90 DAYS THEN u.uptime_pct END), 1) AS uptime_90d,\n",
+        "       round(avg(CASE WHEN u.datum > m.d - INTERVAL 90 DAYS THEN u.uptime_pct END), 1) >= 95.0\n",
+        "                                                                                       AS haalt_doel_90d\n",
+        "FROM waterkeringbeheer_prd.jvanruitenbeek.monitoring_uptime_daily u CROSS JOIN m\n",
+        "GROUP BY 1, 2, 3\n",
+        "ORDER BY uptime_30d\n"
+      ]
+    },
+    {
+      "name": "uptime_14d",
+      "displayName": "Aanlevering laatste 14 dagen",
+      "queryLines": [
+        "SELECT concat(leverancier, ' | ', reeks_label) AS sensor, date_format(datum, 'MM-dd') AS dag, uptime_pct\n",
+        "FROM waterkeringbeheer_prd.jvanruitenbeek.monitoring_uptime_daily\n",
+        "WHERE meetreeks_actief <> 'Nee' AND datum > (SELECT max(datum) FROM waterkeringbeheer_prd.jvanruitenbeek.monitoring_uptime_daily) - INTERVAL 14 DAYS\n"
+      ]
+    },
+    {
+      "name": "kw_totalen",
+      "displayName": "Kwaliteit: totalen",
+      "queryLines": [
+        "SELECT count_if(s.gevalideerd)                                              AS reeksen_gevalideerd,\n",
+        "       count(*)                                                              AS reeksen,\n",
+        "       round(100 * sum(s.uren_gevalideerd) / nullif(sum(s.uren_totaal), 0), 1) AS pct_uren_gevalideerd,\n",
+        "       sum(f.verdacht_totaal)                                                AS verdachte_uren,\n",
+        "       sum(f.verdacht_ongevalideerd)                                         AS verdacht_ongevalideerd,\n",
+        "       sum(f.verdacht_gisteren)                                              AS verdacht_gisteren,\n",
+        "       (SELECT count_if(verdachte_schommeling) FROM waterkeringbeheer_prd.jvanruitenbeek.monitoring_change_recent)                AS verdachte_schommelingen,\n",
+        "       (SELECT max(neerslag_7d_mm) FROM waterkeringbeheer_prd.jvanruitenbeek.monitoring_change_recent)                            AS neerslag_7d_mm\n",
+        "FROM waterkeringbeheer_prd.jvanruitenbeek.monitoring_series_status s LEFT JOIN waterkeringbeheer_prd.jvanruitenbeek.monitoring_flags_series f ON f.meetreeks_id = s.meetreeks_id\n",
+        "WHERE NOT s.is_handwaarneming AND s.uren_totaal > 0\n"
+      ]
+    },
+    {
+      "name": "kw_gevalideerd",
+      "displayName": "Kwaliteit: aandeel gevalideerd per reeks",
+      "queryLines": [
+        "SELECT reeks_label, leverancier, gevalideerd_pct\n",
+        "FROM waterkeringbeheer_prd.jvanruitenbeek.monitoring_series_status WHERE NOT is_handwaarneming AND gevalideerd\n"
+      ]
+    },
+    {
+      "name": "kw_flags",
+      "displayName": "Kwaliteit: flags per reeks (top 30)",
+      "queryLines": [
+        "WITH top_reeksen AS (SELECT f.*, s.reeks_label FROM waterkeringbeheer_prd.jvanruitenbeek.monitoring_flags_series f JOIN waterkeringbeheer_prd.jvanruitenbeek.monitoring_series_status s ON s.meetreeks_id = f.meetreeks_id\n",
+        "             ORDER BY f.aandeel_verdacht DESC NULLS LAST LIMIT 30)\n",
+        "SELECT reeks_label, flag, uren\n",
+        "FROM top_reeksen\n",
+        "LATERAL VIEW stack(6, 'v1 buiten filter/peilbuis', v1_totaal, 'v2 sprong', v2_totaal,\n",
+        "                      'v3 bij filterbodem', v3_totaal, 'v4 uitschieter (IQR)', v4_totaal,\n",
+        "                      'regel A daling', rule_a_totaal, 'regel B onder filter', rule_b_totaal) x AS flag, uren\n",
+        "WHERE uren > 0\n"
+      ]
+    },
+    {
+      "name": "kw_ongevalideerd",
+      "displayName": "Kwaliteit: verdachte ongevalideerde data (top 30)",
+      "queryLines": [
+        "SELECT s.reeks_label, s.leverancier, f.verdacht_ongevalideerd,\n",
+        "       round(100 * f.verdacht_ongevalideerd / nullif(f.uren_totaal - f.uren_gevalideerd, 0), 1)\n",
+        "           AS pct_van_ongevalideerd\n",
+        "FROM waterkeringbeheer_prd.jvanruitenbeek.monitoring_flags_series f JOIN waterkeringbeheer_prd.jvanruitenbeek.monitoring_series_status s ON s.meetreeks_id = f.meetreeks_id\n",
+        "WHERE f.verdacht_ongevalideerd > 0\n",
+        "ORDER BY f.verdacht_ongevalideerd DESC\n",
+        "LIMIT 30\n"
+      ]
+    },
+    {
+      "name": "kw_gisteren",
+      "displayName": "Kwaliteit: gisteren",
+      "queryLines": [
+        "SELECT s.reeks_label, s.leverancier, s.status, c.uren_gisteren, f.verdacht_gisteren,\n",
+        "       f.v2_gisteren AS sprongen_gisteren, c.gisteren_gem, c.basis_gem, c.delta_m\n",
+        "FROM waterkeringbeheer_prd.jvanruitenbeek.monitoring_series_status s\n",
+        "LEFT JOIN waterkeringbeheer_prd.jvanruitenbeek.monitoring_change_recent c ON c.meetreeks_id = s.meetreeks_id\n",
+        "LEFT JOIN waterkeringbeheer_prd.jvanruitenbeek.monitoring_flags_series f ON f.meetreeks_id = s.meetreeks_id\n",
+        "WHERE NOT s.is_handwaarneming AND s.meetreeks_actief <> 'Nee'\n",
+        "ORDER BY f.verdacht_gisteren DESC NULLS LAST, abs(c.delta_m) DESC NULLS LAST\n"
+      ]
+    },
+    {
+      "name": "kw_schommeling",
+      "displayName": "Kwaliteit: grootste schommelingen afgelopen week (top 30)",
+      "queryLines": [
+        "SELECT reeks_label, leverancier, week_bereik_m, neerslag_7d_mm, knmi_tot,\n",
+        "       CASE WHEN verdachte_schommeling IS NULL THEN 'geen actuele KNMI-data'\n",
+        "            WHEN verdachte_schommeling THEN 'verdacht: weinig regen' ELSE 'mogelijk door regen' END AS oordeel\n",
+        "FROM waterkeringbeheer_prd.jvanruitenbeek.monitoring_change_recent WHERE week_bereik_m IS NOT NULL\n",
+        "ORDER BY week_bereik_m DESC\n",
+        "LIMIT 30\n"
+      ]
+    },
+    {
+      "name": "kw_natdroog",
+      "displayName": "Kwaliteit: natter/droger dan normaal",
+      "queryLines": [
+        "SELECT reeks_label, leverancier, natheid_index, nat_droog\n",
+        "FROM waterkeringbeheer_prd.jvanruitenbeek.monitoring_change_recent WHERE natheid_index IS NOT NULL\n"
+      ]
+    },
+    {
+      "name": "r_keuze",
+      "displayName": "Reeks: keuzelijst",
+      "queryLines": [
+        "SELECT meetreeks_keuze FROM waterkeringbeheer_prd.jvanruitenbeek.monitoring_series_status WHERE uren_totaal > 0 ORDER BY meetreeks_keuze\n"
+      ]
+    },
+    {
+      "name": "r_info",
+      "displayName": "Reeks: kenmerken",
+      "queryLines": [
+        "SELECT s.reeks_label, s.cs_naam, s.leverancier, s.status, CAST(s.laatste_meting AS string) AS laatste_meting,\n",
+        "       CASE WHEN s.is_handwaarneming THEN 'handwaarneming' ELSE 'sensor' END AS soort,\n",
+        "       CASE WHEN s.gevalideerd THEN 'ja' ELSE 'nee' END                      AS gevalideerd,\n",
+        "       coalesce(s.gevalideerd_pct, 0)                                        AS gevalideerd_pct,\n",
+        "       CASE WHEN s.heeft_valid_model THEN 'ja' ELSE 'nee' END                AS valid_pastas_model,\n",
+        "       p.valid_model, p.valid_r2, p.unvalid_r2, p.status_kleur,\n",
+        "       CASE WHEN s.metadata_compleet THEN 'ja' ELSE 'nee' END                AS metadata_compleet,\n",
+        "       s.begin_filter, s.eind_filter, s.bovenkant_peilbuis, s.uren_7d, s.uptime_7d_pct,\n",
+        "       coalesce(f.verdacht_totaal, 0) AS verdachte_uren\n",
+        "FROM waterkeringbeheer_prd.jvanruitenbeek.monitoring_series_status s\n",
+        "LEFT JOIN waterkeringbeheer_prd.jvanruitenbeek.monitoring_pastas_series p ON p.meetreeks_id = s.meetreeks_id\n",
+        "LEFT JOIN waterkeringbeheer_prd.jvanruitenbeek.monitoring_flags_series f ON f.meetreeks_id = s.meetreeks_id\n",
+        "WHERE s.meetreeks_keuze = :meetreeks\n"
+      ],
+      "parameters": [
+        {
+          "displayName": "meetreeks",
+          "keyword": "meetreeks",
+          "dataType": "STRING",
+          "defaultSelection": {
+            "values": {
+              "dataType": "STRING",
+              "values": [
+                {
+                  "value": ""
+                }
+              ]
+            }
+          }
+        }
+      ]
+    },
+    {
+      "name": "r_dag",
+      "displayName": "Reeks: daggemiddelden",
+      "queryLines": [
+        "WITH sel AS (SELECT meetreeks_id, object_id, eind_filter, bovenkant_peilbuis\n",
+        "             FROM waterkeringbeheer_prd.jvanruitenbeek.monitoring_series_status WHERE meetreeks_keuze = :meetreeks),\n",
+        "sensor AS (SELECT to_date(h.ts) AS datum, avg(h.waarde) AS waarde\n",
+        "           FROM waterkeringbeheer_prd.jvanruitenbeek.monitoring_hourly h JOIN sel ON sel.meetreeks_id = h.meetreeks_id GROUP BY 1),\n",
+        "bereik AS (SELECT min(datum) AS van, max(datum) AS tot FROM sensor),\n",
+        "sim AS (SELECT x.* FROM waterkeringbeheer_prd.jvanruitenbeek.valid_pastas_simulations x JOIN sel ON sel.meetreeks_id = x.meetreeks_id\n",
+        "        JOIN waterkeringbeheer_prd.jvanruitenbeek.monitoring_pastas_series p ON p.meetreeks_id = x.meetreeks_id AND p.valid_model = x.model_type\n",
+        "        WHERE x.run_id = (SELECT max(run_id) FROM waterkeringbeheer_prd.jvanruitenbeek.valid_pastas_simulations y WHERE y.meetreeks_id = x.meetreeks_id))\n",
+        "SELECT datum, waarde, 'sensor (ruw)' AS bron FROM sensor\n",
+        "UNION ALL\n",
+        "SELECT to_date(v.tijdstempel_utc), avg(v.waarde), 'gevalideerd'\n",
+        "FROM waterkeringbeheer_prd.jvanruitenbeek.validated_meting v JOIN sel ON sel.meetreeks_id = v.meetreeks_id GROUP BY 1\n",
+        "UNION ALL\n",
+        "SELECT to_date(h.ts), avg(h.waarde), 'handwaarneming'\n",
+        "FROM waterkeringbeheer_prd.jvanruitenbeek.monitoring_hourly h\n",
+        "JOIN waterkeringbeheer_prd.jvanruitenbeek.monitoring_series_status hw ON hw.meetreeks_id = h.meetreeks_id AND hw.is_handwaarneming\n",
+        "JOIN sel ON sel.object_id = hw.object_id AND sel.meetreeks_id <> hw.meetreeks_id\n",
+        "GROUP BY 1\n",
+        "UNION ALL\n",
+        "SELECT to_date(datum), simulated, concat('pastas (', model_type, ')') FROM sim\n",
+        "UNION ALL\n",
+        "SELECT d, sel.eind_filter, 'onderkant filter' FROM sel CROSS JOIN bereik LATERAL VIEW explode(array(van, tot)) e AS d\n",
+        "WHERE sel.eind_filter IS NOT NULL\n",
+        "UNION ALL\n",
+        "SELECT d, sel.bovenkant_peilbuis, 'bovenkant peilbuis' FROM sel CROSS JOIN bereik\n",
+        "LATERAL VIEW explode(array(van, tot)) e AS d WHERE sel.bovenkant_peilbuis IS NOT NULL\n"
+      ],
+      "parameters": [
+        {
+          "displayName": "meetreeks",
+          "keyword": "meetreeks",
+          "dataType": "STRING",
+          "defaultSelection": {
+            "values": {
+              "dataType": "STRING",
+              "values": [
+                {
+                  "value": ""
+                }
+              ]
+            }
+          }
+        }
+      ]
+    },
+    {
+      "name": "r_uur",
+      "displayName": "Reeks: laatste 30 dagen per uur",
+      "queryLines": [
+        "WITH sel AS (SELECT meetreeks_id FROM waterkeringbeheer_prd.jvanruitenbeek.monitoring_series_status WHERE meetreeks_keuze = :meetreeks),\n",
+        "m AS (SELECT max(h.ts) AS tot FROM waterkeringbeheer_prd.jvanruitenbeek.monitoring_hourly h JOIN sel ON sel.meetreeks_id = h.meetreeks_id)\n",
+        "SELECT h.ts AS tijd, h.waarde, 'sensor (ruw)' AS bron\n",
+        "FROM waterkeringbeheer_prd.jvanruitenbeek.monitoring_hourly h JOIN sel ON sel.meetreeks_id = h.meetreeks_id CROSS JOIN m\n",
+        "WHERE h.ts > m.tot - INTERVAL 30 DAYS\n",
+        "UNION ALL\n",
+        "SELECT v.tijdstempel_utc, v.waarde, 'gevalideerd'\n",
+        "FROM waterkeringbeheer_prd.jvanruitenbeek.validated_meting v JOIN sel ON sel.meetreeks_id = v.meetreeks_id CROSS JOIN m\n",
+        "WHERE v.tijdstempel_utc > m.tot - INTERVAL 30 DAYS\n"
+      ],
+      "parameters": [
+        {
+          "displayName": "meetreeks",
+          "keyword": "meetreeks",
+          "dataType": "STRING",
+          "defaultSelection": {
+            "values": {
+              "dataType": "STRING",
+              "values": [
+                {
+                  "value": ""
+                }
+              ]
+            }
+          }
+        }
+      ]
+    },
+    {
+      "name": "r_flags",
+      "displayName": "Reeks: flags",
+      "queryLines": [
+        "SELECT flag, totaal, laatste_7_dagen, gisteren\n",
+        "FROM waterkeringbeheer_prd.jvanruitenbeek.monitoring_flags_series f JOIN waterkeringbeheer_prd.jvanruitenbeek.monitoring_series_status s ON s.meetreeks_id = f.meetreeks_id\n",
+        "LATERAL VIEW stack(7,\n",
+        "    'v1 buiten filter/peilbuis', v1_totaal, v1_7d, v1_gisteren,\n",
+        "    'v2 sprong', v2_totaal, v2_7d, v2_gisteren,\n",
+        "    'v3 bij filterbodem', v3_totaal, v3_7d, v3_gisteren,\n",
+        "    'v4 uitschieter (IQR)', v4_totaal, v4_7d, v4_gisteren,\n",
+        "    'regel A daling', rule_a_totaal, rule_a_7d, rule_a_gisteren,\n",
+        "    'regel B onder filter', rule_b_totaal, rule_b_7d, rule_b_gisteren,\n",
+        "    'verdacht (v1-v4, B)', verdacht_totaal, verdacht_7d, verdacht_gisteren) x AS flag, totaal, laatste_7_dagen, gisteren\n",
+        "WHERE s.meetreeks_keuze = :meetreeks\n"
+      ],
+      "parameters": [
+        {
+          "displayName": "meetreeks",
+          "keyword": "meetreeks",
+          "dataType": "STRING",
+          "defaultSelection": {
+            "values": {
+              "dataType": "STRING",
+              "values": [
+                {
+                  "value": ""
+                }
+              ]
+            }
+          }
+        }
+      ]
+    },
+    {
+      "name": "p_totalen",
+      "displayName": "Pastas: totalen",
+      "queryLines": [
+        "SELECT count_if(valid_model IS NOT NULL)                AS valid_modellen,\n",
+        "       count_if(unvalid_model IS NOT NULL)              AS unvalid_modellen,\n",
+        "       count_if(status_kleur = 'groen: haalt de checks')     AS groen,\n",
+        "       count_if(status_kleur = 'geel: R2, maar een check faalt')      AS geel,\n",
+        "       count_if(status_kleur = 'rood: niet geaccepteerd')      AS rood,\n",
+        "       count_if(status_kleur = 'grijs: nog geen gevalideerd model')     AS grijs,\n",
+        "       count_if(lat IS NULL)                            AS zonder_coordinaten\n",
+        "FROM waterkeringbeheer_prd.jvanruitenbeek.monitoring_pastas_series\n"
+      ]
+    },
+    {
+      "name": "p_kaart",
+      "displayName": "Pastas: kaart",
+      "queryLines": [
+        "SELECT reeks_label, cs_naam, lat, lon, status_kleur, unvalid_klasse,\n",
+        "       unvalid_model, unvalid_r2, valid_model, valid_r2, valid_r2_holdout, valid_t95_dagen, valid_rmse,\n",
+        "       keuze, modellen_ok,\n",
+        "       CASE WHEN pass_rsq THEN 'ja' WHEN NOT pass_rsq THEN 'nee' END    AS check_r2,\n",
+        "       CASE WHEN pass_memory THEN 'ja' WHEN NOT pass_memory THEN 'nee' END AS check_responstijd,\n",
+        "       CASE WHEN pass_bounds THEN 'ja' WHEN NOT pass_bounds THEN 'nee' END AS check_parametergrenzen\n",
+        "FROM waterkeringbeheer_prd.jvanruitenbeek.monitoring_pastas_series WHERE lat IS NOT NULL\n"
+      ]
+    },
+    {
+      "name": "p_kleur",
+      "displayName": "Pastas: reeksen per kleur",
+      "queryLines": [
+        "SELECT status_kleur, coalesce(valid_model, 'geen') AS valid_model, count(*) AS reeksen\n",
+        "FROM waterkeringbeheer_prd.jvanruitenbeek.monitoring_pastas_series GROUP BY 1, 2\n"
+      ]
+    },
+    {
+      "name": "p_modellen",
+      "displayName": "Pastas: alle gevalideerde modellen",
+      "queryLines": [
+        "SELECT s.reeks_label, m.model_type, m.in_gebruik, m.bron, m.success, round(m.r2, 3) AS r2,\n",
+        "       round(m.r2_holdout, 3) AS r2_holdout, round(m.rmse, 3) AS rmse, round(m.t95_days, 0) AS t95_dagen,\n",
+        "       m.pass_rsq, m.pass_memory, m.pass_bounds, m.pass_gain, m.haalt_checks, m.runaway, m.tier, m.reason\n",
+        "FROM waterkeringbeheer_prd.jvanruitenbeek.monitoring_pastas_models m LEFT JOIN waterkeringbeheer_prd.jvanruitenbeek.monitoring_series_status s ON s.meetreeks_id = m.meetreeks_id\n",
+        "WHERE m.basis = 'valid_pastas'\n",
+        "ORDER BY s.reeks_label, m.in_gebruik DESC, m.model_type\n"
+      ]
+    }
+  ],
+  "pages": [
+    {
+      "name": "inventaris",
+      "displayName": "Data-inventarisatie & datastroom",
+      "pageType": "PAGE_TYPE_CANVAS",
+      "layoutVersion": "GRID_V1",
+      "layout": [
+        {
+          "widget": {
+            "name": "t_inv",
+            "multilineTextboxSpec": {
+              "lines": [
+                "## Data-inventarisatie & datastroom\n",
+                "Alle meetreeksen uit `hl_grondwaterpeilmeting` met metingen; sensoren = alles behalve handwaarnemingen.\n",
+                "Bijgewerkt door de dagelijkse job `build_monitoring_tables` (tijden in UTC). Uptime = uren met een waarde / 24.\n"
+              ]
+            }
+          },
+          "position": {
+            "x": 0,
+            "y": 0,
+            "width": 12,
+            "height": 2
+          }
+        },
+        {
+          "widget": {
+            "name": "c_sensoren",
+            "queries": [
+              {
+                "name": "main_query",
+                "query": {
+                  "datasetName": "inv_totalen",
+                  "fields": [
+                    {
+                      "name": "sum(sensoren)",
+                      "expression": "SUM(`sensoren`)"
+                    }
+                  ],
+                  "disaggregated": false
+                }
+              }
+            ],
+            "spec": {
+              "version": 2,
+              "widgetType": "counter",
+              "frame": {
+                "showTitle": true,
+                "title": {
+                  "value": "Sensoren",
+                  "fields": []
+                }
+              },
+              "encodings": {
+                "value": {
+                  "fieldName": "sum(sensoren)",
+                  "displayName": "Sensoren"
+                }
+              },
+              "data": {
+                "queryName": "main_query"
+              }
+            }
+          },
+          "position": {
+            "x": 0,
+            "y": 2,
+            "width": 2,
+            "height": 3
+          }
+        },
+        {
+          "widget": {
+            "name": "c_metingen",
+            "queries": [
+              {
+                "name": "main_query",
+                "query": {
+                  "datasetName": "inv_totalen",
+                  "fields": [
+                    {
+                      "name": "sum(metingen)",
+                      "expression": "SUM(`metingen`)"
+                    }
+                  ],
+                  "disaggregated": false
+                }
+              }
+            ],
+            "spec": {
+              "version": 2,
+              "widgetType": "counter",
+              "frame": {
+                "showTitle": true,
+                "title": {
+                  "value": "Metingen in de bron",
+                  "fields": []
+                }
+              },
+              "encodings": {
+                "value": {
+                  "fieldName": "sum(metingen)",
+                  "displayName": "Metingen in de bron"
+                }
+              },
+              "data": {
+                "queryName": "main_query"
+              }
+            }
+          },
+          "position": {
+            "x": 2,
+            "y": 2,
+            "width": 2,
+            "height": 3
+          }
+        },
+        {
+          "widget": {
+            "name": "c_wiertsema",
+            "queries": [
+              {
+                "name": "main_query",
+                "query": {
+                  "datasetName": "inv_totalen",
+                  "fields": [
+                    {
+                      "name": "max(pct_gekoppeld_wiertsema)",
+                      "expression": "MAX(`pct_gekoppeld_wiertsema`)"
+                    }
+                  ],
+                  "disaggregated": false
+                }
+              }
+            ],
+            "spec": {
+              "version": 2,
+              "widgetType": "counter",
+              "frame": {
+                "showTitle": true,
+                "title": {
+                  "value": "% gekoppeld Wiertsema",
+                  "fields": []
+                },
+                "showDescription": true,
+                "description": {
+                  "value": "Wiertsema-reeksen die aan een meetlocatie in cs_objecten gekoppeld zijn",
+                  "fields": []
+                }
+              },
+              "encodings": {
+                "value": {
+                  "fieldName": "max(pct_gekoppeld_wiertsema)",
+                  "displayName": "% gekoppeld Wiertsema"
+                }
+              },
+              "data": {
+                "queryName": "main_query"
+              }
+            }
+          },
+          "position": {
+            "x": 4,
+            "y": 2,
+            "width": 2,
+            "height": 3
+          }
+        },
+        {
+          "widget": {
+            "name": "c_fugro",
+            "queries": [
+              {
+                "name": "main_query",
+                "query": {
+                  "datasetName": "inv_totalen",
+                  "fields": [
+                    {
+                      "name": "max(pct_gekoppeld_fugro)",
+                      "expression": "MAX(`pct_gekoppeld_fugro`)"
+                    }
+                  ],
+                  "disaggregated": false
+                }
+              }
+            ],
+            "spec": {
+              "version": 2,
+              "widgetType": "counter",
+              "frame": {
+                "showTitle": true,
+                "title": {
+                  "value": "% gekoppeld Fugro",
+                  "fields": []
+                },
+                "showDescription": true,
+                "description": {
+                  "value": "Fugro-reeksen die aan een meetlocatie in cs_objecten gekoppeld zijn",
+                  "fields": []
+                }
+              },
+              "encodings": {
+                "value": {
+                  "fieldName": "max(pct_gekoppeld_fugro)",
+                  "displayName": "% gekoppeld Fugro"
+                }
+              },
+              "data": {
+                "queryName": "main_query"
+              }
+            }
+          },
+          "position": {
+            "x": 6,
+            "y": 2,
+            "width": 2,
+            "height": 3
+          }
+        },
+        {
+          "widget": {
+            "name": "c_stil",
+            "queries": [
+              {
+                "name": "main_query",
+                "query": {
+                  "datasetName": "inv_totalen",
+                  "fields": [
+                    {
+                      "name": "sum(sensoren_stil)",
+                      "expression": "SUM(`sensoren_stil`)"
+                    }
+                  ],
+                  "disaggregated": false
+                }
+              }
+            ],
+            "spec": {
+              "version": 2,
+              "widgetType": "counter",
+              "frame": {
+                "showTitle": true,
+                "title": {
+                  "value": "Sensoren zonder data > 24 uur",
+                  "fields": []
+                }
+              },
+              "encodings": {
+                "value": {
+                  "fieldName": "sum(sensoren_stil)",
+                  "displayName": "Sensoren zonder data > 24 uur"
+                }
+              },
+              "data": {
+                "queryName": "main_query"
+              }
+            }
+          },
+          "position": {
+            "x": 8,
+            "y": 2,
+            "width": 2,
+            "height": 3
+          }
+        },
+        {
+          "widget": {
+            "name": "c_meta",
+            "queries": [
+              {
+                "name": "main_query",
+                "query": {
+                  "datasetName": "inv_totalen",
+                  "fields": [
+                    {
+                      "name": "sum(metadata_incompleet)",
+                      "expression": "SUM(`metadata_incompleet`)"
+                    }
+                  ],
+                  "disaggregated": false
+                }
+              }
+            ],
+            "spec": {
+              "version": 2,
+              "widgetType": "counter",
+              "frame": {
+                "showTitle": true,
+                "title": {
+                  "value": "Metadata incompleet",
+                  "fields": []
+                }
+              },
+              "encodings": {
+                "value": {
+                  "fieldName": "sum(metadata_incompleet)",
+                  "displayName": "Metadata incompleet"
+                }
+              },
+              "data": {
+                "queryName": "main_query"
+              }
+            }
+          },
+          "position": {
+            "x": 10,
+            "y": 2,
+            "width": 2,
+            "height": 3
+          }
+        },
+        {
+          "widget": {
+            "name": "b_koppeling",
+            "queries": [
+              {
+                "name": "main_query",
+                "query": {
+                  "datasetName": "inv_koppeling",
+                  "fields": [
+                    {
+                      "name": "leverancier",
+                      "expression": "`leverancier`"
+                    },
+                    {
+                      "name": "reeksen",
+                      "expression": "`reeksen`"
+                    },
+                    {
+                      "name": "koppeling",
+                      "expression": "`koppeling`"
+                    }
+                  ],
+                  "disaggregated": true
+                }
+              }
+            ],
+            "spec": {
+              "version": 3,
+              "widgetType": "bar",
+              "frame": {
+                "showTitle": true,
+                "title": {
+                  "value": "Gekoppeld aan cs_objecten per leverancier",
+                  "fields": []
+                }
+              },
+              "encodings": {
+                "x": {
+                  "fieldName": "reeksen",
+                  "scale": {
+                    "type": "quantitative"
+                  }
+                },
+                "y": {
+                  "fieldName": "leverancier",
+                  "scale": {
+                    "type": "categorical",
+                    "sort": {
+                      "by": "x-reversed"
+                    }
+                  }
+                },
+                "color": {
+                  "fieldName": "koppeling",
+                  "scale": {
+                    "type": "categorical",
+                    "mappings": [
+                      {
+                        "value": "gekoppeld aan cs_objecten",
+                        "color": "#2E9E44"
+                      },
+                      {
+                        "value": "niet gekoppeld",
+                        "color": "#D62728"
+                      }
+                    ]
+                  }
+                }
+              },
+              "data": {
+                "queryName": "main_query"
+              }
+            }
+          },
+          "position": {
+            "x": 0,
+            "y": 5,
+            "width": 6,
+            "height": 6
+          }
+        },
+        {
+          "widget": {
+            "name": "b_actief",
+            "queries": [
+              {
+                "name": "main_query",
+                "query": {
+                  "datasetName": "inv_actief",
+                  "fields": [
+                    {
+                      "name": "leverancier",
+                      "expression": "`leverancier`"
+                    },
+                    {
+                      "name": "reeksen",
+                      "expression": "`reeksen`"
+                    },
+                    {
+                      "name": "meetreeks_actief",
+                      "expression": "`meetreeks_actief`"
+                    }
+                  ],
+                  "disaggregated": true
+                }
+              }
+            ],
+            "spec": {
+              "version": 3,
+              "widgetType": "bar",
+              "frame": {
+                "showTitle": true,
+                "title": {
+                  "value": "Actief / inactief (meetreeks_actief)",
+                  "fields": []
+                }
+              },
+              "encodings": {
+                "x": {
+                  "fieldName": "reeksen",
+                  "scale": {
+                    "type": "quantitative"
+                  }
+                },
+                "y": {
+                  "fieldName": "leverancier",
+                  "scale": {
+                    "type": "categorical",
+                    "sort": {
+                      "by": "x-reversed"
+                    }
+                  }
+                },
+                "color": {
+                  "fieldName": "meetreeks_actief",
+                  "scale": {
+                    "type": "categorical"
+                  }
+                }
+              },
+              "data": {
+                "queryName": "main_query"
+              }
+            }
+          },
+          "position": {
+            "x": 6,
+            "y": 5,
+            "width": 6,
+            "height": 6
+          }
+        },
+        {
+          "widget": {
+            "name": "b_metadata",
+            "queries": [
+              {
+                "name": "main_query",
+                "query": {
+                  "datasetName": "inv_metadata",
+                  "fields": [
+                    {
+                      "name": "veld",
+                      "expression": "`veld`"
+                    },
+                    {
+                      "name": "ontbreekt",
+                      "expression": "`ontbreekt`"
+                    },
+                    {
+                      "name": "leverancier",
+                      "expression": "`leverancier`"
+                    }
+                  ],
+                  "disaggregated": true
+                }
+              }
+            ],
+            "spec": {
+              "version": 3,
+              "widgetType": "bar",
+              "frame": {
+                "showTitle": true,
+                "title": {
+                  "value": "Ontbrekende metadata per veld",
+                  "fields": []
+                }
+              },
+              "encodings": {
+                "x": {
+                  "fieldName": "ontbreekt",
+                  "scale": {
+                    "type": "quantitative"
+                  }
+                },
+                "y": {
+                  "fieldName": "veld",
+                  "scale": {
+                    "type": "categorical",
+                    "sort": {
+                      "by": "x-reversed"
+                    }
+                  }
+                },
+                "color": {
+                  "fieldName": "leverancier",
+                  "scale": {
+                    "type": "categorical"
+                  }
+                }
+              },
+              "data": {
+                "queryName": "main_query"
+              },
+              "mark": {
+                "layout": "group"
+              }
+            }
+          },
+          "position": {
+            "x": 0,
+            "y": 11,
+            "width": 6,
+            "height": 7
+          }
+        },
+        {
+          "widget": {
+            "name": "m_status",
+            "queries": [
+              {
+                "name": "main_query",
+                "query": {
+                  "datasetName": "inv_kaart",
+                  "fields": [
+                    {
+                      "name": "lat",
+                      "expression": "`lat`"
+                    },
+                    {
+                      "name": "lon",
+                      "expression": "`lon`"
+                    },
+                    {
+                      "name": "status",
+                      "expression": "`status`"
+                    },
+                    {
+                      "name": "reeks_label",
+                      "expression": "`reeks_label`"
+                    },
+                    {
+                      "name": "cs_naam",
+                      "expression": "`cs_naam`"
+                    },
+                    {
+                      "name": "leverancier",
+                      "expression": "`leverancier`"
+                    },
+                    {
+                      "name": "laatste_meting",
+                      "expression": "`laatste_meting`"
+                    },
+                    {
+                      "name": "uptime_7d_pct",
+                      "expression": "`uptime_7d_pct`"
+                    }
+                  ],
+                  "disaggregated": true
+                }
+              }
+            ],
+            "spec": {
+              "version": 2,
+              "widgetType": "symbol-map",
+              "frame": {
+                "showTitle": true,
+                "title": {
+                  "value": "Status per peilbuis",
+                  "fields": []
+                }
+              },
+              "mark": {
+                "size": -2.1
+              },
+              "encodings": {
+                "coordinates": {
+                  "coordinateType": "longitude-latitude",
+                  "latitude": {
+                    "fieldName": "lat"
+                  },
+                  "longitude": {
+                    "fieldName": "lon"
+                  }
+                },
+                "color": {
+                  "fieldName": "status",
+                  "scale": {
+                    "type": "categorical",
+                    "mappings": [
+                      {
+                        "value": "ok",
+                        "color": "#2E9E44"
+                      },
+                      {
+                        "value": "stil > 24 uur",
+                        "color": "#F2C200"
+                      },
+                      {
+                        "value": "stil > 7 dagen",
+                        "color": "#D62728"
+                      },
+                      {
+                        "value": "nooit data",
+                        "color": "#A0A0A0"
+                      }
+                    ]
+                  },
+                  "legend": {
+                    "position": "right"
+                  }
+                },
+                "extra": [
+                  {
+                    "fieldName": "reeks_label"
+                  },
+                  {
+                    "fieldName": "cs_naam"
+                  },
+                  {
+                    "fieldName": "leverancier"
+                  },
+                  {
+                    "fieldName": "laatste_meting"
+                  },
+                  {
+                    "fieldName": "uptime_7d_pct"
+                  }
+                ]
+              },
+              "data": {
+                "queryName": "main_query"
+              }
+            }
+          },
+          "position": {
+            "x": 6,
+            "y": 11,
+            "width": 6,
+            "height": 7
+          }
+        },
+        {
+          "widget": {
+            "name": "tb_stil",
+            "queries": [
+              {
+                "name": "main_query",
+                "query": {
+                  "datasetName": "inv_stil",
+                  "fields": [
+                    {
+                      "name": "reeks_label",
+                      "expression": "`reeks_label`"
+                    },
+                    {
+                      "name": "cs_code",
+                      "expression": "`cs_code`"
+                    },
+                    {
+                      "name": "leverancier",
+                      "expression": "`leverancier`"
+                    },
+                    {
+                      "name": "meetreeks_actief",
+                      "expression": "`meetreeks_actief`"
+                    },
+                    {
+                      "name": "status",
+                      "expression": "`status`"
+                    },
+                    {
+                      "name": "laatste_meting",
+                      "expression": "`laatste_meting`"
+                    },
+                    {
+                      "name": "dagen_stil",
+                      "expression": "`dagen_stil`"
+                    },
+                    {
+                      "name": "uren_7d",
+                      "expression": "`uren_7d`"
+                    },
+                    {
+                      "name": "uptime_7d_pct",
+                      "expression": "`uptime_7d_pct`"
+                    }
+                  ],
+                  "disaggregated": true
+                }
+              }
+            ],
+            "spec": {
+              "version": 2,
+              "widgetType": "table",
+              "frame": {
+                "showTitle": true,
+                "title": {
+                  "value": "Sensoren die de laatste 24 uur / 7 dagen geen data stuurden",
+                  "fields": []
+                }
+              },
+              "encodings": {
+                "columns": [
+                  {
+                    "fieldName": "reeks_label",
+                    "displayName": "reeks_label"
+                  },
+                  {
+                    "fieldName": "cs_code",
+                    "displayName": "cs_code"
+                  },
+                  {
+                    "fieldName": "leverancier",
+                    "displayName": "leverancier"
+                  },
+                  {
+                    "fieldName": "meetreeks_actief",
+                    "displayName": "meetreeks_actief"
+                  },
+                  {
+                    "fieldName": "status",
+                    "displayName": "status"
+                  },
+                  {
+                    "fieldName": "laatste_meting",
+                    "displayName": "laatste_meting"
+                  },
+                  {
+                    "fieldName": "dagen_stil",
+                    "displayName": "dagen_stil"
+                  },
+                  {
+                    "fieldName": "uren_7d",
+                    "displayName": "uren_7d"
+                  },
+                  {
+                    "fieldName": "uptime_7d_pct",
+                    "displayName": "uptime_7d_pct"
+                  }
+                ]
+              },
+              "data": {
+                "queryName": "main_query"
+              }
+            }
+          },
+          "position": {
+            "x": 0,
+            "y": 18,
+            "width": 12,
+            "height": 8
+          }
+        },
+        {
+          "widget": {
+            "name": "l_uptime",
+            "queries": [
+              {
+                "name": "main_query",
+                "query": {
+                  "datasetName": "uptime_lijn",
+                  "fields": [
+                    {
+                      "name": "datum",
+                      "expression": "`datum`"
+                    },
+                    {
+                      "name": "uptime_pct",
+                      "expression": "`uptime_pct`"
+                    },
+                    {
+                      "name": "leverancier",
+                      "expression": "`leverancier`"
+                    }
+                  ],
+                  "disaggregated": true
+                }
+              }
+            ],
+            "spec": {
+              "version": 3,
+              "widgetType": "line",
+              "frame": {
+                "showTitle": true,
+                "title": {
+                  "value": "Uptime per leverancier (% uren ontvangen per dag)",
+                  "fields": []
+                },
+                "showDescription": true,
+                "description": {
+                  "value": "Gemiddeld over de sensoren die niet op inactief staan; contractdoel 95%",
+                  "fields": []
+                }
+              },
+              "encodings": {
+                "x": {
+                  "fieldName": "datum",
+                  "scale": {
+                    "type": "temporal"
+                  }
+                },
+                "y": {
+                  "fieldName": "uptime_pct",
+                  "scale": {
+                    "type": "quantitative"
+                  }
+                },
+                "color": {
+                  "fieldName": "leverancier",
+                  "scale": {
+                    "type": "categorical",
+                    "mappings": [
+                      {
+                        "value": "contractdoel",
+                        "color": "#A0A0A0"
+                      }
+                    ]
+                  }
+                }
+              },
+              "data": {
+                "queryName": "main_query"
+              }
+            }
+          },
+          "position": {
+            "x": 0,
+            "y": 26,
+            "width": 12,
+            "height": 7
+          }
+        },
+        {
+          "widget": {
+            "name": "tb_uptime",
+            "queries": [
+              {
+                "name": "main_query",
+                "query": {
+                  "datasetName": "uptime_sensor",
+                  "fields": [
+                    {
+                      "name": "reeks_label",
+                      "expression": "`reeks_label`"
+                    },
+                    {
+                      "name": "leverancier",
+                      "expression": "`leverancier`"
+                    },
+                    {
+                      "name": "meetreeks_actief",
+                      "expression": "`meetreeks_actief`"
+                    },
+                    {
+                      "name": "uptime_7d",
+                      "expression": "`uptime_7d`"
+                    },
+                    {
+                      "name": "uptime_30d",
+                      "expression": "`uptime_30d`"
+                    },
+                    {
+                      "name": "uptime_90d",
+                      "expression": "`uptime_90d`"
+                    },
+                    {
+                      "name": "haalt_doel_90d",
+                      "expression": "`haalt_doel_90d`"
+                    }
+                  ],
+                  "disaggregated": true
+                }
+              }
+            ],
+            "spec": {
+              "version": 2,
+              "widgetType": "table",
+              "frame": {
+                "showTitle": true,
+                "title": {
+                  "value": "Uptime per sensor (%), laagste eerst",
+                  "fields": []
+                }
+              },
+              "encodings": {
+                "columns": [
+                  {
+                    "fieldName": "reeks_label",
+                    "displayName": "reeks_label"
+                  },
+                  {
+                    "fieldName": "leverancier",
+                    "displayName": "leverancier"
+                  },
+                  {
+                    "fieldName": "meetreeks_actief",
+                    "displayName": "meetreeks_actief"
+                  },
+                  {
+                    "fieldName": "uptime_7d",
+                    "displayName": "uptime_7d"
+                  },
+                  {
+                    "fieldName": "uptime_30d",
+                    "displayName": "uptime_30d"
+                  },
+                  {
+                    "fieldName": "uptime_90d",
+                    "displayName": "uptime_90d"
+                  },
+                  {
+                    "fieldName": "haalt_doel_90d",
+                    "displayName": "haalt_doel_90d"
+                  }
+                ]
+              },
+              "data": {
+                "queryName": "main_query"
+              }
+            }
+          },
+          "position": {
+            "x": 0,
+            "y": 33,
+            "width": 12,
+            "height": 8
+          }
+        },
+        {
+          "widget": {
+            "name": "h_14d",
+            "queries": [
+              {
+                "name": "main_query",
+                "query": {
+                  "datasetName": "uptime_14d",
+                  "fields": [
+                    {
+                      "name": "dag",
+                      "expression": "`dag`"
+                    },
+                    {
+                      "name": "sensor",
+                      "expression": "`sensor`"
+                    },
+                    {
+                      "name": "avg(uptime_pct)",
+                      "expression": "AVG(`uptime_pct`)"
+                    }
+                  ],
+                  "disaggregated": false
+                }
+              }
+            ],
+            "spec": {
+              "version": 3,
+              "widgetType": "heatmap",
+              "frame": {
+                "showTitle": true,
+                "title": {
+                  "value": "Aanlevering laatste 14 dagen (% uren)",
+                  "fields": []
+                }
+              },
+              "encodings": {
+                "x": {
+                  "fieldName": "dag",
+                  "scale": {
+                    "type": "categorical"
+                  }
+                },
+                "y": {
+                  "fieldName": "sensor",
+                  "scale": {
+                    "type": "categorical"
+                  }
+                },
+                "color": {
+                  "fieldName": "avg(uptime_pct)",
+                  "scale": {
+                    "type": "quantitative",
+                    "colorRamp": {
+                      "mode": "scheme",
+                      "scheme": "redyellowgreen"
+                    },
+                    "domain": {
+                      "min": 0,
+                      "max": 100
+                    }
+                  }
+                }
+              },
+              "data": {
+                "queryName": "main_query"
+              }
+            }
+          },
+          "position": {
+            "x": 0,
+            "y": 41,
+            "width": 12,
+            "height": 22
+          }
+        }
+      ]
+    },
+    {
+      "name": "kwaliteit",
+      "displayName": "Meetinventarisatie & datakwaliteit",
+      "pageType": "PAGE_TYPE_CANVAS",
+      "layoutVersion": "GRID_V1",
+      "layout": [
+        {
+          "widget": {
+            "name": "t_kw",
+            "multilineTextboxSpec": {
+              "lines": [
+                "## Meetinventarisatie & datakwaliteit\n",
+                "Flags zijn de checks van de validatie-app (`local_validation/checks.py`): v1 buiten filter/peilbuis, v2 sprong\n",
+                "(> +0,30 of < -0,05 m per uur), v3 binnen 0,15 m van de filterbodem, v4 uitschieter (1,5 x IQR), regel A daling\n",
+                ">= 0,10 m, regel B onder filterbodem + 0,10 m. *Verdacht* = v1-v4 of regel B (regel A is alleen ter info).\n"
+              ]
+            }
+          },
+          "position": {
+            "x": 0,
+            "y": 0,
+            "width": 12,
+            "height": 3
+          }
+        },
+        {
+          "widget": {
+            "name": "c_gev",
+            "queries": [
+              {
+                "name": "main_query",
+                "query": {
+                  "datasetName": "kw_totalen",
+                  "fields": [
+                    {
+                      "name": "sum(reeksen_gevalideerd)",
+                      "expression": "SUM(`reeksen_gevalideerd`)"
+                    }
+                  ],
+                  "disaggregated": false
+                }
+              }
+            ],
+            "spec": {
+              "version": 2,
+              "widgetType": "counter",
+              "frame": {
+                "showTitle": true,
+                "title": {
+                  "value": "Reeksen met gevalideerde data",
+                  "fields": []
+                }
+              },
+              "encodings": {
+                "value": {
+                  "fieldName": "sum(reeksen_gevalideerd)",
+                  "displayName": "Reeksen met gevalideerde data"
+                }
+              },
+              "data": {
+                "queryName": "main_query"
+              }
+            }
+          },
+          "position": {
+            "x": 0,
+            "y": 3,
+            "width": 2,
+            "height": 3
+          }
+        },
+        {
+          "widget": {
+            "name": "c_gevpct",
+            "queries": [
+              {
+                "name": "main_query",
+                "query": {
+                  "datasetName": "kw_totalen",
+                  "fields": [
+                    {
+                      "name": "max(pct_uren_gevalideerd)",
+                      "expression": "MAX(`pct_uren_gevalideerd`)"
+                    }
+                  ],
+                  "disaggregated": false
+                }
+              }
+            ],
+            "spec": {
+              "version": 2,
+              "widgetType": "counter",
+              "frame": {
+                "showTitle": true,
+                "title": {
+                  "value": "% uren gevalideerd",
+                  "fields": []
+                }
+              },
+              "encodings": {
+                "value": {
+                  "fieldName": "max(pct_uren_gevalideerd)",
+                  "displayName": "% uren gevalideerd"
+                }
+              },
+              "data": {
+                "queryName": "main_query"
+              }
+            }
+          },
+          "position": {
+            "x": 2,
+            "y": 3,
+            "width": 2,
+            "height": 3
+          }
+        },
+        {
+          "widget": {
+            "name": "c_verdacht",
+            "queries": [
+              {
+                "name": "main_query",
+                "query": {
+                  "datasetName": "kw_totalen",
+                  "fields": [
+                    {
+                      "name": "sum(verdachte_uren)",
+                      "expression": "SUM(`verdachte_uren`)"
+                    }
+                  ],
+                  "disaggregated": false
+                }
+              }
+            ],
+            "spec": {
+              "version": 2,
+              "widgetType": "counter",
+              "frame": {
+                "showTitle": true,
+                "title": {
+                  "value": "Verdachte uren",
+                  "fields": []
+                }
+              },
+              "encodings": {
+                "value": {
+                  "fieldName": "sum(verdachte_uren)",
+                  "displayName": "Verdachte uren"
+                }
+              },
+              "data": {
+                "queryName": "main_query"
+              }
+            }
+          },
+          "position": {
+            "x": 4,
+            "y": 3,
+            "width": 2,
+            "height": 3
+          }
+        },
+        {
+          "widget": {
+            "name": "c_verdacht_ongev",
+            "queries": [
+              {
+                "name": "main_query",
+                "query": {
+                  "datasetName": "kw_totalen",
+                  "fields": [
+                    {
+                      "name": "sum(verdacht_ongevalideerd)",
+                      "expression": "SUM(`verdacht_ongevalideerd`)"
+                    }
+                  ],
+                  "disaggregated": false
+                }
+              }
+            ],
+            "spec": {
+              "version": 2,
+              "widgetType": "counter",
+              "frame": {
+                "showTitle": true,
+                "title": {
+                  "value": "Verdacht en niet goedgekeurd",
+                  "fields": []
+                }
+              },
+              "encodings": {
+                "value": {
+                  "fieldName": "sum(verdacht_ongevalideerd)",
+                  "displayName": "Verdacht en niet goedgekeurd"
+                }
+              },
+              "data": {
+                "queryName": "main_query"
+              }
+            }
+          },
+          "position": {
+            "x": 6,
+            "y": 3,
+            "width": 2,
+            "height": 3
+          }
+        },
+        {
+          "widget": {
+            "name": "c_verdacht_gist",
+            "queries": [
+              {
+                "name": "main_query",
+                "query": {
+                  "datasetName": "kw_totalen",
+                  "fields": [
+                    {
+                      "name": "sum(verdacht_gisteren)",
+                      "expression": "SUM(`verdacht_gisteren`)"
+                    }
+                  ],
+                  "disaggregated": false
+                }
+              }
+            ],
+            "spec": {
+              "version": 2,
+              "widgetType": "counter",
+              "frame": {
+                "showTitle": true,
+                "title": {
+                  "value": "Verdachte uren gisteren",
+                  "fields": []
+                }
+              },
+              "encodings": {
+                "value": {
+                  "fieldName": "sum(verdacht_gisteren)",
+                  "displayName": "Verdachte uren gisteren"
+                }
+              },
+              "data": {
+                "queryName": "main_query"
+              }
+            }
+          },
+          "position": {
+            "x": 8,
+            "y": 3,
+            "width": 2,
+            "height": 3
+          }
+        },
+        {
+          "widget": {
+            "name": "c_regen",
+            "queries": [
+              {
+                "name": "main_query",
+                "query": {
+                  "datasetName": "kw_totalen",
+                  "fields": [
+                    {
+                      "name": "max(neerslag_7d_mm)",
+                      "expression": "MAX(`neerslag_7d_mm`)"
+                    }
+                  ],
+                  "disaggregated": false
+                }
+              }
+            ],
+            "spec": {
+              "version": 2,
+              "widgetType": "counter",
+              "frame": {
+                "showTitle": true,
+                "title": {
+                  "value": "Neerslag afgelopen 7 dagen (mm)",
+                  "fields": []
+                },
+                "showDescription": true,
+                "description": {
+                  "value": "KNMI, het station van de Pastas-forcering",
+                  "fields": []
+                }
+              },
+              "encodings": {
+                "value": {
+                  "fieldName": "max(neerslag_7d_mm)",
+                  "displayName": "Neerslag afgelopen 7 dagen (mm)"
+                }
+              },
+              "data": {
+                "queryName": "main_query"
+              }
+            }
+          },
+          "position": {
+            "x": 10,
+            "y": 3,
+            "width": 2,
+            "height": 3
+          }
+        },
+        {
+          "widget": {
+            "name": "b_gev",
+            "queries": [
+              {
+                "name": "main_query",
+                "query": {
+                  "datasetName": "kw_gevalideerd",
+                  "fields": [
+                    {
+                      "name": "reeks_label",
+                      "expression": "`reeks_label`"
+                    },
+                    {
+                      "name": "gevalideerd_pct",
+                      "expression": "`gevalideerd_pct`"
+                    },
+                    {
+                      "name": "leverancier",
+                      "expression": "`leverancier`"
+                    }
+                  ],
+                  "disaggregated": true
+                }
+              }
+            ],
+            "spec": {
+              "version": 3,
+              "widgetType": "bar",
+              "frame": {
+                "showTitle": true,
+                "title": {
+                  "value": "Aandeel gevalideerd per reeks (%)",
+                  "fields": []
+                }
+              },
+              "encodings": {
+                "x": {
+                  "fieldName": "gevalideerd_pct",
+                  "scale": {
+                    "type": "quantitative"
+                  }
+                },
+                "y": {
+                  "fieldName": "reeks_label",
+                  "scale": {
+                    "type": "categorical",
+                    "sort": {
+                      "by": "x-reversed"
+                    }
+                  }
+                },
+                "color": {
+                  "fieldName": "leverancier",
+                  "scale": {
+                    "type": "categorical"
+                  }
+                }
+              },
+              "data": {
+                "queryName": "main_query"
+              }
+            }
+          },
+          "position": {
+            "x": 0,
+            "y": 6,
+            "width": 6,
+            "height": 15
+          }
+        },
+        {
+          "widget": {
+            "name": "b_flags",
+            "queries": [
+              {
+                "name": "main_query",
+                "query": {
+                  "datasetName": "kw_flags",
+                  "fields": [
+                    {
+                      "name": "reeks_label",
+                      "expression": "`reeks_label`"
+                    },
+                    {
+                      "name": "uren",
+                      "expression": "`uren`"
+                    },
+                    {
+                      "name": "flag",
+                      "expression": "`flag`"
+                    }
+                  ],
+                  "disaggregated": true
+                }
+              }
+            ],
+            "spec": {
+              "version": 3,
+              "widgetType": "bar",
+              "frame": {
+                "showTitle": true,
+                "title": {
+                  "value": "Reeksen met de meeste flags (top 30)",
+                  "fields": []
+                }
+              },
+              "encodings": {
+                "x": {
+                  "fieldName": "uren",
+                  "scale": {
+                    "type": "quantitative"
+                  }
+                },
+                "y": {
+                  "fieldName": "reeks_label",
+                  "scale": {
+                    "type": "categorical",
+                    "sort": {
+                      "by": "x-reversed"
+                    }
+                  }
+                },
+                "color": {
+                  "fieldName": "flag",
+                  "scale": {
+                    "type": "categorical"
+                  }
+                }
+              },
+              "data": {
+                "queryName": "main_query"
+              }
+            }
+          },
+          "position": {
+            "x": 6,
+            "y": 6,
+            "width": 6,
+            "height": 15
+          }
+        },
+        {
+          "widget": {
+            "name": "b_ongev",
+            "queries": [
+              {
+                "name": "main_query",
+                "query": {
+                  "datasetName": "kw_ongevalideerd",
+                  "fields": [
+                    {
+                      "name": "reeks_label",
+                      "expression": "`reeks_label`"
+                    },
+                    {
+                      "name": "verdacht_ongevalideerd",
+                      "expression": "`verdacht_ongevalideerd`"
+                    },
+                    {
+                      "name": "leverancier",
+                      "expression": "`leverancier`"
+                    }
+                  ],
+                  "disaggregated": true
+                }
+              }
+            ],
+            "spec": {
+              "version": 3,
+              "widgetType": "bar",
+              "frame": {
+                "showTitle": true,
+                "title": {
+                  "value": "Verdachte, nog niet gevalideerde uren per reeks (top 30)",
+                  "fields": []
+                }
+              },
+              "encodings": {
+                "x": {
+                  "fieldName": "verdacht_ongevalideerd",
+                  "scale": {
+                    "type": "quantitative"
+                  }
+                },
+                "y": {
+                  "fieldName": "reeks_label",
+                  "scale": {
+                    "type": "categorical",
+                    "sort": {
+                      "by": "x-reversed"
+                    }
+                  }
+                },
+                "color": {
+                  "fieldName": "leverancier",
+                  "scale": {
+                    "type": "categorical"
+                  }
+                }
+              },
+              "data": {
+                "queryName": "main_query"
+              }
+            }
+          },
+          "position": {
+            "x": 0,
+            "y": 21,
+            "width": 6,
+            "height": 10
+          }
+        },
+        {
+          "widget": {
+            "name": "b_schommeling",
+            "queries": [
+              {
+                "name": "main_query",
+                "query": {
+                  "datasetName": "kw_schommeling",
+                  "fields": [
+                    {
+                      "name": "reeks_label",
+                      "expression": "`reeks_label`"
+                    },
+                    {
+                      "name": "week_bereik_m",
+                      "expression": "`week_bereik_m`"
+                    },
+                    {
+                      "name": "oordeel",
+                      "expression": "`oordeel`"
+                    }
+                  ],
+                  "disaggregated": true
+                }
+              }
+            ],
+            "spec": {
+              "version": 3,
+              "widgetType": "bar",
+              "frame": {
+                "showTitle": true,
+                "title": {
+                  "value": "Grootste schommelingen afgelopen week (m, top 30)",
+                  "fields": []
+                },
+                "showDescription": true,
+                "description": {
+                  "value": "Verdacht = bereik > 0,5 m terwijl er < 10 mm regen viel (instelbaar in de job)",
+                  "fields": []
+                }
+              },
+              "encodings": {
+                "x": {
+                  "fieldName": "week_bereik_m",
+                  "scale": {
+                    "type": "quantitative"
+                  }
+                },
+                "y": {
+                  "fieldName": "reeks_label",
+                  "scale": {
+                    "type": "categorical",
+                    "sort": {
+                      "by": "x-reversed"
+                    }
+                  }
+                },
+                "color": {
+                  "fieldName": "oordeel",
+                  "scale": {
+                    "type": "categorical",
+                    "mappings": [
+                      {
+                        "value": "verdacht: weinig regen",
+                        "color": "#D62728"
+                      },
+                      {
+                        "value": "mogelijk door regen",
+                        "color": "#1F77B4"
+                      },
+                      {
+                        "value": "geen actuele KNMI-data",
+                        "color": "#A0A0A0"
+                      }
+                    ]
+                  }
+                }
+              },
+              "data": {
+                "queryName": "main_query"
+              }
+            }
+          },
+          "position": {
+            "x": 6,
+            "y": 21,
+            "width": 6,
+            "height": 10
+          }
+        },
+        {
+          "widget": {
+            "name": "tb_gisteren",
+            "queries": [
+              {
+                "name": "main_query",
+                "query": {
+                  "datasetName": "kw_gisteren",
+                  "fields": [
+                    {
+                      "name": "reeks_label",
+                      "expression": "`reeks_label`"
+                    },
+                    {
+                      "name": "leverancier",
+                      "expression": "`leverancier`"
+                    },
+                    {
+                      "name": "status",
+                      "expression": "`status`"
+                    },
+                    {
+                      "name": "uren_gisteren",
+                      "expression": "`uren_gisteren`"
+                    },
+                    {
+                      "name": "verdacht_gisteren",
+                      "expression": "`verdacht_gisteren`"
+                    },
+                    {
+                      "name": "sprongen_gisteren",
+                      "expression": "`sprongen_gisteren`"
+                    },
+                    {
+                      "name": "gisteren_gem",
+                      "expression": "`gisteren_gem`"
+                    },
+                    {
+                      "name": "basis_gem",
+                      "expression": "`basis_gem`"
+                    },
+                    {
+                      "name": "delta_m",
+                      "expression": "`delta_m`"
+                    }
+                  ],
+                  "disaggregated": true
+                }
+              }
+            ],
+            "spec": {
+              "version": 2,
+              "widgetType": "table",
+              "frame": {
+                "showTitle": true,
+                "title": {
+                  "value": "Wat gebeurde er gisteren (delta = gisteren t.o.v. gemiddelde dag -14 t/m -2)",
+                  "fields": []
+                }
+              },
+              "encodings": {
+                "columns": [
+                  {
+                    "fieldName": "reeks_label",
+                    "displayName": "reeks_label"
+                  },
+                  {
+                    "fieldName": "leverancier",
+                    "displayName": "leverancier"
+                  },
+                  {
+                    "fieldName": "status",
+                    "displayName": "status"
+                  },
+                  {
+                    "fieldName": "uren_gisteren",
+                    "displayName": "uren_gisteren"
+                  },
+                  {
+                    "fieldName": "verdacht_gisteren",
+                    "displayName": "verdacht_gisteren"
+                  },
+                  {
+                    "fieldName": "sprongen_gisteren",
+                    "displayName": "sprongen_gisteren"
+                  },
+                  {
+                    "fieldName": "gisteren_gem",
+                    "displayName": "gisteren_gem"
+                  },
+                  {
+                    "fieldName": "basis_gem",
+                    "displayName": "basis_gem"
+                  },
+                  {
+                    "fieldName": "delta_m",
+                    "displayName": "delta_m"
+                  }
+                ]
+              },
+              "data": {
+                "queryName": "main_query"
+              }
+            }
+          },
+          "position": {
+            "x": 0,
+            "y": 31,
+            "width": 12,
+            "height": 9
+          }
+        },
+        {
+          "widget": {
+            "name": "b_natdroog",
+            "queries": [
+              {
+                "name": "main_query",
+                "query": {
+                  "datasetName": "kw_natdroog",
+                  "fields": [
+                    {
+                      "name": "reeks_label",
+                      "expression": "`reeks_label`"
+                    },
+                    {
+                      "name": "natheid_index",
+                      "expression": "`natheid_index`"
+                    },
+                    {
+                      "name": "nat_droog",
+                      "expression": "`nat_droog`"
+                    }
+                  ],
+                  "disaggregated": true
+                }
+              }
+            ],
+            "spec": {
+              "version": 3,
+              "widgetType": "bar",
+              "frame": {
+                "showTitle": true,
+                "title": {
+                  "value": "Natter / droger dan normaal (+100 = maximum, 0 = mediaan, -100 = minimum van de reeks)",
+                  "fields": []
+                }
+              },
+              "encodings": {
+                "x": {
+                  "fieldName": "natheid_index",
+                  "scale": {
+                    "type": "quantitative"
+                  }
+                },
+                "y": {
+                  "fieldName": "reeks_label",
+                  "scale": {
+                    "type": "categorical",
+                    "sort": {
+                      "by": "x-reversed"
+                    }
+                  }
+                },
+                "color": {
+                  "fieldName": "nat_droog",
+                  "scale": {
+                    "type": "categorical",
+                    "mappings": [
+                      {
+                        "value": "natter dan normaal",
+                        "color": "#1F77B4"
+                      },
+                      {
+                        "value": "droger dan normaal",
+                        "color": "#E07B00"
+                      }
+                    ]
+                  }
+                }
+              },
+              "data": {
+                "queryName": "main_query"
+              }
+            }
+          },
+          "position": {
+            "x": 0,
+            "y": 40,
+            "width": 12,
+            "height": 18
+          }
+        }
+      ]
+    },
+    {
+      "name": "reeks",
+      "displayName": "Reeks-specifiek",
+      "pageType": "PAGE_TYPE_CANVAS",
+      "layoutVersion": "GRID_V1",
+      "layout": [
+        {
+          "widget": {
+            "name": "f_reeks",
+            "queries": [
+              {
+                "name": "param_r_info_meetreeks",
+                "query": {
+                  "datasetName": "r_info",
+                  "parameters": [
+                    {
+                      "name": "meetreeks",
+                      "keyword": "meetreeks"
+                    }
+                  ],
+                  "disaggregated": false
+                }
+              },
+              {
+                "name": "param_r_dag_meetreeks",
+                "query": {
+                  "datasetName": "r_dag",
+                  "parameters": [
+                    {
+                      "name": "meetreeks",
+                      "keyword": "meetreeks"
+                    }
+                  ],
+                  "disaggregated": false
+                }
+              },
+              {
+                "name": "param_r_uur_meetreeks",
+                "query": {
+                  "datasetName": "r_uur",
+                  "parameters": [
+                    {
+                      "name": "meetreeks",
+                      "keyword": "meetreeks"
+                    }
+                  ],
+                  "disaggregated": false
+                }
+              },
+              {
+                "name": "param_r_flags_meetreeks",
+                "query": {
+                  "datasetName": "r_flags",
+                  "parameters": [
+                    {
+                      "name": "meetreeks",
+                      "keyword": "meetreeks"
+                    }
+                  ],
+                  "disaggregated": false
+                }
+              },
+              {
+                "name": "options_r_keuze_meetreeks_keuze",
+                "query": {
+                  "datasetName": "r_keuze",
+                  "fields": [
+                    {
+                      "name": "meetreeks_keuze",
+                      "expression": "`meetreeks_keuze`"
+                    },
+                    {
+                      "name": "meetreeks_keuze_associativity",
+                      "expression": "COUNT_IF(`associative_filter_predicate_group`)"
+                    }
+                  ],
+                  "disaggregated": false
+                }
+              }
+            ],
+            "spec": {
+              "version": 2,
+              "widgetType": "filter-single-select",
+              "frame": {
+                "showTitle": true,
+                "title": {
+                  "value": "Meetreeks",
+                  "fields": []
+                }
+              },
+              "encodings": {
+                "fields": [
+                  {
+                    "parameterName": "meetreeks",
+                    "queryName": "param_r_info_meetreeks"
+                  },
+                  {
+                    "parameterName": "meetreeks",
+                    "queryName": "param_r_dag_meetreeks"
+                  },
+                  {
+                    "parameterName": "meetreeks",
+                    "queryName": "param_r_uur_meetreeks"
+                  },
+                  {
+                    "parameterName": "meetreeks",
+                    "queryName": "param_r_flags_meetreeks"
+                  },
+                  {
+                    "fieldName": "meetreeks_keuze",
+                    "displayName": "Meetreeks",
+                    "queryName": "options_r_keuze_meetreeks_keuze"
+                  }
+                ]
+              }
+            }
+          },
+          "position": {
+            "x": 0,
+            "y": 0,
+            "width": 6,
+            "height": 2
+          }
+        },
+        {
+          "widget": {
+            "name": "t_reeks",
+            "multilineTextboxSpec": {
+              "lines": [
+                "Kies een meetreeks (meetlocatie | code [id]). Handwaarnemingen op dezelfde peilbuis worden mee getoond.\n"
+              ]
+            }
+          },
+          "position": {
+            "x": 6,
+            "y": 0,
+            "width": 6,
+            "height": 2
+          }
+        },
+        {
+          "widget": {
+            "name": "tb_info",
+            "queries": [
+              {
+                "name": "main_query",
+                "query": {
+                  "datasetName": "r_info",
+                  "fields": [
+                    {
+                      "name": "reeks_label",
+                      "expression": "`reeks_label`"
+                    },
+                    {
+                      "name": "cs_naam",
+                      "expression": "`cs_naam`"
+                    },
+                    {
+                      "name": "soort",
+                      "expression": "`soort`"
+                    },
+                    {
+                      "name": "leverancier",
+                      "expression": "`leverancier`"
+                    },
+                    {
+                      "name": "status",
+                      "expression": "`status`"
+                    },
+                    {
+                      "name": "laatste_meting",
+                      "expression": "`laatste_meting`"
+                    },
+                    {
+                      "name": "gevalideerd",
+                      "expression": "`gevalideerd`"
+                    },
+                    {
+                      "name": "gevalideerd_pct",
+                      "expression": "`gevalideerd_pct`"
+                    },
+                    {
+                      "name": "valid_pastas_model",
+                      "expression": "`valid_pastas_model`"
+                    },
+                    {
+                      "name": "valid_model",
+                      "expression": "`valid_model`"
+                    },
+                    {
+                      "name": "valid_r2",
+                      "expression": "`valid_r2`"
+                    },
+                    {
+                      "name": "unvalid_r2",
+                      "expression": "`unvalid_r2`"
+                    },
+                    {
+                      "name": "status_kleur",
+                      "expression": "`status_kleur`"
+                    },
+                    {
+                      "name": "metadata_compleet",
+                      "expression": "`metadata_compleet`"
+                    },
+                    {
+                      "name": "begin_filter",
+                      "expression": "`begin_filter`"
+                    },
+                    {
+                      "name": "eind_filter",
+                      "expression": "`eind_filter`"
+                    },
+                    {
+                      "name": "bovenkant_peilbuis",
+                      "expression": "`bovenkant_peilbuis`"
+                    },
+                    {
+                      "name": "uptime_7d_pct",
+                      "expression": "`uptime_7d_pct`"
+                    },
+                    {
+                      "name": "verdachte_uren",
+                      "expression": "`verdachte_uren`"
+                    }
+                  ],
+                  "disaggregated": true
+                }
+              }
+            ],
+            "spec": {
+              "version": 2,
+              "widgetType": "table",
+              "frame": {
+                "showTitle": true,
+                "title": {
+                  "value": "Kenmerken",
+                  "fields": []
+                }
+              },
+              "encodings": {
+                "columns": [
+                  {
+                    "fieldName": "reeks_label",
+                    "displayName": "reeks_label"
+                  },
+                  {
+                    "fieldName": "cs_naam",
+                    "displayName": "cs_naam"
+                  },
+                  {
+                    "fieldName": "soort",
+                    "displayName": "soort"
+                  },
+                  {
+                    "fieldName": "leverancier",
+                    "displayName": "leverancier"
+                  },
+                  {
+                    "fieldName": "status",
+                    "displayName": "status"
+                  },
+                  {
+                    "fieldName": "laatste_meting",
+                    "displayName": "laatste_meting"
+                  },
+                  {
+                    "fieldName": "gevalideerd",
+                    "displayName": "gevalideerd"
+                  },
+                  {
+                    "fieldName": "gevalideerd_pct",
+                    "displayName": "gevalideerd_pct"
+                  },
+                  {
+                    "fieldName": "valid_pastas_model",
+                    "displayName": "valid_pastas_model"
+                  },
+                  {
+                    "fieldName": "valid_model",
+                    "displayName": "valid_model"
+                  },
+                  {
+                    "fieldName": "valid_r2",
+                    "displayName": "valid_r2"
+                  },
+                  {
+                    "fieldName": "unvalid_r2",
+                    "displayName": "unvalid_r2"
+                  },
+                  {
+                    "fieldName": "status_kleur",
+                    "displayName": "status_kleur"
+                  },
+                  {
+                    "fieldName": "metadata_compleet",
+                    "displayName": "metadata_compleet"
+                  },
+                  {
+                    "fieldName": "begin_filter",
+                    "displayName": "begin_filter"
+                  },
+                  {
+                    "fieldName": "eind_filter",
+                    "displayName": "eind_filter"
+                  },
+                  {
+                    "fieldName": "bovenkant_peilbuis",
+                    "displayName": "bovenkant_peilbuis"
+                  },
+                  {
+                    "fieldName": "uptime_7d_pct",
+                    "displayName": "uptime_7d_pct"
+                  },
+                  {
+                    "fieldName": "verdachte_uren",
+                    "displayName": "verdachte_uren"
+                  }
+                ]
+              },
+              "data": {
+                "queryName": "main_query"
+              }
+            }
+          },
+          "position": {
+            "x": 0,
+            "y": 2,
+            "width": 12,
+            "height": 3
+          }
+        },
+        {
+          "widget": {
+            "name": "l_dag",
+            "queries": [
+              {
+                "name": "main_query",
+                "query": {
+                  "datasetName": "r_dag",
+                  "fields": [
+                    {
+                      "name": "datum",
+                      "expression": "`datum`"
+                    },
+                    {
+                      "name": "waarde",
+                      "expression": "`waarde`"
+                    },
+                    {
+                      "name": "bron",
+                      "expression": "`bron`"
+                    }
+                  ],
+                  "disaggregated": true
+                }
+              }
+            ],
+            "spec": {
+              "version": 3,
+              "widgetType": "line",
+              "frame": {
+                "showTitle": true,
+                "title": {
+                  "value": "Stijghoogte (m NAP), daggemiddelden",
+                  "fields": []
+                }
+              },
+              "encodings": {
+                "x": {
+                  "fieldName": "datum",
+                  "scale": {
+                    "type": "temporal"
+                  }
+                },
+                "y": {
+                  "fieldName": "waarde",
+                  "scale": {
+                    "type": "quantitative"
+                  }
+                },
+                "color": {
+                  "fieldName": "bron",
+                  "scale": {
+                    "type": "categorical",
+                    "mappings": [
+                      {
+                        "value": "sensor (ruw)",
+                        "color": "#A0A0A0"
+                      },
+                      {
+                        "value": "gevalideerd",
+                        "color": "#1F77B4"
+                      },
+                      {
+                        "value": "handwaarneming",
+                        "color": "#D62728"
+                      },
+                      {
+                        "value": "onderkant filter",
+                        "color": "#7F7F7F"
+                      },
+                      {
+                        "value": "bovenkant peilbuis",
+                        "color": "#7F7F7F"
+                      }
+                    ]
+                  }
+                }
+              },
+              "data": {
+                "queryName": "main_query"
+              }
+            }
+          },
+          "position": {
+            "x": 0,
+            "y": 5,
+            "width": 12,
+            "height": 9
+          }
+        },
+        {
+          "widget": {
+            "name": "l_uur",
+            "queries": [
+              {
+                "name": "main_query",
+                "query": {
+                  "datasetName": "r_uur",
+                  "fields": [
+                    {
+                      "name": "tijd",
+                      "expression": "`tijd`"
+                    },
+                    {
+                      "name": "waarde",
+                      "expression": "`waarde`"
+                    },
+                    {
+                      "name": "bron",
+                      "expression": "`bron`"
+                    }
+                  ],
+                  "disaggregated": true
+                }
+              }
+            ],
+            "spec": {
+              "version": 3,
+              "widgetType": "line",
+              "frame": {
+                "showTitle": true,
+                "title": {
+                  "value": "Laatste 30 dagen per uur (m NAP)",
+                  "fields": []
+                }
+              },
+              "encodings": {
+                "x": {
+                  "fieldName": "tijd",
+                  "scale": {
+                    "type": "temporal"
+                  }
+                },
+                "y": {
+                  "fieldName": "waarde",
+                  "scale": {
+                    "type": "quantitative"
+                  }
+                },
+                "color": {
+                  "fieldName": "bron",
+                  "scale": {
+                    "type": "categorical",
+                    "mappings": [
+                      {
+                        "value": "sensor (ruw)",
+                        "color": "#A0A0A0"
+                      },
+                      {
+                        "value": "gevalideerd",
+                        "color": "#1F77B4"
+                      }
+                    ]
+                  }
+                }
+              },
+              "data": {
+                "queryName": "main_query"
+              }
+            }
+          },
+          "position": {
+            "x": 0,
+            "y": 14,
+            "width": 8,
+            "height": 7
+          }
+        },
+        {
+          "widget": {
+            "name": "tb_flags",
+            "queries": [
+              {
+                "name": "main_query",
+                "query": {
+                  "datasetName": "r_flags",
+                  "fields": [
+                    {
+                      "name": "flag",
+                      "expression": "`flag`"
+                    },
+                    {
+                      "name": "totaal",
+                      "expression": "`totaal`"
+                    },
+                    {
+                      "name": "laatste_7_dagen",
+                      "expression": "`laatste_7_dagen`"
+                    },
+                    {
+                      "name": "gisteren",
+                      "expression": "`gisteren`"
+                    }
+                  ],
+                  "disaggregated": true
+                }
+              }
+            ],
+            "spec": {
+              "version": 2,
+              "widgetType": "table",
+              "frame": {
+                "showTitle": true,
+                "title": {
+                  "value": "Flags (uren)",
+                  "fields": []
+                }
+              },
+              "encodings": {
+                "columns": [
+                  {
+                    "fieldName": "flag",
+                    "displayName": "flag"
+                  },
+                  {
+                    "fieldName": "totaal",
+                    "displayName": "totaal"
+                  },
+                  {
+                    "fieldName": "laatste_7_dagen",
+                    "displayName": "laatste_7_dagen"
+                  },
+                  {
+                    "fieldName": "gisteren",
+                    "displayName": "gisteren"
+                  }
+                ]
+              },
+              "data": {
+                "queryName": "main_query"
+              }
+            }
+          },
+          "position": {
+            "x": 8,
+            "y": 14,
+            "width": 4,
+            "height": 7
+          }
+        }
+      ]
+    },
+    {
+      "name": "pastas",
+      "displayName": "Pastas",
+      "pageType": "PAGE_TYPE_CANVAS",
+      "layoutVersion": "GRID_V1",
+      "layout": [
+        {
+          "widget": {
+            "name": "t_pastas",
+            "multilineTextboxSpec": {
+              "lines": [
+                "## Pastas-modellen\n",
+                "Per reeks het model dat gebruikt wordt (handmatige keuze, anders de automatische keuze, anders Tarso).\n",
+                "Gevalideerde kaart: **groen** haalt R2 >= 0,7, de responstijd (t95) en de parametergrenzen; **geel** heeft een R2\n",
+                "maar faalt een van die checks; **rood** niet geaccepteerd (fit mislukt, loopt weg in de extremen of geen model\n",
+                "bruikbaar); **grijs** nog geen gevalideerde data of model. *modellen_ok* = hoeveel van de modeltypen de checks halen.\n"
+              ]
+            }
+          },
+          "position": {
+            "x": 0,
+            "y": 0,
+            "width": 12,
+            "height": 3
+          }
+        },
+        {
+          "widget": {
+            "name": "c_valid",
+            "queries": [
+              {
+                "name": "main_query",
+                "query": {
+                  "datasetName": "p_totalen",
+                  "fields": [
+                    {
+                      "name": "sum(valid_modellen)",
+                      "expression": "SUM(`valid_modellen`)"
+                    }
+                  ],
+                  "disaggregated": false
+                }
+              }
+            ],
+            "spec": {
+              "version": 2,
+              "widgetType": "counter",
+              "frame": {
+                "showTitle": true,
+                "title": {
+                  "value": "Reeksen met gevalideerd model",
+                  "fields": []
+                }
+              },
+              "encodings": {
+                "value": {
+                  "fieldName": "sum(valid_modellen)",
+                  "displayName": "Reeksen met gevalideerd model"
+                }
+              },
+              "data": {
+                "queryName": "main_query"
+              }
+            }
+          },
+          "position": {
+            "x": 0,
+            "y": 3,
+            "width": 2,
+            "height": 3
+          }
+        },
+        {
+          "widget": {
+            "name": "c_groen",
+            "queries": [
+              {
+                "name": "main_query",
+                "query": {
+                  "datasetName": "p_totalen",
+                  "fields": [
+                    {
+                      "name": "sum(groen)",
+                      "expression": "SUM(`groen`)"
+                    }
+                  ],
+                  "disaggregated": false
+                }
+              }
+            ],
+            "spec": {
+              "version": 2,
+              "widgetType": "counter",
+              "frame": {
+                "showTitle": true,
+                "title": {
+                  "value": "Groen",
+                  "fields": []
+                }
+              },
+              "encodings": {
+                "value": {
+                  "fieldName": "sum(groen)",
+                  "displayName": "Groen"
+                }
+              },
+              "data": {
+                "queryName": "main_query"
+              }
+            }
+          },
+          "position": {
+            "x": 2,
+            "y": 3,
+            "width": 2,
+            "height": 3
+          }
+        },
+        {
+          "widget": {
+            "name": "c_geel",
+            "queries": [
+              {
+                "name": "main_query",
+                "query": {
+                  "datasetName": "p_totalen",
+                  "fields": [
+                    {
+                      "name": "sum(geel)",
+                      "expression": "SUM(`geel`)"
+                    }
+                  ],
+                  "disaggregated": false
+                }
+              }
+            ],
+            "spec": {
+              "version": 2,
+              "widgetType": "counter",
+              "frame": {
+                "showTitle": true,
+                "title": {
+                  "value": "Geel",
+                  "fields": []
+                }
+              },
+              "encodings": {
+                "value": {
+                  "fieldName": "sum(geel)",
+                  "displayName": "Geel"
+                }
+              },
+              "data": {
+                "queryName": "main_query"
+              }
+            }
+          },
+          "position": {
+            "x": 4,
+            "y": 3,
+            "width": 2,
+            "height": 3
+          }
+        },
+        {
+          "widget": {
+            "name": "c_rood",
+            "queries": [
+              {
+                "name": "main_query",
+                "query": {
+                  "datasetName": "p_totalen",
+                  "fields": [
+                    {
+                      "name": "sum(rood)",
+                      "expression": "SUM(`rood`)"
+                    }
+                  ],
+                  "disaggregated": false
+                }
+              }
+            ],
+            "spec": {
+              "version": 2,
+              "widgetType": "counter",
+              "frame": {
+                "showTitle": true,
+                "title": {
+                  "value": "Rood",
+                  "fields": []
+                }
+              },
+              "encodings": {
+                "value": {
+                  "fieldName": "sum(rood)",
+                  "displayName": "Rood"
+                }
+              },
+              "data": {
+                "queryName": "main_query"
+              }
+            }
+          },
+          "position": {
+            "x": 6,
+            "y": 3,
+            "width": 2,
+            "height": 3
+          }
+        },
+        {
+          "widget": {
+            "name": "c_grijs",
+            "queries": [
+              {
+                "name": "main_query",
+                "query": {
+                  "datasetName": "p_totalen",
+                  "fields": [
+                    {
+                      "name": "sum(grijs)",
+                      "expression": "SUM(`grijs`)"
+                    }
+                  ],
+                  "disaggregated": false
+                }
+              }
+            ],
+            "spec": {
+              "version": 2,
+              "widgetType": "counter",
+              "frame": {
+                "showTitle": true,
+                "title": {
+                  "value": "Grijs",
+                  "fields": []
+                }
+              },
+              "encodings": {
+                "value": {
+                  "fieldName": "sum(grijs)",
+                  "displayName": "Grijs"
+                }
+              },
+              "data": {
+                "queryName": "main_query"
+              }
+            }
+          },
+          "position": {
+            "x": 8,
+            "y": 3,
+            "width": 2,
+            "height": 3
+          }
+        },
+        {
+          "widget": {
+            "name": "c_zonder",
+            "queries": [
+              {
+                "name": "main_query",
+                "query": {
+                  "datasetName": "p_totalen",
+                  "fields": [
+                    {
+                      "name": "sum(zonder_coordinaten)",
+                      "expression": "SUM(`zonder_coordinaten`)"
+                    }
+                  ],
+                  "disaggregated": false
+                }
+              }
+            ],
+            "spec": {
+              "version": 2,
+              "widgetType": "counter",
+              "frame": {
+                "showTitle": true,
+                "title": {
+                  "value": "Niet op de kaart (geen coordinaten)",
+                  "fields": []
+                }
+              },
+              "encodings": {
+                "value": {
+                  "fieldName": "sum(zonder_coordinaten)",
+                  "displayName": "Niet op de kaart (geen coordinaten)"
+                }
+              },
+              "data": {
+                "queryName": "main_query"
+              }
+            }
+          },
+          "position": {
+            "x": 10,
+            "y": 3,
+            "width": 2,
+            "height": 3
+          }
+        },
+        {
+          "widget": {
+            "name": "m_unvalid",
+            "queries": [
+              {
+                "name": "main_query",
+                "query": {
+                  "datasetName": "p_kaart",
+                  "fields": [
+                    {
+                      "name": "lat",
+                      "expression": "`lat`"
+                    },
+                    {
+                      "name": "lon",
+                      "expression": "`lon`"
+                    },
+                    {
+                      "name": "unvalid_r2",
+                      "expression": "`unvalid_r2`"
+                    },
+                    {
+                      "name": "reeks_label",
+                      "expression": "`reeks_label`"
+                    },
+                    {
+                      "name": "cs_naam",
+                      "expression": "`cs_naam`"
+                    },
+                    {
+                      "name": "unvalid_model",
+                      "expression": "`unvalid_model`"
+                    },
+                    {
+                      "name": "unvalid_r2",
+                      "expression": "`unvalid_r2`"
+                    },
+                    {
+                      "name": "valid_r2",
+                      "expression": "`valid_r2`"
+                    }
+                  ],
+                  "disaggregated": true
+                }
+              }
+            ],
+            "spec": {
+              "version": 2,
+              "widgetType": "symbol-map",
+              "frame": {
+                "showTitle": true,
+                "title": {
+                  "value": "Pastas op ongevalideerde data (R2)",
+                  "fields": []
+                }
+              },
+              "mark": {
+                "size": -2.1
+              },
+              "encodings": {
+                "coordinates": {
+                  "coordinateType": "longitude-latitude",
+                  "latitude": {
+                    "fieldName": "lat"
+                  },
+                  "longitude": {
+                    "fieldName": "lon"
+                  }
+                },
+                "color": {
+                  "fieldName": "unvalid_r2",
+                  "legend": {
+                    "position": "right"
+                  },
+                  "scale": {
+                    "type": "quantitative",
+                    "colorRamp": {
+                      "mode": "scheme",
+                      "scheme": "redyellowgreen"
+                    },
+                    "domain": {
+                      "min": 0,
+                      "mid": 0.7,
+                      "max": 1
+                    }
+                  }
+                },
+                "extra": [
+                  {
+                    "fieldName": "reeks_label"
+                  },
+                  {
+                    "fieldName": "cs_naam"
+                  },
+                  {
+                    "fieldName": "unvalid_model"
+                  },
+                  {
+                    "fieldName": "unvalid_r2"
+                  },
+                  {
+                    "fieldName": "valid_r2"
+                  }
+                ]
+              },
+              "data": {
+                "queryName": "main_query"
+              }
+            }
+          },
+          "position": {
+            "x": 0,
+            "y": 6,
+            "width": 6,
+            "height": 10
+          }
+        },
+        {
+          "widget": {
+            "name": "m_valid",
+            "queries": [
+              {
+                "name": "main_query",
+                "query": {
+                  "datasetName": "p_kaart",
+                  "fields": [
+                    {
+                      "name": "lat",
+                      "expression": "`lat`"
+                    },
+                    {
+                      "name": "lon",
+                      "expression": "`lon`"
+                    },
+                    {
+                      "name": "status_kleur",
+                      "expression": "`status_kleur`"
+                    },
+                    {
+                      "name": "reeks_label",
+                      "expression": "`reeks_label`"
+                    },
+                    {
+                      "name": "cs_naam",
+                      "expression": "`cs_naam`"
+                    },
+                    {
+                      "name": "valid_model",
+                      "expression": "`valid_model`"
+                    },
+                    {
+                      "name": "valid_r2",
+                      "expression": "`valid_r2`"
+                    },
+                    {
+                      "name": "unvalid_r2",
+                      "expression": "`unvalid_r2`"
+                    },
+                    {
+                      "name": "valid_r2_holdout",
+                      "expression": "`valid_r2_holdout`"
+                    },
+                    {
+                      "name": "valid_t95_dagen",
+                      "expression": "`valid_t95_dagen`"
+                    },
+                    {
+                      "name": "valid_rmse",
+                      "expression": "`valid_rmse`"
+                    },
+                    {
+                      "name": "check_r2",
+                      "expression": "`check_r2`"
+                    },
+                    {
+                      "name": "check_responstijd",
+                      "expression": "`check_responstijd`"
+                    },
+                    {
+                      "name": "check_parametergrenzen",
+                      "expression": "`check_parametergrenzen`"
+                    },
+                    {
+                      "name": "modellen_ok",
+                      "expression": "`modellen_ok`"
+                    },
+                    {
+                      "name": "keuze",
+                      "expression": "`keuze`"
+                    }
+                  ],
+                  "disaggregated": true
+                }
+              }
+            ],
+            "spec": {
+              "version": 2,
+              "widgetType": "symbol-map",
+              "frame": {
+                "showTitle": true,
+                "title": {
+                  "value": "Pastas op gevalideerde data",
+                  "fields": []
+                }
+              },
+              "mark": {
+                "size": -2.1
+              },
+              "encodings": {
+                "coordinates": {
+                  "coordinateType": "longitude-latitude",
+                  "latitude": {
+                    "fieldName": "lat"
+                  },
+                  "longitude": {
+                    "fieldName": "lon"
+                  }
+                },
+                "color": {
+                  "fieldName": "status_kleur",
+                  "scale": {
+                    "type": "categorical",
+                    "mappings": [
+                      {
+                        "value": "groen: haalt de checks",
+                        "color": "#2E9E44"
+                      },
+                      {
+                        "value": "geel: R2, maar een check faalt",
+                        "color": "#F2C200"
+                      },
+                      {
+                        "value": "rood: niet geaccepteerd",
+                        "color": "#D62728"
+                      },
+                      {
+                        "value": "grijs: nog geen gevalideerd model",
+                        "color": "#A0A0A0"
+                      }
+                    ]
+                  },
+                  "legend": {
+                    "position": "right"
+                  }
+                },
+                "extra": [
+                  {
+                    "fieldName": "reeks_label"
+                  },
+                  {
+                    "fieldName": "cs_naam"
+                  },
+                  {
+                    "fieldName": "valid_model"
+                  },
+                  {
+                    "fieldName": "valid_r2"
+                  },
+                  {
+                    "fieldName": "unvalid_r2"
+                  },
+                  {
+                    "fieldName": "valid_r2_holdout"
+                  },
+                  {
+                    "fieldName": "valid_t95_dagen"
+                  },
+                  {
+                    "fieldName": "valid_rmse"
+                  },
+                  {
+                    "fieldName": "check_r2"
+                  },
+                  {
+                    "fieldName": "check_responstijd"
+                  },
+                  {
+                    "fieldName": "check_parametergrenzen"
+                  },
+                  {
+                    "fieldName": "modellen_ok"
+                  },
+                  {
+                    "fieldName": "keuze"
+                  }
+                ]
+              },
+              "data": {
+                "queryName": "main_query"
+              }
+            }
+          },
+          "position": {
+            "x": 6,
+            "y": 6,
+            "width": 6,
+            "height": 10
+          }
+        },
+        {
+          "widget": {
+            "name": "b_kleur",
+            "queries": [
+              {
+                "name": "main_query",
+                "query": {
+                  "datasetName": "p_kleur",
+                  "fields": [
+                    {
+                      "name": "status_kleur",
+                      "expression": "`status_kleur`"
+                    },
+                    {
+                      "name": "reeksen",
+                      "expression": "`reeksen`"
+                    },
+                    {
+                      "name": "valid_model",
+                      "expression": "`valid_model`"
+                    }
+                  ],
+                  "disaggregated": true
+                }
+              }
+            ],
+            "spec": {
+              "version": 3,
+              "widgetType": "bar",
+              "frame": {
+                "showTitle": true,
+                "title": {
+                  "value": "Reeksen per status en model in gebruik",
+                  "fields": []
+                }
+              },
+              "encodings": {
+                "x": {
+                  "fieldName": "reeksen",
+                  "scale": {
+                    "type": "quantitative"
+                  }
+                },
+                "y": {
+                  "fieldName": "status_kleur",
+                  "scale": {
+                    "type": "categorical",
+                    "sort": {
+                      "by": "x-reversed"
+                    }
+                  }
+                },
+                "color": {
+                  "fieldName": "valid_model",
+                  "scale": {
+                    "type": "categorical"
+                  }
+                }
+              },
+              "data": {
+                "queryName": "main_query"
+              }
+            }
+          },
+          "position": {
+            "x": 0,
+            "y": 16,
+            "width": 12,
+            "height": 6
+          }
+        },
+        {
+          "widget": {
+            "name": "tb_modellen",
+            "queries": [
+              {
+                "name": "main_query",
+                "query": {
+                  "datasetName": "p_modellen",
+                  "fields": [
+                    {
+                      "name": "reeks_label",
+                      "expression": "`reeks_label`"
+                    },
+                    {
+                      "name": "model_type",
+                      "expression": "`model_type`"
+                    },
+                    {
+                      "name": "in_gebruik",
+                      "expression": "`in_gebruik`"
+                    },
+                    {
+                      "name": "bron",
+                      "expression": "`bron`"
+                    },
+                    {
+                      "name": "success",
+                      "expression": "`success`"
+                    },
+                    {
+                      "name": "r2",
+                      "expression": "`r2`"
+                    },
+                    {
+                      "name": "r2_holdout",
+                      "expression": "`r2_holdout`"
+                    },
+                    {
+                      "name": "rmse",
+                      "expression": "`rmse`"
+                    },
+                    {
+                      "name": "t95_dagen",
+                      "expression": "`t95_dagen`"
+                    },
+                    {
+                      "name": "pass_rsq",
+                      "expression": "`pass_rsq`"
+                    },
+                    {
+                      "name": "pass_memory",
+                      "expression": "`pass_memory`"
+                    },
+                    {
+                      "name": "pass_bounds",
+                      "expression": "`pass_bounds`"
+                    },
+                    {
+                      "name": "pass_gain",
+                      "expression": "`pass_gain`"
+                    },
+                    {
+                      "name": "haalt_checks",
+                      "expression": "`haalt_checks`"
+                    },
+                    {
+                      "name": "runaway",
+                      "expression": "`runaway`"
+                    },
+                    {
+                      "name": "tier",
+                      "expression": "`tier`"
+                    },
+                    {
+                      "name": "reason",
+                      "expression": "`reason`"
+                    }
+                  ],
+                  "disaggregated": true
+                }
+              }
+            ],
+            "spec": {
+              "version": 2,
+              "widgetType": "table",
+              "frame": {
+                "showTitle": true,
+                "title": {
+                  "value": "Alle modeltypen per gevalideerde reeks",
+                  "fields": []
+                }
+              },
+              "encodings": {
+                "columns": [
+                  {
+                    "fieldName": "reeks_label",
+                    "displayName": "reeks_label"
+                  },
+                  {
+                    "fieldName": "model_type",
+                    "displayName": "model_type"
+                  },
+                  {
+                    "fieldName": "in_gebruik",
+                    "displayName": "in_gebruik"
+                  },
+                  {
+                    "fieldName": "bron",
+                    "displayName": "bron"
+                  },
+                  {
+                    "fieldName": "success",
+                    "displayName": "success"
+                  },
+                  {
+                    "fieldName": "r2",
+                    "displayName": "r2"
+                  },
+                  {
+                    "fieldName": "r2_holdout",
+                    "displayName": "r2_holdout"
+                  },
+                  {
+                    "fieldName": "rmse",
+                    "displayName": "rmse"
+                  },
+                  {
+                    "fieldName": "t95_dagen",
+                    "displayName": "t95_dagen"
+                  },
+                  {
+                    "fieldName": "pass_rsq",
+                    "displayName": "pass_rsq"
+                  },
+                  {
+                    "fieldName": "pass_memory",
+                    "displayName": "pass_memory"
+                  },
+                  {
+                    "fieldName": "pass_bounds",
+                    "displayName": "pass_bounds"
+                  },
+                  {
+                    "fieldName": "pass_gain",
+                    "displayName": "pass_gain"
+                  },
+                  {
+                    "fieldName": "haalt_checks",
+                    "displayName": "haalt_checks"
+                  },
+                  {
+                    "fieldName": "runaway",
+                    "displayName": "runaway"
+                  },
+                  {
+                    "fieldName": "tier",
+                    "displayName": "tier"
+                  },
+                  {
+                    "fieldName": "reason",
+                    "displayName": "reason"
+                  }
+                ]
+              },
+              "data": {
+                "queryName": "main_query"
+              }
+            }
+          },
+          "position": {
+            "x": 0,
+            "y": 22,
+            "width": 12,
+            "height": 12
+          }
+        }
+      ]
+    }
+  ],
+  "uiSettings": {
+    "theme": {
+      "widgetHeaderAlignment": "ALIGNMENT_UNSPECIFIED"
+    },
+    "applyModeEnabled": false
+  }
+}

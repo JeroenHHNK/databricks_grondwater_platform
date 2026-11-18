@@ -8,9 +8,10 @@ Tables accumulate one set of rows per run (``run_id``, a sortable UTC timestamp)
 result for a series is the **latest run that produced a row for it**, per model type:
 ``latest_run_sql``.
 
-The family per tail is the one a person picked (``<prefix>_family_choice``, kept in git as
-``family_choice/<prefix>_family_choice.csv``) or, without a pick, the automatic choice in
-``<prefix>_evt_selection``: ``effective_family`` / ``chosen_levels``.
+The levels that apply per tail (``chosen_levels``): up to T=100 the empirical level of the
+pooled years, past it the family a person picked (``gpd`` or ``exp``) at the threshold they
+picked (``<prefix>_family_choice``, kept in git as ``family_choice/<prefix>_family_choice.csv``).
+A tail without a pick has none.
 """
 
 from __future__ import annotations
@@ -21,23 +22,33 @@ from pathlib import Path
 
 import pandas as pd
 
+from tarso_pipeline.evt import EMPIRICAL_MAX_T
 from tarso_pipeline.paths import (
     CONFIDENCE_PLOTS_DIR,
+    DIAGNOSTICS_DIR,
     QQ_PLOTS_DIR,
+    RESULTS_DIR,
     RETURN_PLOTS_DIR,
     TABLE_PREFIX,
+    THRESHOLD_PLOTS_DIR,
     check_basis,
 )
 
 EXPORT_DIRNAME = "results_export"
-# The extremes figures, copied from the run folders into results_export/<prefix>/plots/
-# as <series_name>_<kind>.png: one file per model and kind, from the most recent run.
+# The figures, copied from the run folders into results_export/<prefix>/plots/ as
+# <series_name>_<model_type>_<kind>.png: one file per model and kind, from the most recent
+# run. Runs from before the files carried their model type wrote <series_name>_<kind>.png
+# for the extremes (Tarso was the only model then); ``find_plot`` falls back to those.
 PLOTS_DIRNAME = "plots"
 PLOT_KINDS = {
     # kind:          (folder in the run folder, suffix of the file run_extremes writes)
     "return_periods": (RETURN_PLOTS_DIR, "_return_periods.png"),
     "qq": (QQ_PLOTS_DIR, "_qq.png"),
+    "threshold": (THRESHOLD_PLOTS_DIR, "_threshold.png"),
     "confidence": (CONFIDENCE_PLOTS_DIR, "_return_level.png"),  # explore_shape_and_uncertainty
+    # The fit itself (fit_pastas_models): ml.plots.results() and ml.plots.diagnostics().
+    "results": (RESULTS_DIR, "_results.png"),
+    "diagnostics": (DIAGNOSTICS_DIR, "_diagnostics.png"),
 }
 FAMILY_CHOICE_DIRNAME = "family_choice"
 # What the app needs, and the file each is exported to (export_results.py).
@@ -47,13 +58,17 @@ EXPORT_FILES = {
     "evt_selection": "evt_selection.csv",
     "return_levels": "return_levels.csv",
     "simulations": "simulations.parquet",
+    "model_selection": "model_selection.csv",
 }
-FAMILIES = ("gev", "exp", "gpd", "emp")
-FAMILY_LABELS = {"gev": "GEV", "exp": "exponentieel (Gumbel)", "gpd": "GPD", "emp": "empirisch"}
+FAMILIES = ("gpd", "exp", "gev", "emp")
+# What a person can pick per tail: how to extrapolate past EMPIRICAL_MAX_T.
+PICKABLE = ("gpd", "exp")
+FAMILY_LABELS = {"gpd": "GPD (staart vlakt af)", "exp": "exponentieel (staart vlakt niet af)",
+                 "gev": "GEV (alle jaren, vergelijking)", "emp": "empirisch"}
 TAIL_LABELS = {"dry": "droog (laagste standen)", "wet": "nat (hoogste standen)"}
-FAMILY_CHOICE_COLUMNS = ["meetreeks_id", "series_name", "model_type", "tail", "family", "note",
+FAMILY_CHOICE_COLUMNS = ["meetreeks_id", "series_name", "model_type", "tail", "family", "n_kept", "note",
                          "chosen_by", "chosen_at"]
-GEKOZEN, AUTOMATISCH = "gekozen", "automatisch"
+EMPIRISCH, FAMILIE = "empirisch", "familie"
 
 _TABLE = re.compile(r"^[A-Za-z_][A-Za-z0-9_]*(\.[A-Za-z_][A-Za-z0-9_]*){2}$")
 _ID = re.compile(r"^[A-Za-z0-9_-]{1,128}$")
@@ -102,40 +117,72 @@ def plots_dir(root: str | Path, basis: str) -> Path:
 
 
 def plot_path(root: str | Path, basis: str, series_name: str, kind: str) -> Path:
-    """Where the exported ``kind`` figure of one model lives (it may not exist)."""
+    """Where the exported ``kind`` figure of one file stem lives (it may not exist).
+
+    ``series_name`` is the stem: ``<series_name>_<model_type>`` (``find_plot`` builds it).
+    """
     if kind not in PLOT_KINDS:
         raise ValueError(f"kind must be one of {tuple(PLOT_KINDS)}, got {kind!r}")
     return plots_dir(root, basis) / f"{series_name}_{kind}.png"
 
 
-def latest_plots(basis_volume_dir: str | Path) -> dict[tuple[str, str], Path]:
-    """The newest figure per (series_name, kind) over every run folder of one data basis.
+def find_plot(root: str | Path, basis: str, series_name: str, model_type: str, kind: str) -> Path | None:
+    """The exported ``kind`` figure of one model, or None.
+
+    ``<series>_<model_type>_<kind>.png``; for Tarso also the older ``<series>_<kind>.png``.
+    """
+    candidates = [plot_path(root, basis, f"{series_name}_{model_type}", kind)]
+    if model_type == "tarso":
+        candidates.append(plot_path(root, basis, series_name, kind))
+    return next((p for p in candidates if p.is_file()), None)
+
+
+def _check_kinds(kinds) -> tuple[str, ...]:
+    kinds = tuple(PLOT_KINDS) if kinds is None else tuple(kinds)
+    unknown = [k for k in kinds if k not in PLOT_KINDS]
+    if unknown:
+        raise ValueError(f"unknown plot kind(s) {unknown}; use {tuple(PLOT_KINDS)}")
+    return kinds
+
+
+def latest_plots(basis_volume_dir: str | Path, kinds=None) -> dict[tuple[str, str], Path]:
+    """The newest figure per (file stem, kind) over every run folder of one data basis.
+
+    The stem is ``<series_name>_<model_type>`` (or a bare series name for an old run).
 
     Newest by modification time, not by folder name, so a run folder with a custom name
-    (``run_folder`` widget) counts too.
+    (``run_folder`` widget) counts too. ``kinds`` limits it to some of ``PLOT_KINDS``.
     """
     found: dict[tuple[str, str], Path] = {}
     base = Path(basis_volume_dir)
     if not base.is_dir():
         return found
-    for kind, (folder, suffix) in PLOT_KINDS.items():
+    for kind in _check_kinds(kinds):
+        folder, suffix = PLOT_KINDS[kind]
         for path in base.glob(f"*/{folder}/*{suffix}"):
             key = (path.name[: -len(suffix)], kind)
             if key not in found or path.stat().st_mtime > found[key].stat().st_mtime:
                 found[key] = path
-    return found
+    # An old-style <series>_<kind>.png (Tarso) is superseded once <series>_tarso_<kind>.png exists.
+    return {(stem, kind): path for (stem, kind), path in found.items()
+            if (f"{stem}_tarso", kind) not in found}
 
 
-def sync_plots(basis_volume_dir: str | Path, target: str | Path) -> dict[str, int]:
+def sync_plots(basis_volume_dir: str | Path, target: str | Path, kinds=None, stems=None) -> dict[str, int]:
     """Mirror :func:`latest_plots` into ``target``: one PNG per model and kind.
 
     A file whose bytes did not change is left alone (no churn in git); a PNG in
-    ``target`` that no run folder has any more is removed. Returns the counts.
+    ``target`` that no run folder has any more is removed. Only the ``kinds`` synced
+    are touched: leaving a kind out keeps its files as they are. ``stems`` (a set of
+    ``<series_name>_<model_type>``, ``model_plots.stems_in_use``) exports only those
+    models and removes the figures of the others. Returns the counts.
     """
+    kinds = _check_kinds(kinds)
     target = Path(target)
     target.mkdir(parents=True, exist_ok=True)
     wanted = {f"{series}_{kind}.png": source
-              for (series, kind), source in latest_plots(basis_volume_dir).items()}
+              for (series, kind), source in latest_plots(basis_volume_dir, kinds).items()
+              if stems is None or series in stems}
     counts = {"copied": 0, "unchanged": 0, "removed": 0}
     for name, source in sorted(wanted.items()):
         dest = target / name
@@ -146,7 +193,7 @@ def sync_plots(basis_volume_dir: str | Path, target: str | Path) -> dict[str, in
         shutil.copyfile(source, dest)
         counts["copied"] += 1
     for stale in target.glob("*.png"):
-        if stale.name not in wanted:
+        if stale.name not in wanted and stale.name.endswith(tuple(f"_{k}.png" for k in kinds)):
             stale.unlink()
             counts["removed"] += 1
     return counts
@@ -169,11 +216,15 @@ def read_family_choice(path: str | Path) -> pd.DataFrame:
 
 
 def set_family_choice(choice: pd.DataFrame, *, meetreeks_id: str, series_name: str, model_type: str,
-                      tail: str, family: str | None, note: str = "", chosen_by: str = "",
-                      chosen_at: str = "") -> pd.DataFrame:
-    """One pick per (meetreeks_id, model_type, tail); ``family=None`` removes it (back to automatic)."""
-    if family is not None and family not in FAMILIES:
-        raise ValueError(f"family must be one of {FAMILIES}, got {family!r}")
+                      tail: str, family: str | None, n_kept: int | None = None, note: str = "",
+                      chosen_by: str = "", chosen_at: str = "") -> pd.DataFrame:
+    """One pick per (meetreeks_id, model_type, tail); ``family=None`` removes it (no family).
+
+    ``n_kept`` is the threshold: the number of pooled years above it (blank = the
+    default threshold of the extremes run).
+    """
+    if family is not None and family not in PICKABLE:
+        raise ValueError(f"family must be one of {PICKABLE}, got {family!r}")
     if tail not in TAIL_LABELS:
         raise ValueError(f"tail must be one of {tuple(TAIL_LABELS)}, got {tail!r}")
     same = ((choice["meetreeks_id"] == meetreeks_id) & (choice["model_type"] == model_type)
@@ -182,7 +233,8 @@ def set_family_choice(choice: pd.DataFrame, *, meetreeks_id: str, series_name: s
     if family is not None:
         out = pd.concat([out, pd.DataFrame([{
             "meetreeks_id": meetreeks_id, "series_name": series_name, "model_type": model_type,
-            "tail": tail, "family": family, "note": note, "chosen_by": chosen_by, "chosen_at": chosen_at,
+            "tail": tail, "family": family, "n_kept": "" if n_kept is None else str(int(n_kept)),
+            "note": note, "chosen_by": chosen_by, "chosen_at": chosen_at,
         }])], ignore_index=True)
     return out.sort_values(["meetreeks_id", "model_type", "tail"]).reset_index(drop=True)[FAMILY_CHOICE_COLUMNS]
 
@@ -195,26 +247,30 @@ def write_family_choice(path: str | Path, choice: pd.DataFrame) -> None:
     tmp.replace(path)
 
 
-def effective_family(selection: pd.DataFrame, choice: pd.DataFrame) -> pd.DataFrame:
-    """Per (meetreeks_id, model_type, tail): the family that applies and where it came from.
+def chosen_levels(levels: pd.DataFrame, choice: pd.DataFrame,
+                  empirical_max_t: int = EMPIRICAL_MAX_T) -> pd.DataFrame:
+    """The return levels that apply per tail, for the tails a person picked a family for.
 
-    ``selection`` is ``<prefix>_evt_selection`` (latest run), ``choice`` the picks. A pick
-    wins; otherwise the automatic ``chosen_family``, which is empty for a tail the
-    selection could not fit (degenerate, insufficient), so that tail has no family.
+    Up to ``empirical_max_t`` the empirical level (``emp``): with ~704 pooled years no
+    distribution is needed there. Past it the picked family (``gpd`` / ``exp``) at the
+    picked threshold (``n_kept``; blank = the default one). ``bron`` says which. A tail
+    without a pick, or with a family that cannot be picked any more (``gev``), has none.
     """
     keys = ["meetreeks_id", "model_type", "tail"]
-    auto = selection[[*keys, "chosen_family", "verdict"]].rename(columns={"chosen_family": "auto_family"})
-    picks = choice[[*keys, "family"]].rename(columns={"family": "picked"})
-    out = auto.merge(picks, on=keys, how="outer")
-    picked = out["picked"].notna() & (out["picked"] != "")
-    out["family"] = out["picked"].where(picked, out["auto_family"])
-    out["family_source"] = pd.Series(AUTOMATISCH, index=out.index).where(~picked, GEKOZEN)
-    out.loc[out["family"].isna() | (out["family"] == ""), "family_source"] = None
-    return out[[*keys, "family", "family_source", "auto_family", "verdict"]]
-
-
-def chosen_levels(levels: pd.DataFrame, selection: pd.DataFrame, choice: pd.DataFrame) -> pd.DataFrame:
-    """The return levels of the family that applies per tail (``effective_family``)."""
-    fam = effective_family(selection, choice).dropna(subset=["family"])
-    keys = ["meetreeks_id", "model_type", "tail", "family"]
-    return levels.merge(fam[[*keys, "family_source"]], on=keys, how="inner")
+    extra = ["picked_family", "picked_kept", "bron"]
+    picks = choice[choice["family"].fillna("").astype(str).isin(PICKABLE)]
+    picks = picks.drop_duplicates(keys, keep="last")[[*keys, "family", "n_kept"]].rename(
+        columns={"family": "picked_family", "n_kept": "picked_kept"})
+    if picks.empty or levels.empty:
+        return pd.DataFrame(columns=[*levels.columns, *extra])
+    merged = levels.merge(picks, on=keys, how="inner")
+    period = pd.to_numeric(merged["return_period"])
+    emp = merged[(merged["family"] == "emp") & (period <= empirical_max_t)].assign(bron=EMPIRISCH)
+    fam = merged[(merged["family"] == merged["picked_family"]) & (period > empirical_max_t)]
+    if "n_kept" in fam:
+        wanted = pd.to_numeric(fam["picked_kept"], errors="coerce")
+        default = (fam["default_kept"].astype(str).str.lower().eq("true") if "default_kept" in fam
+                   else pd.Series(True, index=fam.index))
+        fam = fam[(wanted.isna() & default) | (pd.to_numeric(fam["n_kept"], errors="coerce") == wanted)]
+    fam = fam.assign(bron=FAMILIE)
+    return pd.concat([emp, fam], ignore_index=True)
