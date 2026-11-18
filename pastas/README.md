@@ -153,6 +153,8 @@ All in `waterkeringbeheer_prd.jvanruitenbeek`, once per basis: `<prefix>` = `unv
 
 Every run appends with its own `run_id`, so old runs stay. Readers take the latest run per series and model type (`tarso_pipeline.results.latest_run_sql`).
 
+A rerun of only some model types (`model_types=tarso`) therefore mixes runs within one series: Tarso from the new run, the Linear models from the old one. The pick in `model_selection` is made per `run_extremes` run over whatever is latest, so rerun `run_extremes` after such a partial fit, or fit all model types together.
+
 | table / view | written by | one row per | holds |
 |---|---|---|---|
 | `<prefix>_series_manifest` | `build_manifest` | series | the work list: series spanning ≥ 365 days, span, count, duplicate timestamps (overwritten) |
@@ -199,6 +201,7 @@ As one job:
 
 Settings:
 - **Same parameters:** give every task the same `data_basis` and `run_folder`. The run folder defaults to today's date, so a job that crosses midnight would otherwise split.
+- **Saving and resuming:** the fit writes its results every `write_every` series (default 25). If a run stops, rerun it with the same `run_id` and `run_folder`; series that already have rows for that run are skipped. `<prefix>_simulations` keeps the newest `keep_simulation_runs` (3) runs per series and model type.
 - **First run:** run the fit with `limit_series=1` first. The `WRITE VOLUME` grant is separate from the table grant, and the notebook probes it with a throwaway file before fitting.
 - **Widgets:** `model_types` (comma-separated), `noise` (`none`/`ar1`/`arma`) and `holdout` (default 0.3) are widgets on the fit notebook.
 - **Figures:** only the models in use get figures. The fit draws none (`save_plots=false`); `run_extremes` (`make_plots=in_use`) draws them after the pick, and `export_results` (`plot_models=in_use`) copies only those to git.
