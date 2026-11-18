@@ -75,6 +75,13 @@
 # MAGIC manifest reports before launching an uncapped run. The Linear models take about a
 # MAGIC second each; Tarso and `linear_fourparam` a few. `model_types=tarso` alone is the old run.
 # MAGIC
+# MAGIC Results are **written every `write_every` series** (default 25), not only at the
+# MAGIC end, so a crash loses at most one batch. To resume a run that stopped, rerun with the
+# MAGIC same `run_id` (and `run_folder`): series that already have rows for that run are
+# MAGIC skipped. `keep_simulation_runs` (default 3) keeps the daily simulations of the newest
+# MAGIC three runs per series and model type: readers use the latest run anyway, and the table
+# MAGIC would otherwise grow by every day of every fit of every run.
+# MAGIC
 # MAGIC ### Forcing units
 # MAGIC
 # MAGIC KNMI publishes millimetres; Pastas is given **metres per day**
@@ -146,6 +153,8 @@ dbutils.widgets.text("run_id", "", "Run id (blank = UTC timestamp)")
 dbutils.widgets.dropdown("write_metrics", "true", ["true", "false"], "Write metrics?")
 dbutils.widgets.dropdown("save_plots", "false", ["true", "false"],
                          "Fit plots for every model? (false: run_extremes draws the models in use)")
+dbutils.widgets.text("write_every", "25", "Write results every N series (0 = only at the end)")
+dbutils.widgets.text("keep_simulation_runs", "3", "Runs kept in <prefix>_simulations (0 = all)")
 
 # COMMAND ----------
 
@@ -240,6 +249,8 @@ MIN_OBS = int(dbutils.widgets.get("min_obs"))
 MIN_DAYS = int(dbutils.widgets.get("min_days"))
 WRITE_METRICS = dbutils.widgets.get("write_metrics") == "true"
 SAVE_PLOTS = dbutils.widgets.get("save_plots") == "true"
+WRITE_EVERY = int(dbutils.widgets.get("write_every") or 0)
+KEEP_SIMULATION_RUNS = int(dbutils.widgets.get("keep_simulation_runs") or 0)
 RUN_ID = (
     dbutils.widgets.get("run_id").strip()
     or datetime.now(timezone.utc).strftime("%Y%m%dT%H%M%SZ")
@@ -352,10 +363,43 @@ display(work)
 
 # COMMAND ----------
 
-rows = []
-check_rows = []
-simulation_frames = []
+# A rerun with the same run_id resumes: series that already have rows for it are skipped.
+done = set()
+if WRITE_METRICS and spark.catalog.tableExists(METRICS):
+    done = {r.meetreeks_id for r in spark.sql(
+        f"SELECT DISTINCT meetreeks_id FROM {METRICS} WHERE run_id = '{RUN_ID}'").collect()}
+if done:
+    print(f"resuming run {RUN_ID}: {len(done)} series already written, skipped")
+
+
+def write_batch(batch_rows, batch_checks, batch_simulations):
+    """Append one batch of fits to the three tables (same run_id): a crash loses one batch."""
+    if not WRITE_METRICS or not batch_rows:
+        return
+    spark.createDataFrame(rows_to_frame(batch_rows), schema=spark_schema()).write.format("delta").mode(
+        "append").option("mergeSchema", "true").saveAsTable(METRICS)
+    if batch_checks:
+        spark.createDataFrame(check_rows_to_frame(batch_checks), schema=checks_spark_schema()).write.format(
+            "delta").mode("append").option("mergeSchema", "true").saveAsTable(CHECKS)
+    if batch_simulations:
+        simulations = pd.concat(batch_simulations, ignore_index=True)[SIMULATION_COLUMNS]
+        (spark.createDataFrame(simulations.astype(object).where(pd.notna(simulations), None))
+         .withColumn("datum", F.to_date("datum"))
+         .withColumn("observed", F.col("observed").cast("double"))
+         .withColumn("simulated", F.col("simulated").cast("double"))
+         .write.format("delta").mode("append").option("mergeSchema", "true")
+         .saveAsTable(SIMULATIONS))
+    print(f"   -> wrote {len(batch_rows)} fits, {len(batch_checks)} checks, "
+          f"{sum(len(f) for f in batch_simulations):,} simulated days (run {RUN_ID})")
+
+
+rows = []          # every fit of this session, for the summaries below
+check_rows = []    # likewise; fit_series appends to it
+pending_rows, pending_checks, simulation_frames = [], [], []  # not written yet
+fitted_series = 0
 for item in work.itertuples():
+    if item.meetreeks_id in done:
+        continue
     raw = spark.sql(series_rows_sql(SOURCE, item.meetreeks_id)).toPandas()
     # The hash is the only name available; shortened for readable folders, with
     # the full meetreeks_id kept on the row.
@@ -370,6 +414,7 @@ for item in work.itertuples():
         coverage = check_coverage(precipitation, head_probe, warmup_days=WARMUP_DAYS)
         print(f"   {coverage.describe()}")
 
+    checks_before = len(check_rows)
     for model_type in MODEL_TYPES:
         row = fit_series(
             meetreeks_id=item.meetreeks_id,
@@ -395,6 +440,7 @@ for item in work.itertuples():
             simulation_frames=simulation_frames,
         )
         rows.append(row)
+        pending_rows.append(row)
         if row["success"]:
             holdout_text = "" if row.get("r2_holdout") is None else f"  R2 holdout={row['r2_holdout']:.3f}"
             print(f"   {model_type:9} OK   EVP={row['evp']:.1f}%  R2={row['r2']:.3f}{holdout_text}  "
@@ -414,6 +460,14 @@ for item in work.itertuples():
         else:
             print(f"   {model_type:9} FAIL {row['error_message']}")
 
+    pending_checks.extend(check_rows[checks_before:])
+    fitted_series += 1
+    if WRITE_EVERY and fitted_series % WRITE_EVERY == 0:
+        write_batch(pending_rows, pending_checks, simulation_frames)
+        pending_rows, pending_checks, simulation_frames = [], [], []
+
+write_batch(pending_rows, pending_checks, simulation_frames)  # the last, partial batch
+pending_rows, pending_checks, simulation_frames = [], [], []
 results = rows_to_frame(rows)
 print(f"\n{int(results['success'].sum())} of {len(results)} fits succeeded")
 
@@ -433,7 +487,10 @@ display(
 # MAGIC ## Model checks
 # MAGIC
 # MAGIC Brakenhoff et al. (2022) via `ps.check.checklist`: one row per check per fit
-# MAGIC in `<prefix>_model_checks`. A fit passes only when **every** check passes; a
+# MAGIC in `<prefix>_model_checks`. The table below counts every check, the runs test
+# MAGIC included. The stamp `passed` that the model pick uses (`run_extremes` ->
+# MAGIC `<prefix>_model_selection`, `tarso_pipeline.selection`) needs R2, response memory, gain
+# MAGIC and parameter bounds only: without a noise model the runs test fails everywhere. A
 # MAGIC check that could not be evaluated (`passed` NULL) counts as not passed.
 
 # COMMAND ----------
@@ -458,37 +515,32 @@ else:
 # MAGIC %md
 # MAGIC ## Persist
 # MAGIC
-# MAGIC Append with a distinct `run_id`, so fits accumulate and runs stay comparable.
+# MAGIC The fits were appended per batch with a distinct `run_id`, so fits accumulate and runs
+# MAGIC stay comparable. Here: the summary, and old simulation runs pruned.
 
 # COMMAND ----------
 
 if not WRITE_METRICS:
     print("write_metrics=false; nothing written")
 elif results.empty:
-    print("no rows to write")
+    print("no new rows (every series of this run was written already, or nothing to fit)")
 else:
-    spark.createDataFrame(results, schema=spark_schema()).write.format("delta").mode(
-        "append"
-    ).option("mergeSchema", "true").saveAsTable(METRICS)
-    print(f"appended {len(results)} rows to {METRICS} as run {RUN_ID}")
-
-    if checks.empty:
-        print(f"no check rows; nothing written to {CHECKS}")
-    else:
-        spark.createDataFrame(checks, schema=checks_spark_schema()).write.format(
-            "delta"
-        ).mode("append").option("mergeSchema", "true").saveAsTable(CHECKS)
-        print(f"appended {len(checks)} rows to {CHECKS} as run {RUN_ID}")
-
-    if simulation_frames:
-        simulations = pd.concat(simulation_frames, ignore_index=True)[SIMULATION_COLUMNS]
-        (spark.createDataFrame(simulations.astype(object).where(pd.notna(simulations), None))
-         .withColumn("datum", F.to_date("datum"))
-         .withColumn("observed", F.col("observed").cast("double"))
-         .withColumn("simulated", F.col("simulated").cast("double"))
-         .write.format("delta").mode("append").option("mergeSchema", "true")
-         .saveAsTable(SIMULATIONS))
-        print(f"appended {len(simulations)} daily rows to {SIMULATIONS} as run {RUN_ID}")
+    print(f"{len(results)} fits of run {RUN_ID} written to {METRICS}, "
+          f"{len(checks)} check rows to {CHECKS}, simulations to {SIMULATIONS}")
+    if KEEP_SIMULATION_RUNS and spark.catalog.tableExists(SIMULATIONS):
+        # Per series and model type, not per run: a capped test run (limit_series=1) must
+        # not remove the simulations of every other series.
+        spark.sql(f"""
+            MERGE INTO {SIMULATIONS} t
+            USING (SELECT meetreeks_id, model_type, run_id FROM (
+                       SELECT meetreeks_id, model_type, run_id,
+                              dense_rank() OVER (PARTITION BY meetreeks_id, model_type
+                                                 ORDER BY run_id DESC) AS rang
+                       FROM (SELECT DISTINCT meetreeks_id, model_type, run_id FROM {SIMULATIONS}))
+                   WHERE rang > {KEEP_SIMULATION_RUNS}) o
+            ON t.meetreeks_id = o.meetreeks_id AND t.model_type = o.model_type AND t.run_id = o.run_id
+            WHEN MATCHED THEN DELETE""")
+        print(f"{SIMULATIONS}: kept the newest {KEEP_SIMULATION_RUNS} run(s) per series and model type")
 
     display(
         spark.table(METRICS)
