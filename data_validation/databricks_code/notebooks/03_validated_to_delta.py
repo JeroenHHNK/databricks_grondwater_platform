@@ -143,14 +143,22 @@ for p, why in skipped[:20]:
 # Write validated_meting: the source's column names first, then the provenance.
 from pyspark.sql import functions as F  # noqa: E402
 
-if not frames:
-    dbutils.notebook.exit("0")
-validated = pd.concat(frames, ignore_index=True)
+COLUMNS = ["meetreeks_id", "tijdstempel_utc", "waarde", "validatie_status", "waarde_ruw", "correctie",
+           "note", "vendor", "filename"]
+if not frames and WRITE_MODE != "overwrite":
+    dbutils.notebook.exit("0")  # appending nothing changes nothing
+# With overwrite, no approved hour means an empty table: the previous run's rows must not stay.
+validated = (pd.concat(frames, ignore_index=True) if frames
+             else pd.DataFrame({c: pd.Series(dtype="object") for c in COLUMNS}))
 validated["run_id"] = RUN_ID
 print(f"{len(validated):,} approved hours in {validated['meetreeks_id'].nunique()} series, "
       f"{int((validated['correctie'] != 0).sum()):,} of them corrected")
 
-sdf = (spark.createDataFrame(validated)
+# Only for the empty table: without rows Spark cannot infer the types.
+SCHEMA = ("meetreeks_id string, tijdstempel_utc timestamp, waarde double, validatie_status int, "
+          "waarde_ruw double, correctie double, note string, vendor string, filename string, run_id string")
+sdf = (spark.createDataFrame(validated) if frames else spark.createDataFrame([], schema=SCHEMA))
+sdf = (sdf
        .withColumn("tijdstempel_utc", F.col("tijdstempel_utc").cast("timestamp"))
        .withColumn("tijdstempel", F.from_utc_timestamp("tijdstempel_utc", "Europe/Amsterdam"))
        .withColumn("validatie_status", F.col("validatie_status").cast("int"))
