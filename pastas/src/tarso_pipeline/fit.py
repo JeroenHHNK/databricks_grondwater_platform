@@ -156,14 +156,19 @@ def holdout_r2(model_type: str, series_name: str, head: pd.Series, precipitation
 
     The simulation runs on over the held-out part with the forcing only, as it would
     for the IMPREX members. None when the held-out part is too short or flat.
+
+    The model is built on the training part only: Tarso takes its drainage-level range
+    (``dmin``/``dmax``) from the head it is given, and the full series would hand it the
+    extremes of the part it is scored on.
     """
     if not 0 < holdout < 1:
         return None
     split = head.index[int(len(head) * (1 - holdout))]
+    earlier = head[head.index <= split]
     later = head[head.index > split]
     if len(later) < 10:
         return None
-    model = build_model(model_type, series_name, head, precipitation, evaporation, noise=noise)
+    model = build_model(model_type, series_name, earlier, precipitation, evaporation, noise=noise)
     model.solve(tmin=tmin, tmax=split.strftime("%Y-%m-%d"), report=False)
     observed, simulated = later.align(model.simulate(tmin=head.index[0], tmax=head.index[-1]), join="inner")
     spread = float(((observed - observed.mean()) ** 2).sum())

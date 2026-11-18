@@ -223,3 +223,31 @@ def test_the_ensemble_drives_every_model_type(tmp_path):
         model.to_file(str(path))
         result = simulate_member(ps.io.load(str(path)), p / 1000, e / 1000, warmup_years=1)
         assert result.head.notna().all() and len(result.head) > 300
+
+
+def test_holdout_model_never_sees_the_held_out_heads(monkeypatch):
+    """Tarso's dmin/dmax come from the head it is built on, so that must be the training part."""
+    import numpy as np
+    import pandas as pd
+
+    from tarso_pipeline import fit
+
+    index = pd.date_range("2022-01-01", periods=100, freq="D")
+    head = pd.Series(np.linspace(-2.0, -1.0, 100), index=index)
+    head.iloc[-1] = 5.0  # an extreme in the held-out part
+    seen = {}
+
+    class Fake:
+        def solve(self, **_):
+            pass
+
+        def simulate(self, tmin, tmax):
+            return pd.Series(-1.5, index=pd.date_range(tmin, tmax, freq="D"))
+
+    def fake_build(model_type, series_name, built_on, *args, **kwargs):
+        seen["head"] = built_on
+        return Fake()
+
+    monkeypatch.setattr(fit, "build_model", fake_build)
+    fit.holdout_r2("tarso", "s", head, head, head, "2022-01-01", 0.3)
+    assert seen["head"].index.max() <= index[-30] and seen["head"].max() < 0
