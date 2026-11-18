@@ -9,6 +9,8 @@ all three projects.
 | [`boxplots/`](boxplots/README.md) | Boxplots peilbuizen | Cross-sections with soil build-up, wells and heads; the **Boxplots** section of the app, and its notebooks | `JeroenHHNK/databricks_boxplots-pipeline` (`development`) |
 | [`data_validation/`](data_validation/README.md) | Groundwater data validation | Source copy → automated checks → manual review; the **Data validation** section of the app, and its Databricks job | `JeroenHHNK/databricks_data_validation` (`main`) |
 | [`pastas/`](pastas/README.md) | Pastas/Tarso pipeline | Model fits and extremes on validated or unvalidated data, Databricks notebooks; the **Pastas** section of the app reads their results | `JeroenHHNK/databricks_pastas_pipeline` (`main`) |
+| [`monitoring/`](monitoring/README.md) | Monitoring | The daily job that writes the `monitoring_*` tables, and the generator of the `Grondwater_Monitoring` dashboard | new |
+| [`databricks_dashboard/`](databricks_dashboard/README.md) | Dashboards | The Databricks AI/BI dashboards (`.lvdash.json`): what each one monitors and with which data | new |
 
 Each project came in with its full git history (`git log -- boxplots/` shows it) and keeps
 its own `pyproject.toml`, `docs/`, notebooks, tests and data. Every project finds its

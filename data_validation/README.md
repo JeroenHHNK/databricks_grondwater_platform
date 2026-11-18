@@ -1,139 +1,172 @@
-# Groundwater data validation — Databricks ↔ git ↔ Streamlit
+# Groundwater data validation
 
-Replicate groundwater head measurements from the Databricks source, validate them
-locally (automated checks in a notebook, then manual review in Streamlit), and push the
-quality-checked result back as a Delta table — **without ever touching the source data**.
+This project:
+1. Copies the groundwater head measurements from the Databricks source.
+2. Validates them, first with automated checks and then by a person in a review app.
+3. Writes the approved hours back to Databricks as a Delta table, `validated_meting`.
+
+The Pastas models (`data_basis=validated`) and the monitoring dashboard read that table. **The source is never touched**: `gold_prd` is read-only, and everything we write goes to `waterkeringbeheer_prd.jvanruitenbeek`.
 
 ```
-gold_prd.hl_grondwaterpeilmeting (READ-ONLY)  +  gold_prd.hl_cs_objecten.meetlocatie
-   │  ① read + clean to hourly, match locations              databricks_code/notebooks/01
+gold_prd.hl_grondwaterpeilmeting (meting, meetreeks)  +  gold_prd.hl_cs_objecten.meetlocatie
+   │  ① RETRIEVE: read, clean to hourly, match locations        databricks_code/notebooks/01
    ▼
-waterkeringbeheer_prd.jvanruitenbeek.source_copy_*          ② immutable per-well Delta copy
-   │  ③ export CSVs into the Git folder                      databricks_code/notebooks/02
+waterkeringbeheer_prd.jvanruitenbeek.source_copy_meetreeks / source_copy_meting
+   │  ② export per-series CSVs into the Git folder               databricks_code/notebooks/02
    ▼
-GitHub ──pull──► local IDE  input_output/output_databricks/
-   ▲                │  ④a automated flags v1–v4 + rules A/B   local_validation/validate.ipynb
-   │                │  ④b Streamlit manual review (always overrides the automated flags)
-   │  push          ▼
-   └──── input_output/output_repository/  (reviewed copies, frozen store schema)
-   │  ⑤ pull into Databricks, build validated table          databricks_code/notebooks/03
+GitHub ──pull──► laptop: input_output/output_databricks/
+                   │  ③ VALIDATE: automated flags v1–v4, rules A/B     local_validation/validate.ipynb
+                   │  ④ REVIEW: a person approves / rejects / corrects  streamlit_app.py (or the central app)
+                   ▼
+GitHub ◄──push── input_output/output_repository/  (the review stores)
+   │  ⑤ BACK INTO THE WAREHOUSE: approved hours → Delta          databricks_code/notebooks/03
    ▼
-waterkeringbeheer_prd.jvanruitenbeek.validated_meting  → Pastas (data_basis=validated)
+waterkeringbeheer_prd.jvanruitenbeek.validated_meting  ──► Pastas, monitoring dashboard
 ```
 
-The design follows the Pipeline Handover §8. Constraints and grants are in
-[`docs/DATABRICKS_PERMISSIONS.md`](docs/DATABRICKS_PERMISSIONS.md); the source schema is in
-[`docs/DATABRICKS_HANDOFF.md`](docs/DATABRICKS_HANDOFF.md) §2.0 and the location registry in
-[`docs/DATABRICKS_layer_cs_objecten.md`](docs/DATABRICKS_layer_cs_objecten.md).
+## 1. How we retrieve the data
 
-## Three data layers, kept strictly apart
+**`01_source_to_personal`** (Databricks) reads the source and writes our own copy.
 
-| Layer | Folder | Git | Role | Written by |
-|---|---|---|---|---|
-| **1. Source copy** | `input_output/output_databricks/` | tracked | exact per-series copy of Databricks (`time_series_data/<filename>.csv` + `metadata/object_data.csv`) | the Databricks export **only** |
-| **2. Derived** | `output_data/validated/`, `output_data/validation_summary.csv` | ignored | automated flags v1–v4 / rules A,B per hour; disposable | `local_validation/validate.ipynb` |
-| **3. Validation store** | `input_output/output_repository/<filename>.csv` | tracked | human review decisions, **the asset**; frozen schema `timestamp,raw_data,gecontroleerd,afgekeurd,note` plus `correctie` (m, manual offset) | review app + autoflag, merge-only |
+- **What it reads:**
+  - `meetreeks`: one row per sensor series, with code, supplier (`bronsysteem`), filter depths and top of well;
+  - `meting`: the raw measurements, about 55 per day per series;
+  - `hl_cs_objecten.meetlocatie`: the location registry, with coordinates, name and compartment.
+- **Location match:** each series is linked to its `meetlocatie` with four keys, tried in order; the first that hits wins (`source_read.CS_MATCH_KEYS`):
+  1. `meetlocatie_object_id = l.id`;
+  2. `meetlocatie_code = l.code`;
+  3. `trim(code) = l.code`;
+  4. `object_id = l.id`.
 
-A new export overwrites layer 1, layer 2 is rebuilt, and layer 3 is **merged into, never
-replaced**: reviewed rows keep their value, verdict and note; new hours arrive unreviewed.
-Every write goes through `data_io.assert_writable()`, which refuses any path inside layer 1.
-Source and store join 1:1 on the filename stem; never rename one without the other.
+  It is a LEFT join, so unmatched series stay in, with `matched = 'no match found in cs_objecten'`. The key that hit is in `match_key`.
+- **Cleaning:** in Spark SQL, on the UTC timestamp `tijdstempel_utc`. Each value is floored to the hour, and the values within an hour are averaged. The local `tijdstempel` repeats an hour every October, so it is not used.
+- **What it writes:**
+  - `source_copy_meetreeks`: every `meetreeks` column plus the match;
+  - `source_copy_meting`: hourly `meetreeks_id, vendor, timestamp, head`.
 
-## Repository layout
+**`02_export_to_git`** (Databricks) turns that copy into files in the Git folder:
 
-| Path | What |
-|---|---|
-| `databricks_code/` | Databricks notebooks + `lib/` + job config: copy and export only |
-| `local_validation/` | `validate.ipynb`; `checks.py` (v1–v4, rules A/B), `data_io.py` (layers + paths), `stores.py` (open / merge / sync / save the store), `validation_store.py` (the frozen store contract, ported from on-prem) |
-| `streamlit_app.py`, `review_app/` | The review dashboard: Map (landing), Review, Overview |
-| `config/settings.yaml` | Paths, thresholds, autoflag switches, `notes_max_len` |
-| `tests/` | `python -m pytest tests`: checks, merge contract, layer guard, store sync, RD conversion |
-| `input_output/knmi_berkhout.csv` | Hourly KNMI forcing, Berkhout (249), from 2020: `precipitation_mm`, `makkink_mm`. Rebuilt by `local_validation/knmi_forcing.ipynb`; the review app's default overlay |
-| `data/forcing/` | Extra KNMI forcing CSVs for the plot overlay (`precipitation_mm`, `makkink_mm`) |
+```
+input_output/output_databricks/time_series_data/<filename>.csv   Time,head: the hourly copy per series
+input_output/output_databricks/metadata/object_data.csv          one row per series (join on filename)
+```
 
-## Validation
+`transport=write` (the default) only writes the files; you commit and push from the Git-folder UI. `transport=git` pushes with a PAT, and `transport=volume` copies to the volume for a laptop to fetch. See [`databricks_code/README.md`](databricks_code/README.md).
 
-Runs locally: open [`local_validation/validate.ipynb`](local_validation/validate.ipynb) and run
-all cells (~40 s for ~700 series); its last step folds a new export into the existing
-stores. The logic is in
-[`local_validation/checks.py`](local_validation/checks.py) (pure pandas, reusable by the
-Streamlit app); thresholds are in [`config/settings.yaml`](config/settings.yaml).
+`00_probe_env` checks the grants and whether a push would work before a real run.
 
-**Flag layers**, run in order. Each stores the original value of what it flags in its own
-column and sets `head` to NaN, so the next layer only sees what is left:
+## 2. How we validate it automatically
 
-| | Check | Default |
+**`local_validation/validate.ipynb`** runs locally on the export, in about 40 s for about 700 series. The logic is plain pandas in [`local_validation/checks.py`](local_validation/checks.py), and the thresholds are in [`config/settings.yaml`](config/settings.yaml). The monitoring job runs the same function (`validate_series`), so the dashboard counts exactly what the review app flags.
+
+### Flag layers
+
+The flag layers run in order on a continuous hourly grid, so a step is never measured across a gap. Each layer keeps the original value of what it flags in its own column and blanks it, so the next layer sees only what is left:
+
+| | check | default | why |
+|---|---|---|---|
+| `v1` | out of bounds: below the filter bottom or above the top of the well | `eind_filter` / `bovenkant_peilbuis` of the series | a head outside the tube cannot be measured there |
+| `v2` | unrealistic step between two hours | up > +0.30 m, down < −0.05 m | groundwater does not jump; a jump is a sensor moved or a logger reset |
+| `v3` | at the filter bottom: within 0.15 m of `eind_filter` | e.g. with `eind_filter` −4.10, −3.95 and −4.05 are flagged and −3.92 is not | the sensor is probably dry, hanging at its floor |
+| `v4` | statistical outlier (Tukey) | outside Q1 − 1.5·IQR … Q3 + 1.5·IQR of the series | spikes |
+
+### Autoflag rules
+
+These rules work on the raw value and act on the review store:
+
+| | rule | default |
 |---|---|---|
-| `v1` | Out of bounds: below the filter bottom or above the top of the well | `eind_filter` / `bovenkant_peilbuis` per series |
-| `v2` | Unrealistic step change between two hours | up > +0.30 m, down < −0.05 m |
-| `v3` | At the filter bottom: within 0.15 m of `eind_filter` | e.g. `eind_filter` −4.10: −3.95 and −4.05 flagged, −3.92 not |
-| `v4` | Statistical outlier (Tukey / IQR) | outside Q1 − 1.5·IQR .. Q3 + 1.5·IQR |
+| `rule_a` | drop ≥ 0.10 m in one hourly step | **report-only**: it disagreed with human reviewers on most hits |
+| `rule_b` | value ≤ filter bottom + 0.10 m | **applied**: the hour is set to rejected (`afgekeurd = 1`) with note `auto: rule B`, awaiting a reviewer's confirmation |
 
-**Autoflag rules**, on the raw value (they act on the review store):
+An automated rule never touches an hour a person has reviewed (`apply_autoflags`).
 
-| | Rule | Default |
+### The three data layers
+
+| layer | folder | git | role |
+|---|---|---|---|
+| 1. source copy | `input_output/output_databricks/` | tracked | the exact export; written by Databricks **only** |
+| 2. derived | `output_data/validated/`, `output_data/validation_summary.csv` | ignored | flags per hour; disposable, rebuilt each run |
+| 3. review store | `input_output/output_repository/<filename>.csv` | tracked | **the asset**: the person's decisions. Columns `timestamp, raw_data, gecontroleerd, afgekeurd, note, correctie` |
+
+- **New exports:** a new export overwrites layer 1, and layer 2 is rebuilt. Layer 3 is **merged into, never replaced**: reviewed hours keep their verdict and note, and new hours arrive unreviewed.
+- **Guard:** every write goes through `data_io.assert_writable()`, which refuses any path inside layer 1.
+- **Naming:** the source copy and the store join on the filename stem, so never rename one without the other.
+
+## 3. Manual review
+
+The review app is in the central app under *Data validation*, or standalone with `streamlit run streamlit_app.py`:
+
+- **Map:** every series with a position, coloured by supplier or by review progress; click a well to open its series.
+- **Review:**
+  - Opening a series merges the latest export into its store and applies rule B.
+  - The plot colours every hour by status: gray unreviewed, green approved, red rejected, pink auto-rejected awaiting confirmation. It shows the flags as markers, plus the filter bottom with the v3 band and the top of the well.
+  - In the table, tick *gecontroleerd* (reviewed) or *afgekeurd* (rejected) per hour, or approve/reject everything visible. Notes are at most 30 characters.
+  - **Save** writes the store atomically.
+- **Correction:** one offset in metres for every hour in a period, e.g. +0.10 m for the months a sensor hung lower after maintenance.
+  - It is stored per hour in `correctie`; `raw_data` is never changed.
+  - Applying again replaces the offset; it does not add to it.
+  - The flags still run on the raw values.
+- **Data sources:** per series, which fields come from the API (blue) and which from `hl_cs_objecten` (green). An empty green cell is a link still to make.
+- **Overview:** progress per supplier and per series.
+
+Saving is off in the deployed Databricks App (`VALIDATION_READ_ONLY=1`), because an app's files are not kept. Review locally, then commit and push `input_output/output_repository/`.
+
+## 4. How it is pushed into the warehouse as a Delta table
+
+**`03_validated_to_delta`** (Databricks, after you pull the pushed review) builds `validated_meting`:
+
+1. It reads every store in `input_output/output_repository/` and finds its `meetreeks_id` through `object_data.csv`. An older nested layout `<vendor>/<origin>/<series>.csv` is matched through `source_copy_meetreeks`.
+2. It keeps the **approved** hours: `gecontroleerd = 1` and `afgekeurd ≠ 1`. Unreviewed and rejected hours are left out.
+3. It writes them **in the shape of the source `meting`**, so a reader only has to change the table name:
+
+| column | as in `meting` | value |
 |---|---|---|
-| `rule_a` | Drop ≥ 0.10 m in one hourly step (contiguous hours) | report-only |
-| `rule_b` | Value ≤ filter bottom + 0.10 m | applied: `afgekeurd = 1` |
+| `meetreeks_id` | yes | the series key |
+| `tijdstempel_utc` | yes | the hour, UTC (the store's key) |
+| `tijdstempel` | yes | the same hour, Europe/Amsterdam wall clock |
+| `waarde` | yes | the **validated** head = `raw_data + correctie`, m NAP |
+| `validatie_status` | yes | `2` (*Valide*) |
+| `waarde_ruw`, `correctie` | no | the hourly source value and the offset |
+| `note`, `vendor`, `filename`, `run_id`, `validated_at` | no | provenance |
 
-**Manual review** in Streamlit marks each point `gecontroleerd` (reviewed) or `afgekeurd`
-(rejected). It always overrides the automated rules; `apply_autoflags()` never touches a row
-a human has reviewed.
+The table is **overwritten** each run, because the stores already hold the complete current picture. It is partitioned by `vendor`, and earlier versions stay readable with Delta time travel (`VERSION AS OF`). The values are hourly means, not the source's raw ~55 rows a day.
 
-## The review dashboard
+## Run order
+
+| step | where | what |
+|---|---|---|
+| ① copy | Databricks | `00` → `01` → `02`, then commit and push the export from the Git-folder UI |
+| ② validate | laptop | `git pull`, run `local_validation/validate.ipynb` |
+| ③ review | laptop | review app, **Save**, then commit and push `input_output/output_repository/` |
+| ④ load | Databricks | pull, run `03_validated_to_delta` |
+| ⑤ use | Databricks | the Pastas notebooks with `data_basis=validated`; the monitoring job the next morning |
 
 ```bash
--m streamlit run streamlit_app.py --server.port 8502
-```
-
-- **Map** (landing page): every series with location metadata on a PDOK or OpenStreetMap
-  basemap, one marker per well (filters at the same spot are grouped), with each series'
-  `sensor_meetlocatie_sleutel` in the hover. Positions come from `rd_x`/`rd_y` (RD New)
-  converted to WGS84, which agrees with the stored `lon`/`lat` to within 0.4 m. Colour by
-  vendor or by review progress. Click or box-select markers to list their series, then open
-  one in Review. The series without a location are listed below the map.
-- **Review**: pick a series (filter by vendor, location, or search by name / sensor key /
-  code). Opening it merges the current source into its store and applies rule B. The plot
-  colours each hour by status (grey unreviewed, green reviewed, red rejected, pink
-  auto-rejected awaiting confirmation) and draws the automated checks as hint markers, plus
-  `eind_filter` with the v3 band and the top of the well. In the table below, tick
-  gecontroleerd / afgekeurd per hour (afgekeurd implies gecontroleerd; notes max 30
-  characters), or approve / reject / reset all visible rows. Filter it by status or by
-  check, or drag a box on the plot to limit it to a period. **Save** writes the store
-  atomically; switching series with unsaved edits asks you to save or discard first.
-- **Correction** (on the Review page): one offset in metres for every hour between a start and
-  an end, e.g. +0.10 m for the two months a sensor hung lower after maintenance. Drag a box on
-  the plot to fill in the period, set the offset and apply: one action, however many rows. It is
-  stored per hour in the store's `correctie` column; `raw_data` is never changed. The plot and
-  the table show the corrected head (the raw line stays visible, dotted, where a correction
-  applies), and `03_validated_to_delta` writes `raw_data + correctie`. Applying again replaces
-  the offset (it does not add); *Remove correction in period* sets it back to 0. Note the
-  automated checks (v1–v4, rules A/B) still run on the raw source values.
-- **Data sources**: per series, which fields come from the API (`hl_grondwaterpeilmeting`,
-  blue) and which from `hl_cs_objecten.meetlocatie` (green), with how many series are linked
-  and by which key. An empty green cell is what still has to be linked; filter on *Not linked*
-  for the work list.
-- **Overview**: progress per vendor (TOTAL recomputed from sums) and per series, with the
-  automated-check counts from the last notebook run.
-
-Not ported from on-prem: *Generate Data* (replaced by the Databricks export), *Sensor
-Stitching* (each Databricks series is already one `meetreeks`; this also sidesteps the
-on-prem issue of stitching writing into the source copy) and the return-period plots (Tarso
-repo).
-
-## Quickstart
-
-```bash
-# Databricks: add as a Git folder, run the job 00 -> 01 -> 02 (see databricks_code/README.md),
-# then commit & push input_output/output_databricks/ from the Git-folder UI
-git pull                            # local IDE gets input_output/output_databricks/
-python -m pytest tests              # validation logic tests
-jupyter lab local_validation/validate.ipynb   # automated flags + store sync
-streamlit run streamlit_app.py      # map + manual review -> input_output/output_repository/
+git pull
+python -m pytest tests                       # checks, merge contract, layer guard, store sync
+jupyter lab local_validation/validate.ipynb  # flags + store sync
+streamlit run streamlit_app.py               # review → input_output/output_repository/
 git add input_output/output_repository && git commit -m "review" && git push
-# Databricks: pull, run 03_validated_to_delta -> validated_meting (same columns as meting;
-#             waarde = raw + correction), then the Pastas notebooks with data_basis=validated
 ```
 
-See [`databricks_code/README.md`](databricks_code/README.md) for the full run order and the
-Volume fallback.
+Start with `limit_series=1` on `01` for a first run. Confirm the round trip, then set it to `0` (all series).
+
+## Layout
+
+| path | what |
+|---|---|
+| `databricks_code/notebooks/` | `00_probe_env`, `01_source_to_personal`, `02_export_to_git`, `03_validated_to_delta` |
+| `databricks_code/lib/` | `source_read.py` (SQL, cs match, cleaning, naming), `git_sync.py` (push, volume fallback) |
+| `databricks_code/jobs/workflow_config.json` | a job definition for `00 → 01 → 02` |
+| `local_validation/` | `validate.ipynb`, `checks.py` (v1–v4, rules A/B), `data_io.py` (layers, paths, guard), `stores.py` (open, merge, sync, save), `validation_store.py` (the frozen store contract), `knmi_forcing.ipynb` |
+| `streamlit_app.py`, `review_app/` | the review app: map, review, overview, data sources |
+| `config/settings.yaml` | paths, thresholds, autoflag switches, `notes_max_len` |
+| `input_output/knmi_berkhout.csv`, `data/forcing/` | hourly KNMI forcing for the rain overlay in the review plot |
+| `tests/` | `python -m pytest tests` |
+| `docs/` | Databricks background: source schema (`DATABRICKS_HANDOFF.md` §2.0), grants (`DATABRICKS_PERMISSIONS.md`), the location registry (`DATABRICKS_layer_cs_objecten.md`) |
+
+Not ported from on-prem:
+- *Generate Data*: replaced by the Databricks export.
+- *Sensor Stitching*: each Databricks series is already one `meetreeks`.
+- The return-period plots: these are now in the Pastas pipeline.

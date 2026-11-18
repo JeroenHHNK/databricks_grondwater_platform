@@ -7,6 +7,38 @@ onderhouden we zelf in `input_data/`. Waterveiligheid 2030, Pilaar 3 – Analyse
 
 Welke Databricks-tabellen en -kolommen we gebruiken, en hoe: [DATA_CATALOG.md](DATA_CATALOG.md).
 
+## Hoe het in elkaar zit
+
+Een dwarsprofiel in de app is een stapeling van vier lagen. Elke laag heeft
+een eigen bron:
+
+| laag | wat je ziet | bron | bestand / tabel |
+|---|---|---|---|
+| **grondopbouw** | de grondlagen onder de dijk | D-Stability-model | `input_data/D-Stability/<sleutel>.stix` (`stix_verwerker.py`) |
+| **dijkgeometrie** | het maaiveld langs het profiel | inmeting of DAM-invoer | `input_data/dwarsprofielen/<sleutel>.csv` (`x,y`) |
+| **peilbuizen** | elke filter op zijn plek en diepte, met bovenkant en filter | eigen inmeting of Databricks, gekoppeld aan een meetlocatie | `input_data/config.csv` (één rij per filter), `input_data/profielen.csv` (één rij per profiel) |
+| **stijghoogtes** | de gemeten stijghoogte per peilbuis, gemiddeld en over de tijd, plus de freatische lijn | Databricks `gold_prd.hl_grondwaterpeilmeting`, live of uit de export | `databricks_reeksen.py`, terugval `input_data/databricks_export/` |
+
+Daarbij komen:
+
+- **Randvoorwaarden:** neerslag en buitenwaterstand uit `input_data/tijdreeksen/`, en het boezempeil en het teenslootpeil uit `projecten.csv` / `profielen.csv`.
+- **Herhalingstijden:** van de Pastas-modellen van de peilbuizen (driehoek omhoog = nat, omlaag = droog; T=10 en 100). Ze komen uit de Pastas-pipeline, zie [`../pastas/README.md`](../pastas/README.md), en verschijnen alleen voor peilbuizen met een gekoppelde meetreeks en een Pastas-model.
+
+`modules/profiel.py` voegt de lagen samen; `analyse.py` en `plotten.py`
+tekenen de profielplot en de tijdreeks. `workbook_lader.py` leest de invoer en
+doet de invoercontrole; die controle draait in de app, in `maak_plots.py` en
+in `nieuw_dwarsprofiel.py` op dezelfde manier.
+
+### Welke data je nodig hebt (kort)
+
+| niveau | nodig | waar het vandaan komt |
+|---|---|---|
+| project | naam, buitenwaterstand, offset maatgevend boezempeil | zelf, in `projecten.csv` |
+| dwarsprofiel | stix, geometrie (`x,y`), profiellijn in RD (begin = x 0), teenslootpeil | D-Stability, inmeting/DAM, kaart, peilbesluit |
+| peilbuis | naam (put + filter), diepteniveau (`hoofd`/`A`/`B`) | meetplan; de rest (RD, filters, bovenkant, zone, koppeling) leiden de scripts af uit Databricks of je inmeting |
+
+De volledige tabel met eenheden staat hieronder bij [Wat je nodig hebt](#wat-je-nodig-hebt).
+
 ## Een nieuw dwarsprofiel toevoegen
 
 Kort: verzamel de [ingrediënten](#wat-je-nodig-hebt), laat
@@ -117,6 +149,26 @@ Dezelfde bestanden, zelf ingevuld:
    in hetzelfde profiel krijgen dezelfde sleutel met `LD_diepte_niveau` `A`
    of `B`. Bij een nieuw project eerst een rij in `projecten.csv`.
 4. Daarna stap 5 tot en met 8 van route 1.
+
+### Een bestaand dwarsprofiel bijwerken
+
+Wat er verandert, bepaalt de route. Na elke wijziging gelden dezelfde
+controles: draai `maak_plots.py --project <project> --strict`, bekijk het
+profiel in de app, en commit en push.
+
+| wat verandert | doe dit |
+|---|---|
+| **nieuwe stijghoogtes** (gewoon de tijd die verstrijkt) | niets, als live ophalen aan staat. Anders: in Databricks `db_notebook_exporteer_stijghoogtes` draaien, `input_data/databricks_export/` committen en pushen, en de app opnieuw deployen |
+| **peilbuis erbij of eraf** | een nieuwe put staat pas op het platform na `db_notebook_exporteer_meetreeksen` (Databricks, commit, push, lokaal pull). Draai dan `nieuw_dwarsprofiel.py` met de nieuwe lijst peilbuizen en `--vervang --schrijf`: dat herschrijft de rijen van het profiel en houdt de `DD_`-kolommen van de peilbuizen die er al stonden. Daarna `bouw_koppeltabel_ld_dd.py --vul-config`. Met de hand mag ook: een rij in `config.csv` toevoegen of verwijderen |
+| **nieuwe inmeting** (bovenkant, filters) | `nieuw_dwarsprofiel.py … --inmeting inmeting.csv --vervang --schrijf`, of de `LD_bk_peilbuis` / `LD_bk_filter` / `LD_ok_filter` in `config.csv` met de hand aanpassen |
+| **nieuw D-Stability-model** | vervang `D-Stability/<sleutel>.stix`. Klopt de x-oorsprong niet met de geometrie, dan meldt de controle een afwijking; zet `stix_offset_x` in `profielen.csv` |
+| **nieuwe dijkgeometrie** | vervang `dwarsprofielen/<sleutel>.csv` (`x,y`, x = 0 op het beginpunt van de profiellijn). Controleer of de x van de peilbuizen nog binnen de geometrie ligt |
+| **profiellijn of teenslootpeil** | pas de rij in `profielen.csv` aan. Vul bij oude profielen de profiellijn aan: dan controleert het script ook of de x van elke peilbuis klopt met zijn RD-ligging |
+| **koppeling met Databricks klopt niet** (verkeerde reeks) | zet `DD_meetlocatie_id`, en zo nodig `DD_meetreeks_id`, met de hand in `config.csv`, en leg de reden vast in `opmerking` in `profielen.csv` |
+| **sleutel hernoemen** | hernoem de stix en de geometrie, en pas `LD_cross_section_key` in `config.csv` en `cross_section_key` in `profielen.csv` aan. Links met `?profiel=<oude sleutel>` werken daarna niet meer |
+
+Verwijder je een profiel, haal dan de rijen uit `config.csv` en
+`profielen.csv` weg, samen met de stix en de geometrie.
 
 ### Regels
 
