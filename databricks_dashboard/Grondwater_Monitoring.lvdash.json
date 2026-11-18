@@ -175,8 +175,9 @@
       "name": "kw_schommeling",
       "displayName": "Kwaliteit: grootste schommelingen afgelopen week (top 30)",
       "queryLines": [
-        "SELECT reeks_label, leverancier, week_bereik_m, neerslag_7d_mm,\n",
-        "       CASE WHEN verdachte_schommeling THEN 'verdacht: weinig regen' ELSE 'mogelijk door regen' END AS oordeel\n",
+        "SELECT reeks_label, leverancier, week_bereik_m, neerslag_7d_mm, knmi_tot,\n",
+        "       CASE WHEN verdachte_schommeling IS NULL THEN 'geen actuele KNMI-data'\n",
+        "            WHEN verdachte_schommeling THEN 'verdacht: weinig regen' ELSE 'mogelijk door regen' END AS oordeel\n",
         "FROM waterkeringbeheer_prd.jvanruitenbeek.monitoring_change_recent WHERE week_bereik_m IS NOT NULL\n",
         "ORDER BY week_bereik_m DESC\n",
         "LIMIT 30\n"
@@ -400,6 +401,8 @@
     {
       "name": "inventaris",
       "displayName": "Data-inventarisatie & datastroom",
+      "pageType": "PAGE_TYPE_CANVAS",
+      "layoutVersion": "GRID_V1",
       "layout": [
         {
           "widget": {
@@ -1420,13 +1423,13 @@
             "height": 22
           }
         }
-      ],
-      "pageType": "PAGE_TYPE_CANVAS",
-      "layoutVersion": "GRID_V1"
+      ]
     },
     {
       "name": "kwaliteit",
       "displayName": "Meetinventarisatie & datakwaliteit",
+      "pageType": "PAGE_TYPE_CANVAS",
+      "layoutVersion": "GRID_V1",
       "layout": [
         {
           "widget": {
@@ -1696,20 +1699,20 @@
               }
             ],
             "spec": {
+              "version": 2,
+              "widgetType": "counter",
               "frame": {
                 "showTitle": true,
-                "showDescription": true,
                 "title": {
                   "value": "Neerslag afgelopen 7 dagen (mm)",
                   "fields": []
                 },
+                "showDescription": true,
                 "description": {
                   "value": "KNMI, het station van de Pastas-forcering",
                   "fields": []
                 }
               },
-              "version": 2,
-              "widgetType": "counter",
               "encodings": {
                 "value": {
                   "fieldName": "max(neerslag_7d_mm)",
@@ -1809,16 +1812,16 @@
                   "datasetName": "kw_flags",
                   "fields": [
                     {
-                      "name": "flag",
-                      "expression": "`flag`"
+                      "name": "reeks_label",
+                      "expression": "`reeks_label`"
                     },
                     {
                       "name": "uren",
                       "expression": "`uren`"
                     },
                     {
-                      "name": "reeks_label",
-                      "expression": "`reeks_label`"
+                      "name": "flag",
+                      "expression": "`flag`"
                     }
                   ],
                   "disaggregated": true
@@ -1826,6 +1829,8 @@
               }
             ],
             "spec": {
+              "version": 3,
+              "widgetType": "bar",
               "frame": {
                 "showTitle": true,
                 "title": {
@@ -1833,8 +1838,6 @@
                   "fields": []
                 }
               },
-              "version": 3,
-              "widgetType": "bar",
               "encodings": {
                 "x": {
                   "fieldName": "uren",
@@ -1951,16 +1954,16 @@
                   "datasetName": "kw_schommeling",
                   "fields": [
                     {
-                      "name": "oordeel",
-                      "expression": "`oordeel`"
+                      "name": "reeks_label",
+                      "expression": "`reeks_label`"
                     },
                     {
                       "name": "week_bereik_m",
                       "expression": "`week_bereik_m`"
                     },
                     {
-                      "name": "reeks_label",
-                      "expression": "`reeks_label`"
+                      "name": "oordeel",
+                      "expression": "`oordeel`"
                     }
                   ],
                   "disaggregated": true
@@ -1968,20 +1971,20 @@
               }
             ],
             "spec": {
+              "version": 3,
+              "widgetType": "bar",
               "frame": {
                 "showTitle": true,
-                "showDescription": true,
                 "title": {
                   "value": "Grootste schommelingen afgelopen week (m, top 30)",
                   "fields": []
                 },
+                "showDescription": true,
                 "description": {
                   "value": "Verdacht = bereik > 0,5 m terwijl er < 10 mm regen viel (instelbaar in de job)",
                   "fields": []
                 }
               },
-              "version": 3,
-              "widgetType": "bar",
               "encodings": {
                 "x": {
                   "fieldName": "week_bereik_m",
@@ -2010,6 +2013,10 @@
                       {
                         "value": "mogelijk door regen",
                         "color": "#1F77B4"
+                      },
+                      {
+                        "value": "geen actuele KNMI-data",
+                        "color": "#A0A0A0"
                       }
                     ]
                   }
@@ -2220,13 +2227,13 @@
             "height": 18
           }
         }
-      ],
-      "pageType": "PAGE_TYPE_CANVAS",
-      "layoutVersion": "GRID_V1"
+      ]
     },
     {
       "name": "reeks",
       "displayName": "Reeks-specifiek",
+      "pageType": "PAGE_TYPE_CANVAS",
+      "layoutVersion": "GRID_V1",
       "layout": [
         {
           "widget": {
@@ -2794,12 +2801,13 @@
             "height": 7
           }
         }
-      ],
-      "pageType": "PAGE_TYPE_CANVAS"
+      ]
     },
     {
       "name": "pastas",
       "displayName": "Pastas",
+      "pageType": "PAGE_TYPE_CANVAS",
+      "layoutVersion": "GRID_V1",
       "layout": [
         {
           "widget": {
@@ -3550,6 +3558,8 @@
               }
             ],
             "spec": {
+              "version": 2,
+              "widgetType": "table",
               "frame": {
                 "showTitle": true,
                 "title": {
@@ -3557,8 +3567,6 @@
                   "fields": []
                 }
               },
-              "version": 2,
-              "widgetType": "table",
               "encodings": {
                 "columns": [
                   {
@@ -3643,8 +3651,7 @@
             "height": 12
           }
         }
-      ],
-      "pageType": "PAGE_TYPE_CANVAS"
+      ]
     }
   ],
   "uiSettings": {

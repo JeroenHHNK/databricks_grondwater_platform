@@ -319,7 +319,7 @@ Bijgewerkt door de dagelijkse job `build_monitoring_tables` (tijden in UTC). Upt
                                              "uptime_30d", "uptime_90d", "haalt_doel_90d"],
               "Uptime per sensor (%), laagste eerst", (0, 33, 12, 8)),
         heatmap("h_14d", "uptime_14d", "dag", "sensor", "avg(uptime_pct)", "Aanlevering laatste 14 dagen (% uren)",
-                (0, 41, 12, 16)),
+                (0, 41, 12, 22)),
     ])
 
     p2 = Page("kwaliteit", "Meetinventarisatie & datakwaliteit", [
@@ -338,23 +338,23 @@ Flags zijn de checks van de validatie-app (`local_validation/checks.py`): v1 bui
         counter("c_regen", "kw_totalen", "max(neerslag_7d_mm)", "Neerslag afgelopen 7 dagen (mm)", (10, 3, 2, 3),
                 "KNMI, het station van de Pastas-forcering"),
         bar("b_gev", "kw_gevalideerd", "reeks_label", "gevalideerd_pct", "Aandeel gevalideerd per reeks (%)",
-            (0, 6, 6, 10), color="leverancier"),
-        bar("b_flags", "kw_flags", "reeks_label", "uren", f"Reeksen met de meeste flags (top {TOP})", (6, 6, 6, 10),
+            (0, 6, 6, 15), color="leverancier"),
+        bar("b_flags", "kw_flags", "reeks_label", "uren", f"Reeksen met de meeste flags (top {TOP})", (6, 6, 6, 15),
             color="flag"),
         bar("b_ongev", "kw_ongevalideerd", "reeks_label", "verdacht_ongevalideerd",
-            f"Verdachte, nog niet gevalideerde uren per reeks (top {TOP})", (0, 16, 6, 10), color="leverancier"),
+            f"Verdachte, nog niet gevalideerde uren per reeks (top {TOP})", (0, 21, 6, 10), color="leverancier"),
         bar("b_schommeling", "kw_schommeling", "reeks_label", "week_bereik_m",
-            f"Grootste schommelingen afgelopen week (m, top {TOP})", (6, 16, 6, 10), color="oordeel",
+            f"Grootste schommelingen afgelopen week (m, top {TOP})", (6, 21, 6, 10), color="oordeel",
             color_mappings={"verdacht: weinig regen": ROOD, "mogelijk door regen": BLAUW,
                             "geen actuele KNMI-data": GRIJS},
             description="Verdacht = bereik > 0,5 m terwijl er < 10 mm regen viel (instelbaar in de job)"),
         table("tb_gisteren", "kw_gisteren", ["reeks_label", "leverancier", "status", "uren_gisteren",
                                              "verdacht_gisteren", "sprongen_gisteren", "gisteren_gem", "basis_gem",
                                              "delta_m"],
-              "Wat gebeurde er gisteren (delta = gisteren t.o.v. gemiddelde dag -14 t/m -2)", (0, 26, 12, 9)),
+              "Wat gebeurde er gisteren (delta = gisteren t.o.v. gemiddelde dag -14 t/m -2)", (0, 31, 12, 9)),
         bar("b_natdroog", "kw_natdroog", "reeks_label", "natheid_index",
             "Natter / droger dan normaal (+100 = maximum, 0 = mediaan, -100 = minimum van de reeks)",
-            (0, 35, 12, 18), color="nat_droog",
+            (0, 40, 12, 18), color="nat_droog",
             color_mappings={"natter dan normaal": BLAUW, "droger dan normaal": "#E07B00"}),
     ])
 

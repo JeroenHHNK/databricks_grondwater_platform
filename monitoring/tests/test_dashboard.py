@@ -52,3 +52,15 @@ def test_json_is_complete():
             for q in item["widget"].get("queries", []):
                 assert q["query"]["datasetName"] in names
             assert item["position"]["x"] + item["position"]["width"] <= 12
+
+
+def test_committed_dashboard_matches_the_definition():
+    """A layout change made in the Databricks UI must be copied into dashboard.py, or the
+    next build_dashboard.py run silently undoes it. Order of keys does not matter."""
+    from pathlib import Path
+
+    committed = Path(__file__).resolve().parents[2] / "databricks_dashboard" / "Grondwater_Monitoring.lvdash.json"
+    on_disk = json.loads(committed.read_text(encoding="utf-8"))
+    assert on_disk == build(), (
+        "databricks_dashboard/Grondwater_Monitoring.lvdash.json differs from dashboard.py: copy the UI "
+        "edits into monitoring/src/monitoring_lib/dashboard.py, then run monitoring/scripts/build_dashboard.py")

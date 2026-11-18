@@ -55,7 +55,7 @@ Edit `src/monitoring_lib/dashboard.py`, then run:
 
 The script refuses to write when a widget points at a missing dataset or column.
 
-Edits made in the Databricks UI are saved into the `.lvdash.json` and are overwritten the next time the script runs. Copy them into `dashboard.py` first, or ask Claude to.
+Edits made in the Databricks UI are saved into the `.lvdash.json` and are overwritten the next time the script runs. Copy them into `dashboard.py` first, or ask Claude to. `tests/test_dashboard.py` fails while the committed file and `dashboard.py` disagree, so a UI edit that has not been copied shows up as a failing test.
 
 ## Settings
 - **Contract target:** `UPTIME_DOEL_PCT` in `dashboard.py`, default 95 %.

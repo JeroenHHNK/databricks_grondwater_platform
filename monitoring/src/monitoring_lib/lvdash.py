@@ -220,13 +220,13 @@ class Page:
     widgets: list[Widget]
 
     def to_json(self) -> dict:
-        return {"name": self.name, "displayName": self.display, "pageType": "PAGE_TYPE_CANVAS",
+        return {"name": self.name, "displayName": self.display, "pageType": "PAGE_TYPE_CANVAS", "layoutVersion": "GRID_V1",
                 "layout": [w.to_json() for w in self.widgets]}
 
 
 def dashboard(datasets: list[Dataset], pages: list[Page]) -> dict:
     return {"datasets": [d.to_json() for d in datasets], "pages": [p.to_json() for p in pages],
-            "uiSettings": {"theme": {"widgetHeaderAlignment": "ALIGNMENT_UNSPECIFIED"}}}
+            "uiSettings": {"theme": {"widgetHeaderAlignment": "ALIGNMENT_UNSPECIFIED"}, "applyModeEnabled": False}}
 
 
 def problems(datasets: list[Dataset], pages: list[Page]) -> list[str]:
