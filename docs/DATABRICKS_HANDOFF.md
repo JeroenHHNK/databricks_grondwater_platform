@@ -1,5 +1,10 @@
 # Handoff: minimal Pastas/Tarso training pipeline on Databricks
 
+> **Read §2.0 (the source schema) for reference; read the rest as history.** The pipeline as
+> built (five model types, checks, selection, extremes; no `train_tarso`, no `tarso_runs`)
+> is described in [`pastas/README.md`](../pastas/README.md). This file is shared by all
+> projects since beta 0.1 (it used to be copied into each project's `docs/`).
+
 > **Amended 2026-10-20.** This began as a pristine specification written before the
 > source data was known. Two parts have since been overtaken by reality and are marked
 > in place:
@@ -9,10 +14,10 @@
 >   from a Delta table, not CSV files.
 > - **§6 excludes the extreme-value analysis.** That exclusion no longer holds — the
 >   EVT subsystem is built and shipped as stage 3. See
->   [`PIPELINE_DATASETS.md` §10](PIPELINE_DATASETS.md).
+>   [`PIPELINE_DATASETS.md` §10](../pastas/docs/PIPELINE_DATASETS.md).
 >
 > Everything else still stands. For what the pipeline *produces*, see
-> [`PIPELINE_DATASETS.md`](PIPELINE_DATASETS.md).
+> [`PIPELINE_DATASETS.md`](../pastas/docs/PIPELINE_DATASETS.md).
 
 You are being asked to rebuild a **stripped-down** version of an existing on-premises
 Python repository (`pastas_machine`) as a Databricks pipeline. This document is the

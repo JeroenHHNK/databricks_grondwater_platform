@@ -26,7 +26,7 @@ schema for tables, the `misc_files` volume for files. Never write to `gold_prd`.
 | **Our files** | `/Volumes/waterkeringbeheer_prd/misc_files/misc_files/pastas_pipeline` | read + write *(see §4)* | `.pas` models, plots, CSVs, forcing |
 
 All three are addressed by **explicit three-part names** in
-[`paths.py`](../src/tarso_pipeline/paths.py), never by a relative name against a current
+[`paths.py`](../pastas/src/tarso_pipeline/paths.py), never by a relative name against a current
 catalog. That is deliberate — see the `currentCatalog` gotcha in §7.
 
 ---
@@ -92,7 +92,7 @@ Table write access does **not** imply volume write access. They are independent 
 and only the table one has been exercised.
 
 Task 2 therefore **probes it before fitting anything**
-([`fit_pastas_models.py:208`](../notebooks/transformation/fit_pastas_models.py#L208)):
+([`fit_pastas_models.py:208`](../pastas/notebooks/transformation/fit_pastas_models.py#L208)):
 it writes `__write_test.txt` to the volume base, deletes it, and raises a named error if
 that fails. A missing grant costs you seconds, not a whole run.
 
@@ -135,7 +135,7 @@ the numbers.
 **Two runs on the same day share a folder** and overwrite each other's artefacts, while
 both still append their metrics rows. Set the `run_folder` widget to keep them apart.
 
-Folder names come from [`paths.py`](../src/tarso_pipeline/paths.py)
+Folder names come from [`paths.py`](../pastas/src/tarso_pipeline/paths.py)
 (`ARTEFACT_DIRS`, `EXTREMES_DIRS`), never from a literal in a notebook, so renaming one
 is a single-line change.
 

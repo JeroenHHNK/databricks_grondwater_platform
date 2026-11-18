@@ -4,8 +4,8 @@ Welke catalog, tabellen en kolommen deze repository uit Databricks leest, met
 welke query, en hoe we onze eigen peilbuizen eraan koppelen. Alles is
 **alleen-lezen**: we schrijven nooit naar `gold_prd`. De volledige namen staan
 in `modules/paths.py` (`TBL_*`). Achtergrond over het platform, in het Engels:
-[`docs/DATABRICKS_HANDOFF.md`](docs/DATABRICKS_HANDOFF.md) (de meetschema's) en
-[`docs/DATABRICKS_layer_cs_objecten.md`](docs/DATABRICKS_layer_cs_objecten.md)
+[`docs/DATABRICKS_HANDOFF.md`](../docs/DATABRICKS_HANDOFF.md) (de meetschema's) en
+[`docs/DATABRICKS_layer_cs_objecten.md`](../docs/DATABRICKS_layer_cs_objecten.md)
 (`meetlocatie`).
 
 ## Overzicht

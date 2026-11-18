@@ -13,7 +13,7 @@ all three projects.
 | [`databricks_dashboard/`](databricks_dashboard/README.md) | Dashboards | The Databricks AI/BI dashboards (`.lvdash.json`): what each one monitors and with which data | new |
 
 Each project came in with its full git history (`git log -- boxplots/` shows it) and keeps
-its own `pyproject.toml`, `docs/`, notebooks, tests and data. Every project finds its
+its own `pyproject.toml`, notebooks, tests and data. Every project finds its
 files by walking up to its **own** `pyproject.toml`, so its notebooks and scripts work
 unchanged from inside its folder.
 
@@ -140,5 +140,7 @@ cd data_validation && uv run --project .. pytest tests
 cd pastas && pip install -e ".[pastas,dev]" && pytest -m "not slow"
 ```
 
-The Databricks background docs (`docs/`) were nearly identical in the three projects
-and are kept per project for now.
+The Databricks background docs are in [`docs/`](docs/), shared by all projects: the source
+schema (`DATABRICKS_HANDOFF.md` §2.0), the grants and volume layout (`DATABRICKS_PERMISSIONS.md`)
+and the location registry (`DATABRICKS_layer_cs_objecten.md`). `pastas/docs/PIPELINE_DATASETS.md`
+describes what the Pastas pipeline reads and writes.

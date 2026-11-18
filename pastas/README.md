@@ -253,7 +253,7 @@ scripts/            run_local.py, check_knmi.py
 results_export/     the app's copy of the latest results (in git)
 family_choice/, model_choice/   the picks made in the app (in git)
 data/forcing/       the committed KNMI CSVs
-docs/               Databricks background: source schema, permissions, cs_objecten
+docs/               PIPELINE_DATASETS.md: what the pipeline reads and writes (the shared Databricks docs are in ../docs/)
 tests/              pytest (no Spark; -m "not slow" skips the real fits)
 ```
 
@@ -269,4 +269,4 @@ tests/              pytest (no Spark; -m "not slow" skips the real fits)
   -- likewise pastas_series_manifest, pastas_evt_selection, pastas_extremes_summary
   ```
 
-Background on the source schema, permissions and the location registry: [`docs/`](docs/), in particular `DATABRICKS_HANDOFF.md` §2.0 and `DATABRICKS_PERMISSIONS.md`.
+Background on the source schema, permissions and the location registry: [`../docs/`](../docs/), in particular `DATABRICKS_HANDOFF.md` §2.0 and `DATABRICKS_PERMISSIONS.md`.

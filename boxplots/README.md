@@ -329,7 +329,7 @@ input_data/
     tijdreeksen/           met de hand: neerslag (Berkhout), buitenwaterstand Markermeer
     databricks_export/     gegenereerd door de db_notebooks
     controle/              gegenereerd door de controlescripts
-docs/                      achtergrond over het Databricks-platform
+(../docs/                 achtergrond over het Databricks-platform, gedeeld met de andere projecten)
 ```
 
 ## Wat deze repository doet

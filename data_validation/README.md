@@ -166,7 +166,7 @@ Start with `limit_series=1` on `01` for a first run. Confirm the round trip, the
 | `config/settings.yaml` | paths, thresholds, autoflag switches, `notes_max_len` |
 | `input_output/knmi_berkhout.csv`, `data/forcing/` | hourly KNMI forcing for the rain overlay in the review plot |
 | `tests/` | `python -m pytest tests` |
-| `docs/` | Databricks background: source schema (`DATABRICKS_HANDOFF.md` §2.0), grants (`DATABRICKS_PERMISSIONS.md`), the location registry (`DATABRICKS_layer_cs_objecten.md`) |
+| `docs/archive/`, and the root [`../docs/`](../docs/) | Databricks background (root): source schema (`DATABRICKS_HANDOFF.md` §2.0), grants (`DATABRICKS_PERMISSIONS.md`), the location registry (`DATABRICKS_layer_cs_objecten.md`) |
 
 Not ported from on-prem:
 - *Generate Data*: replaced by the Databricks export.
