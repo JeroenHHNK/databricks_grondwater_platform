@@ -3,8 +3,8 @@
 The flags are not re-implemented in SQL: :func:`flag_counts` runs
 ``local_validation.checks.validate_series`` (v1-v4 and rules A/B, with its default
 ``Thresholds``) on one series' hourly heads, so the dashboard counts exactly what the
-review app would flag. The notebook calls :func:`flag_counts_frame` per series through
-Spark's ``applyInPandas``.
+review app would flag. The notebook calls :func:`flag_counts_frame` per series, on the
+driver, in batches of series (``build_monitoring_tables.py`` section 4).
 
 "Verdacht" (suspect) = flagged by v1, v2, v3, v4 or rule B. Rule A (a sudden drop) is
 counted on its own but left out of "verdacht": it is report-only in the review app,
@@ -22,7 +22,7 @@ from local_validation.checks import validate_series
 LAYERS = ("v1", "v2", "v3", "v4")
 WINDOWS = ("totaal", "7d", "gisteren")
 
-# Column -> Spark type, in order (the notebook builds the applyInPandas schema from it).
+# Column -> Spark type, in order (the notebook builds the table's schema from it).
 FLAG_SCHEMA: dict[str, str] = {
     "meetreeks_id": "string",
     "as_of": "date",
@@ -79,7 +79,7 @@ def flag_counts(hourly: pd.DataFrame, *, begin_filter=None, eind_filter=None,
 
 
 def flag_counts_frame(pdf: pd.DataFrame, as_of: dt.date) -> pd.DataFrame:
-    """``applyInPandas`` body: the hours of one series (with its metadata repeated) -> one row.
+    """The hours of one series (with its metadata repeated) -> one row of flag counts.
 
     Columns in: ``meetreeks_id, ts, waarde, is_validated, begin_filter, eind_filter,
     bovenkant_peilbuis``. Never raises: a series the checks cannot handle gets its hour

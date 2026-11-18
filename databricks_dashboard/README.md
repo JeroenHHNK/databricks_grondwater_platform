@@ -69,7 +69,7 @@ KNMI forcing CSV on the volume (station 249 Berkhout) ────────�
   - Rule A is shown, but it is report-only, as in the review app.
 - **Suspect data not yet validated:** the review work list.
 - **Yesterday:** values received, flags and the change from the baseline.
-- **Big swings over the last week, with KNMI rainfall:** a range over 0.5 m with less than 10 mm of rain is marked suspect, because rain does not explain it.
+- **Big swings over the last week, with KNMI rainfall:** a range over 0.5 m with less than 10 mm of rain is marked suspect, because rain does not explain it. When the KNMI forcing does not reach yesterday, the swing is shown as "geen actuele KNMI-data" instead of being judged.
 - **Wetter or drier than normal:** yesterday against the series' own median and extremes, from −100 to +100.
 
 **3. Reeks-specifiek: one series in full.**

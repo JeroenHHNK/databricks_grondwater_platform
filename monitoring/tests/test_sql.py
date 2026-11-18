@@ -57,3 +57,12 @@ def test_map_colours_cover_every_case():
     text = sql.pastas_series_sql("c.s.monitoring_pastas_models", "c.s.monitoring_series_status")
     for colour in (sql.KLEUR_GROEN, sql.KLEUR_GEEL, sql.KLEUR_ROOD, sql.KLEUR_GRIJS):
         assert f"'{colour}'" in text
+
+
+def test_missing_rainfall_is_not_a_dry_week():
+    for knmi in ("c.s.monitoring_knmi_daily", None):
+        text = sql.change_recent_sql("c.s.monitoring_series_status", AS_OF, knmi)
+        assert "coalesce(r.neerslag_7d_mm, 0)" not in text
+        assert "CASE WHEN r.knmi_actueel THEN" in text
+    assert "knmi_tot >= DATE'2026-11-17' - INTERVAL 1 DAY" in sql.change_recent_sql(
+        "c.s.monitoring_series_status", AS_OF, "c.s.monitoring_knmi_daily")

@@ -166,11 +166,12 @@ ORDER BY f.verdacht_gisteren DESC NULLS LAST, abs(c.delta_m) DESC NULLS LAST""",
                 ["reeks_label", "leverancier", "status", "uren_gisteren", "verdacht_gisteren", "sprongen_gisteren",
                  "gisteren_gem", "basis_gem", "delta_m"]),
         Dataset("kw_schommeling", f"Kwaliteit: grootste schommelingen afgelopen week (top {TOP})", f"""
-SELECT reeks_label, leverancier, week_bereik_m, neerslag_7d_mm,
-       CASE WHEN verdachte_schommeling THEN 'verdacht: weinig regen' ELSE 'mogelijk door regen' END AS oordeel
+SELECT reeks_label, leverancier, week_bereik_m, neerslag_7d_mm, knmi_tot,
+       CASE WHEN verdachte_schommeling IS NULL THEN 'geen actuele KNMI-data'
+            WHEN verdachte_schommeling THEN 'verdacht: weinig regen' ELSE 'mogelijk door regen' END AS oordeel
 FROM {change} WHERE week_bereik_m IS NOT NULL
 ORDER BY week_bereik_m DESC
-LIMIT {TOP}""", ["reeks_label", "leverancier", "week_bereik_m", "neerslag_7d_mm", "oordeel"]),
+LIMIT {TOP}""", ["reeks_label", "leverancier", "week_bereik_m", "neerslag_7d_mm", "knmi_tot", "oordeel"]),
         Dataset("kw_natdroog", "Kwaliteit: natter/droger dan normaal", f"""
 SELECT reeks_label, leverancier, natheid_index, nat_droog
 FROM {change} WHERE natheid_index IS NOT NULL""", ["reeks_label", "leverancier", "natheid_index", "nat_droog"]),
@@ -344,7 +345,8 @@ Flags zijn de checks van de validatie-app (`local_validation/checks.py`): v1 bui
             f"Verdachte, nog niet gevalideerde uren per reeks (top {TOP})", (0, 16, 6, 10), color="leverancier"),
         bar("b_schommeling", "kw_schommeling", "reeks_label", "week_bereik_m",
             f"Grootste schommelingen afgelopen week (m, top {TOP})", (6, 16, 6, 10), color="oordeel",
-            color_mappings={"verdacht: weinig regen": ROOD, "mogelijk door regen": BLAUW},
+            color_mappings={"verdacht: weinig regen": ROOD, "mogelijk door regen": BLAUW,
+                            "geen actuele KNMI-data": GRIJS},
             description="Verdacht = bereik > 0,5 m terwijl er < 10 mm regen viel (instelbaar in de job)"),
         table("tb_gisteren", "kw_gisteren", ["reeks_label", "leverancier", "status", "uren_gisteren",
                                              "verdacht_gisteren", "sprongen_gisteren", "gisteren_gem", "basis_gem",

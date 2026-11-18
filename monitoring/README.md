@@ -60,7 +60,7 @@ Edits made in the Databricks UI are saved into the `.lvdash.json` and are overwr
 ## Settings
 - **Contract target:** `UPTIME_DOEL_PCT` in `dashboard.py`, default 95 %.
 - **Silent:** a sensor is silent after 24 h without data (`SILENT_HOURS` in `sql.py`).
-- **Suspect swing:** a range over 0.5 m in a week with less than 10 mm of rain. Both are job widgets, `swing_m` and `little_rain_mm`.
+- **Suspect swing:** a range over 0.5 m in a week with less than 10 mm of rain. Both are job widgets, `swing_m` and `little_rain_mm`. It is judged only when the KNMI forcing reaches yesterday; otherwise the dashboard shows "geen actuele KNMI-data" (refresh the forcing CSV, see `pastas/README.md`).
 - **Flag thresholds:** `Thresholds` in `data_validation/local_validation/checks.py`, the same as the review app's.
 - **Suspect:** v1–v4 or rule B. Rule A is shown, but is report-only, as in the review app.
 - **Validated:** an hour is validated when it is in `validated_meting`, i.e. approved. Rejected hours count as not validated.

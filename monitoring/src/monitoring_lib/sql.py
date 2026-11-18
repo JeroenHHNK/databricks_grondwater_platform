@@ -199,14 +199,19 @@ def change_recent_sql(status_table: str, as_of: dt.date, knmi_table: str | None,
     """Yesterday vs the 14-day baseline, the range of the last week, and a wet/dry index.
 
     ``verdachte_schommeling``: the head moved more than ``swing_m`` within the last week
-    while less than ``little_rain_mm`` fell; a swing that rain does not explain.
+    while less than ``little_rain_mm`` fell; a swing that rain does not explain. Only judged
+    when the KNMI table reaches yesterday (``knmi_actueel``): the forcing CSV is refreshed by
+    hand and KNMI publishes 1-2 days behind, and a missing week of rain is not a dry week.
+    Without current rainfall, ``neerslag_7d_mm`` and ``verdachte_schommeling`` are NULL.
     The wet/dry index: +100 = at the series' maximum, 0 = its median, -100 = its minimum
     (as MOAD's ``API_Data_Wet_Dry``, with yesterday's mean as the current value).
     """
     today = _date(as_of)
-    rain = (f"""SELECT sum(precipitation_mm) AS neerslag_7d_mm, max(datum) AS knmi_tot
-               FROM {_name(knmi_table)} WHERE datum >= {today} - INTERVAL 7 DAYS AND datum < {today}"""
-            if knmi_table else "SELECT CAST(NULL AS double) AS neerslag_7d_mm, CAST(NULL AS date) AS knmi_tot")
+    rain = (f"""SELECT sum(CASE WHEN datum >= {today} - INTERVAL 7 DAYS AND datum < {today}
+                               THEN precipitation_mm END)            AS neerslag_som,
+                      max(CASE WHEN datum < {today} THEN datum END)  AS knmi_tot
+               FROM {_name(knmi_table)}"""
+            if knmi_table else "SELECT CAST(NULL AS double) AS neerslag_som, CAST(NULL AS date) AS knmi_tot")
     return f"""
         WITH s AS (SELECT meetreeks_id, reeks_label, leverancier FROM {_name(status_table)}
                    WHERE NOT is_handwaarneming),
@@ -220,7 +225,11 @@ def change_recent_sql(status_table: str, as_of: dt.date, knmi_table: str | None,
                      WHERE ts >= {today} - INTERVAL 1 DAY AND ts < {today} GROUP BY meetreeks_id),
         week AS (SELECT meetreeks_id, min(waarde) AS week_min, max(waarde) AS week_max FROM h
                  WHERE ts >= {today} - INTERVAL 7 DAYS AND ts < {today} GROUP BY meetreeks_id),
-        regen AS ({rain})
+        regen_ruw AS ({rain}),
+        regen AS (SELECT CASE WHEN knmi_tot >= {today} - INTERVAL 1 DAY THEN neerslag_som END AS neerslag_7d_mm,
+                         knmi_tot,
+                         coalesce(knmi_tot >= {today} - INTERVAL 1 DAY, false)               AS knmi_actueel
+                  FROM regen_ruw)
         SELECT s.meetreeks_id, s.reeks_label, s.leverancier,
                round(g.gisteren_gem, 3)                     AS gisteren_gem,
                coalesce(g.uren_gisteren, 0)                 AS uren_gisteren,
@@ -229,7 +238,9 @@ def change_recent_sql(status_table: str, as_of: dt.date, knmi_table: str | None,
                round(w.week_max - w.week_min, 3)            AS week_bereik_m,
                round(r.neerslag_7d_mm, 1)                   AS neerslag_7d_mm,
                r.knmi_tot,
-               (w.week_max - w.week_min) > {swing_m} AND coalesce(r.neerslag_7d_mm, 0) < {little_rain_mm}
+               r.knmi_actueel,
+               CASE WHEN r.knmi_actueel THEN (w.week_max - w.week_min) > {swing_m}
+                                             AND r.neerslag_7d_mm < {little_rain_mm} END
                                                             AS verdachte_schommeling,
                round(greatest(-100, least(100, CASE
                    WHEN g.gisteren_gem >= l.mediaan

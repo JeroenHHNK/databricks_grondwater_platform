@@ -167,8 +167,9 @@ try:
     knmi["datum"] = pd.to_datetime(knmi["datum"]).dt.date
     write(spark.createDataFrame(knmi.assign(station=STATION)), T["knmi_daily"])
     KNMI = T["knmi_daily"]
-except FileNotFoundError:
-    print(f"No forcing CSV at {KNMI_FILE} (see {FORCING_VOLUME_DIR}); rainfall stays empty.")
+except (FileNotFoundError, KeyError, ValueError) as problem:
+    print(f"No usable forcing CSV at {KNMI_FILE} (see {FORCING_VOLUME_DIR}): "
+          f"{type(problem).__name__}: {problem}. Rainfall stays as it was.")
     KNMI = T["knmi_daily"] if exists(T["knmi_daily"]) else None
 
 write(spark.sql(sql.change_recent_sql(T["series_status"], AS_OF, KNMI, SWING_M, LITTLE_RAIN_MM)),
