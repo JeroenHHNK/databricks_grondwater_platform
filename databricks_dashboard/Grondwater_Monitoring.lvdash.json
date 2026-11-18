@@ -400,7 +400,6 @@
     {
       "name": "inventaris",
       "displayName": "Data-inventarisatie & datastroom",
-      "pageType": "PAGE_TYPE_CANVAS",
       "layout": [
         {
           "widget": {
@@ -1418,15 +1417,16 @@
             "x": 0,
             "y": 41,
             "width": 12,
-            "height": 16
+            "height": 22
           }
         }
-      ]
+      ],
+      "pageType": "PAGE_TYPE_CANVAS",
+      "layoutVersion": "GRID_V1"
     },
     {
       "name": "kwaliteit",
       "displayName": "Meetinventarisatie & datakwaliteit",
-      "pageType": "PAGE_TYPE_CANVAS",
       "layout": [
         {
           "widget": {
@@ -1696,20 +1696,20 @@
               }
             ],
             "spec": {
-              "version": 2,
-              "widgetType": "counter",
               "frame": {
                 "showTitle": true,
+                "showDescription": true,
                 "title": {
                   "value": "Neerslag afgelopen 7 dagen (mm)",
                   "fields": []
                 },
-                "showDescription": true,
                 "description": {
                   "value": "KNMI, het station van de Pastas-forcering",
                   "fields": []
                 }
               },
+              "version": 2,
+              "widgetType": "counter",
               "encodings": {
                 "value": {
                   "fieldName": "max(neerslag_7d_mm)",
@@ -1796,7 +1796,7 @@
             "x": 0,
             "y": 6,
             "width": 6,
-            "height": 10
+            "height": 15
           }
         },
         {
@@ -1809,16 +1809,16 @@
                   "datasetName": "kw_flags",
                   "fields": [
                     {
-                      "name": "reeks_label",
-                      "expression": "`reeks_label`"
+                      "name": "flag",
+                      "expression": "`flag`"
                     },
                     {
                       "name": "uren",
                       "expression": "`uren`"
                     },
                     {
-                      "name": "flag",
-                      "expression": "`flag`"
+                      "name": "reeks_label",
+                      "expression": "`reeks_label`"
                     }
                   ],
                   "disaggregated": true
@@ -1826,8 +1826,6 @@
               }
             ],
             "spec": {
-              "version": 3,
-              "widgetType": "bar",
               "frame": {
                 "showTitle": true,
                 "title": {
@@ -1835,6 +1833,8 @@
                   "fields": []
                 }
               },
+              "version": 3,
+              "widgetType": "bar",
               "encodings": {
                 "x": {
                   "fieldName": "uren",
@@ -1867,7 +1867,7 @@
             "x": 6,
             "y": 6,
             "width": 6,
-            "height": 10
+            "height": 15
           }
         },
         {
@@ -1936,7 +1936,7 @@
           },
           "position": {
             "x": 0,
-            "y": 16,
+            "y": 21,
             "width": 6,
             "height": 10
           }
@@ -1951,16 +1951,16 @@
                   "datasetName": "kw_schommeling",
                   "fields": [
                     {
-                      "name": "reeks_label",
-                      "expression": "`reeks_label`"
+                      "name": "oordeel",
+                      "expression": "`oordeel`"
                     },
                     {
                       "name": "week_bereik_m",
                       "expression": "`week_bereik_m`"
                     },
                     {
-                      "name": "oordeel",
-                      "expression": "`oordeel`"
+                      "name": "reeks_label",
+                      "expression": "`reeks_label`"
                     }
                   ],
                   "disaggregated": true
@@ -1968,20 +1968,20 @@
               }
             ],
             "spec": {
-              "version": 3,
-              "widgetType": "bar",
               "frame": {
                 "showTitle": true,
+                "showDescription": true,
                 "title": {
                   "value": "Grootste schommelingen afgelopen week (m, top 30)",
                   "fields": []
                 },
-                "showDescription": true,
                 "description": {
                   "value": "Verdacht = bereik > 0,5 m terwijl er < 10 mm regen viel (instelbaar in de job)",
                   "fields": []
                 }
               },
+              "version": 3,
+              "widgetType": "bar",
               "encodings": {
                 "x": {
                   "fieldName": "week_bereik_m",
@@ -2022,7 +2022,7 @@
           },
           "position": {
             "x": 6,
-            "y": 16,
+            "y": 21,
             "width": 6,
             "height": 10
           }
@@ -2134,7 +2134,7 @@
           },
           "position": {
             "x": 0,
-            "y": 26,
+            "y": 31,
             "width": 12,
             "height": 9
           }
@@ -2215,17 +2215,18 @@
           },
           "position": {
             "x": 0,
-            "y": 35,
+            "y": 40,
             "width": 12,
             "height": 18
           }
         }
-      ]
+      ],
+      "pageType": "PAGE_TYPE_CANVAS",
+      "layoutVersion": "GRID_V1"
     },
     {
       "name": "reeks",
       "displayName": "Reeks-specifiek",
-      "pageType": "PAGE_TYPE_CANVAS",
       "layout": [
         {
           "widget": {
@@ -2793,12 +2794,12 @@
             "height": 7
           }
         }
-      ]
+      ],
+      "pageType": "PAGE_TYPE_CANVAS"
     },
     {
       "name": "pastas",
       "displayName": "Pastas",
-      "pageType": "PAGE_TYPE_CANVAS",
       "layout": [
         {
           "widget": {
@@ -3549,8 +3550,6 @@
               }
             ],
             "spec": {
-              "version": 2,
-              "widgetType": "table",
               "frame": {
                 "showTitle": true,
                 "title": {
@@ -3558,6 +3557,8 @@
                   "fields": []
                 }
               },
+              "version": 2,
+              "widgetType": "table",
               "encodings": {
                 "columns": [
                   {
@@ -3642,12 +3643,14 @@
             "height": 12
           }
         }
-      ]
+      ],
+      "pageType": "PAGE_TYPE_CANVAS"
     }
   ],
   "uiSettings": {
     "theme": {
       "widgetHeaderAlignment": "ALIGNMENT_UNSPECIFIED"
-    }
+    },
+    "applyModeEnabled": false
   }
 }
