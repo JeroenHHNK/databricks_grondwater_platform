@@ -55,6 +55,8 @@ input_output/output_databricks/metadata/object_data.csv          one row per ser
 
 `00_probe_env` checks the grants and whether a push would work before a real run.
 
+The job in `databricks_code/jobs/workflow_config.json` runs from a temporary checkout (`git_source`), with no Git folder to commit from. So there `02` uses the transport `00` picks: `git` when a push works, otherwise `volume`. Run by hand from the Git folder, `transport=write` is fine.
+
 ## 2. How we validate it automatically
 
 **`local_validation/validate.ipynb`** runs locally on the export, in about 40 s for about 700 series. The logic is plain pandas in [`local_validation/checks.py`](local_validation/checks.py), and the thresholds are in [`config/settings.yaml`](config/settings.yaml). The monitoring job runs the same function (`validate_series`), so the dashboard counts exactly what the review app flags.
