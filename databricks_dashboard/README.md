@@ -6,11 +6,11 @@ The AI/BI (Lakeview) dashboards of the groundwater platform. They are kept in gi
 |---|---|---|---|
 | `Grondwater_Monitoring.lvdash.json` | **current**, generated | data flow, data quality, single series, Pastas models | the `monitoring_*` tables (daily job), plus `validated_meting` and `valid_pastas_simulations` |
 | `MOAD.lvdash.json` | older, hand-made | inventory in `hl_cs_objecten`, Fugro/Wiertsema API delivery and quality, maps | `gold_prd` live (`meting`, `meetreeks`, `object`, `meetlocatie`) |
-| `Pastas_Dashboard.lvdash.json` | older, hand-made | map of the first unvalidated Tarso fits | `pastas_fit_metrics` / `pastas_model_checks`: the **old table names**, from before the `unvalid_pastas_` / `valid_pastas_` split |
+| `Pastas_Dashboard.lvdash.json` | older, hand-made | map of the Tarso fits of the latest unvalidated run | `unvalid_pastas_fit_metrics` / `unvalid_pastas_model_checks` |
 
 `Grondwater_Monitoring` replaces the other two:
 - **Live scans:** MOAD's pages scan `meting` live on every refresh. The monitoring dashboard reads small tables that a job builds once a day.
-- **Pastas tables:** the Pastas dashboard reads tables under names the pipeline no longer writes.
+- **Pastas tables:** the Pastas dashboard shows only Tarso on the unvalidated basis.
 
 The older two are kept until the new one has been checked on Databricks.
 
@@ -119,11 +119,9 @@ Everything is computed live from `gold_prd`. The monitoring dashboard took its i
 
 ## Pastas_Dashboard (older)
 
-One map page of the first Tarso fits, joined to `meetlocatie` for positions.
+One map page of the Tarso fits of the latest unvalidated run, joined to `meetlocatie` for positions.
 
-It reads `pastas_fit_metrics` and `pastas_model_checks`. Those tables were renamed to `unvalid_pastas_*` (see `pastas/README.md`), so the dashboard shows nothing once the rename is done.
-
-Its `pastas_fit_map_2` dataset also pivots the checks under labels the pipeline never writes, so its memory and bounds columns are always empty. The Pastas page of `Grondwater_Monitoring` replaces it.
+It reads `unvalid_pastas_fit_metrics` and `unvalid_pastas_model_checks`; before beta 0.1 it read the old names `pastas_*`. Its `pastas_fit_map_2` dataset pivots the checks on the labels the pipeline writes (`t95…`, `Bounds…`). It has no validated basis and no model pick: the Pastas page of `Grondwater_Monitoring` replaces it, and it can go once that page is checked on Databricks.
 
 ## Adding or changing a dashboard
 
