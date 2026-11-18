@@ -1,9 +1,786 @@
 {
+  "datasets": [
+    {
+      "name": "t_per_leverancier",
+      "displayName": "Test: reeksen per leverancier",
+      "queryLines": [
+        "SELECT coalesce(bronsysteem, 'onbekend') AS leverancier, count(*) AS reeksen\n",
+        "FROM gold_prd.hl_grondwaterpeilmeting.meetreeks GROUP BY 1\n"
+      ]
+    },
+    {
+      "name": "t_per_dag",
+      "displayName": "Test: metingen per dag (30 dagen)",
+      "queryLines": [
+        "SELECT to_date(m.tijdstempel_utc) AS datum, coalesce(r.bronsysteem, 'onbekend') AS leverancier,\n",
+        "       count(*) AS metingen\n",
+        "FROM gold_prd.hl_grondwaterpeilmeting.meting m JOIN gold_prd.hl_grondwaterpeilmeting.meetreeks r ON r.id = m.meetreeks_id\n",
+        "WHERE m.tijdstempel_utc >= current_date() - INTERVAL 30 DAYS AND m.tijdstempel_utc < current_date()\n",
+        "GROUP BY 1, 2\n"
+      ]
+    },
+    {
+      "name": "t_locaties",
+      "displayName": "Test: grondwaterlocaties",
+      "queryLines": [
+        "SELECT code, naam, coalesce(meetreeks_actief, 'onbekend') AS meetreeks_actief,\n",
+        "       CAST(wgs84_ycoordinaat AS double) AS lat, CAST(wgs84_xcoordinaat AS double) AS lon\n",
+        "FROM gold_prd.hl_cs_objecten.meetlocatie\n",
+        "WHERE compartiment_naam = 'Grondwater' AND wgs84_xcoordinaat IS NOT NULL\n"
+      ]
+    },
+    {
+      "name": "t_r2_klasse",
+      "displayName": "Test: gevalideerde modellen per R2-klasse",
+      "queryLines": [
+        "SELECT model_type,\n",
+        "       CASE WHEN NOT success OR r2 IS NULL THEN 'mislukt'\n",
+        "            WHEN r2 >= 0.7 THEN 'R2 >= 0.7' ELSE 'R2 < 0.7' END AS klasse,\n",
+        "       count(*) AS modellen\n",
+        "FROM waterkeringbeheer_prd.jvanruitenbeek.valid_pastas_fit_metrics GROUP BY 1, 2\n"
+      ]
+    },
+    {
+      "name": "t_keuze",
+      "displayName": "Test: keuzelijst reeksen",
+      "queryLines": [
+        "SELECT DISTINCT concat(coalesce(r.bronsysteem, '?'), ' | ', trim(r.code), ' [', substr(r.id, 1, 8), ']') AS reeks\n",
+        "FROM gold_prd.hl_grondwaterpeilmeting.meetreeks r\n",
+        "WHERE r.id IN (SELECT meetreeks_id FROM gold_prd.hl_grondwaterpeilmeting.meting WHERE tijdstempel_utc >= current_date() - INTERVAL 7 DAYS)\n",
+        "ORDER BY reeks\n"
+      ]
+    },
+    {
+      "name": "t_reeks_dag",
+      "displayName": "Test: daggemiddelde gekozen reeks (90 dagen)",
+      "queryLines": [
+        "SELECT to_date(m.tijdstempel_utc) AS datum, avg(m.waarde) AS waarde, 'sensor (ruw)' AS bron\n",
+        "FROM gold_prd.hl_grondwaterpeilmeting.meting m JOIN gold_prd.hl_grondwaterpeilmeting.meetreeks r ON r.id = m.meetreeks_id\n",
+        "WHERE concat(coalesce(r.bronsysteem, '?'), ' | ', trim(r.code), ' [', substr(r.id, 1, 8), ']') = :reeks\n",
+        "  AND m.tijdstempel_utc >= current_date() - INTERVAL 90 DAYS\n",
+        "GROUP BY 1\n"
+      ],
+      "parameters": [
+        {
+          "displayName": "reeks",
+          "keyword": "reeks",
+          "dataType": "STRING",
+          "defaultSelection": {
+            "values": {
+              "dataType": "STRING",
+              "values": [
+                {
+                  "value": ""
+                }
+              ]
+            }
+          }
+        }
+      ]
+    },
+    {
+      "name": "t_reeks_info",
+      "displayName": "Test: kenmerken gekozen reeks",
+      "queryLines": [
+        "SELECT r.code, r.bronsysteem, r.meetlocatie_code, r.begin_filter, r.eind_filter, r.bovenkant_peilbuis\n",
+        "FROM gold_prd.hl_grondwaterpeilmeting.meetreeks r\n",
+        "WHERE concat(coalesce(r.bronsysteem, '?'), ' | ', trim(r.code), ' [', substr(r.id, 1, 8), ']') = :reeks\n"
+      ],
+      "parameters": [
+        {
+          "displayName": "reeks",
+          "keyword": "reeks",
+          "dataType": "STRING",
+          "defaultSelection": {
+            "values": {
+              "dataType": "STRING",
+              "values": [
+                {
+                  "value": ""
+                }
+              ]
+            }
+          }
+        }
+      ]
+    }
+  ],
   "pages": [
     {
-      "name": "cbe30aa2",
-      "displayName": "Untitled page",
-      "pageType": "PAGE_TYPE_CANVAS"
+      "name": "test_widgets",
+      "displayName": "Test widgets",
+      "pageType": "PAGE_TYPE_CANVAS",
+      "layout": [
+        {
+          "widget": {
+            "name": "t_uitleg",
+            "multilineTextboxSpec": {
+              "lines": [
+                "## Test van de widgettypen uit Grondwater_Monitoring\n",
+                "Elk blok test een type dat in het monitoringdashboard nog niet geverifieerd is. Werkt een blok niet,\n",
+                "meld welk: dan pas ik de bouwsteen in `monitoring/src/monitoring_lib/lvdash.py` aan.\n"
+              ]
+            }
+          },
+          "position": {
+            "x": 0,
+            "y": 0,
+            "width": 12,
+            "height": 2
+          }
+        },
+        {
+          "widget": {
+            "name": "t_c_reeksen",
+            "queries": [
+              {
+                "name": "main_query",
+                "query": {
+                  "datasetName": "t_per_leverancier",
+                  "fields": [
+                    {
+                      "name": "sum(reeksen)",
+                      "expression": "SUM(`reeksen`)"
+                    }
+                  ],
+                  "disaggregated": false
+                }
+              }
+            ],
+            "spec": {
+              "version": 2,
+              "widgetType": "counter",
+              "frame": {
+                "showTitle": true,
+                "title": {
+                  "value": "1. Counter: meetreeksen in de bron",
+                  "fields": []
+                }
+              },
+              "encodings": {
+                "value": {
+                  "fieldName": "sum(reeksen)",
+                  "displayName": "1. Counter: meetreeksen in de bron"
+                }
+              },
+              "data": {
+                "queryName": "main_query"
+              }
+            }
+          },
+          "position": {
+            "x": 0,
+            "y": 2,
+            "width": 4,
+            "height": 3
+          }
+        },
+        {
+          "widget": {
+            "name": "t_b_leverancier",
+            "queries": [
+              {
+                "name": "main_query",
+                "query": {
+                  "datasetName": "t_per_leverancier",
+                  "fields": [
+                    {
+                      "name": "leverancier",
+                      "expression": "`leverancier`"
+                    },
+                    {
+                      "name": "reeksen",
+                      "expression": "`reeksen`"
+                    },
+                    {
+                      "name": "leverancier",
+                      "expression": "`leverancier`"
+                    }
+                  ],
+                  "disaggregated": true
+                }
+              }
+            ],
+            "spec": {
+              "version": 3,
+              "widgetType": "bar",
+              "frame": {
+                "showTitle": true,
+                "title": {
+                  "value": "2. Bar met vaste kleuren per leverancier",
+                  "fields": []
+                }
+              },
+              "encodings": {
+                "x": {
+                  "fieldName": "reeksen",
+                  "scale": {
+                    "type": "quantitative"
+                  }
+                },
+                "y": {
+                  "fieldName": "leverancier",
+                  "scale": {
+                    "type": "categorical",
+                    "sort": {
+                      "by": "x-reversed"
+                    }
+                  }
+                },
+                "color": {
+                  "fieldName": "leverancier",
+                  "scale": {
+                    "type": "categorical",
+                    "mappings": [
+                      {
+                        "value": "Fugro",
+                        "color": "#1F77B4"
+                      },
+                      {
+                        "value": "Wiertsema",
+                        "color": "#E07B00"
+                      },
+                      {
+                        "value": "onbekend",
+                        "color": "#A0A0A0"
+                      }
+                    ]
+                  }
+                }
+              },
+              "data": {
+                "queryName": "main_query"
+              }
+            }
+          },
+          "position": {
+            "x": 4,
+            "y": 2,
+            "width": 8,
+            "height": 5
+          }
+        },
+        {
+          "widget": {
+            "name": "t_l_dag",
+            "queries": [
+              {
+                "name": "main_query",
+                "query": {
+                  "datasetName": "t_per_dag",
+                  "fields": [
+                    {
+                      "name": "datum",
+                      "expression": "`datum`"
+                    },
+                    {
+                      "name": "metingen",
+                      "expression": "`metingen`"
+                    },
+                    {
+                      "name": "leverancier",
+                      "expression": "`leverancier`"
+                    }
+                  ],
+                  "disaggregated": true
+                }
+              }
+            ],
+            "spec": {
+              "version": 3,
+              "widgetType": "line",
+              "frame": {
+                "showTitle": true,
+                "title": {
+                  "value": "3. Lijn per leverancier: metingen per dag (30 dagen)",
+                  "fields": []
+                }
+              },
+              "encodings": {
+                "x": {
+                  "fieldName": "datum",
+                  "scale": {
+                    "type": "temporal"
+                  }
+                },
+                "y": {
+                  "fieldName": "metingen",
+                  "scale": {
+                    "type": "quantitative"
+                  }
+                },
+                "color": {
+                  "fieldName": "leverancier",
+                  "scale": {
+                    "type": "categorical",
+                    "mappings": [
+                      {
+                        "value": "Fugro",
+                        "color": "#1F77B4"
+                      },
+                      {
+                        "value": "Wiertsema",
+                        "color": "#E07B00"
+                      }
+                    ]
+                  }
+                }
+              },
+              "data": {
+                "queryName": "main_query"
+              }
+            }
+          },
+          "position": {
+            "x": 0,
+            "y": 7,
+            "width": 12,
+            "height": 6
+          }
+        },
+        {
+          "widget": {
+            "name": "t_m_locaties",
+            "queries": [
+              {
+                "name": "main_query",
+                "query": {
+                  "datasetName": "t_locaties",
+                  "fields": [
+                    {
+                      "name": "lat",
+                      "expression": "`lat`"
+                    },
+                    {
+                      "name": "lon",
+                      "expression": "`lon`"
+                    },
+                    {
+                      "name": "meetreeks_actief",
+                      "expression": "`meetreeks_actief`"
+                    },
+                    {
+                      "name": "code",
+                      "expression": "`code`"
+                    },
+                    {
+                      "name": "naam",
+                      "expression": "`naam`"
+                    }
+                  ],
+                  "disaggregated": true
+                }
+              }
+            ],
+            "spec": {
+              "version": 2,
+              "widgetType": "symbol-map",
+              "frame": {
+                "showTitle": true,
+                "title": {
+                  "value": "4. Kaart met vaste kleuren (meetreeks_actief)",
+                  "fields": []
+                }
+              },
+              "mark": {
+                "size": -2.1
+              },
+              "encodings": {
+                "coordinates": {
+                  "coordinateType": "longitude-latitude",
+                  "latitude": {
+                    "fieldName": "lat"
+                  },
+                  "longitude": {
+                    "fieldName": "lon"
+                  }
+                },
+                "color": {
+                  "fieldName": "meetreeks_actief",
+                  "scale": {
+                    "type": "categorical",
+                    "mappings": [
+                      {
+                        "value": "Ja",
+                        "color": "#2E9E44"
+                      },
+                      {
+                        "value": "Nee",
+                        "color": "#D62728"
+                      },
+                      {
+                        "value": "onbekend",
+                        "color": "#A0A0A0"
+                      }
+                    ]
+                  },
+                  "legend": {
+                    "position": "right"
+                  }
+                },
+                "extra": [
+                  {
+                    "fieldName": "code"
+                  },
+                  {
+                    "fieldName": "naam"
+                  }
+                ]
+              },
+              "data": {
+                "queryName": "main_query"
+              }
+            }
+          },
+          "position": {
+            "x": 0,
+            "y": 13,
+            "width": 6,
+            "height": 8
+          }
+        },
+        {
+          "widget": {
+            "name": "t_b_r2",
+            "queries": [
+              {
+                "name": "main_query",
+                "query": {
+                  "datasetName": "t_r2_klasse",
+                  "fields": [
+                    {
+                      "name": "model_type",
+                      "expression": "`model_type`"
+                    },
+                    {
+                      "name": "modellen",
+                      "expression": "`modellen`"
+                    },
+                    {
+                      "name": "klasse",
+                      "expression": "`klasse`"
+                    }
+                  ],
+                  "disaggregated": true
+                }
+              }
+            ],
+            "spec": {
+              "version": 3,
+              "widgetType": "bar",
+              "frame": {
+                "showTitle": true,
+                "title": {
+                  "value": "5. Gestapelde bar: gevalideerde modellen per R2-klasse",
+                  "fields": []
+                }
+              },
+              "encodings": {
+                "x": {
+                  "fieldName": "modellen",
+                  "scale": {
+                    "type": "quantitative"
+                  }
+                },
+                "y": {
+                  "fieldName": "model_type",
+                  "scale": {
+                    "type": "categorical",
+                    "sort": {
+                      "by": "x-reversed"
+                    }
+                  }
+                },
+                "color": {
+                  "fieldName": "klasse",
+                  "scale": {
+                    "type": "categorical",
+                    "mappings": [
+                      {
+                        "value": "R2 >= 0.7",
+                        "color": "#2E9E44"
+                      },
+                      {
+                        "value": "R2 < 0.7",
+                        "color": "#F2C200"
+                      },
+                      {
+                        "value": "mislukt",
+                        "color": "#D62728"
+                      }
+                    ]
+                  }
+                }
+              },
+              "data": {
+                "queryName": "main_query"
+              }
+            }
+          },
+          "position": {
+            "x": 6,
+            "y": 13,
+            "width": 6,
+            "height": 8
+          }
+        },
+        {
+          "widget": {
+            "name": "t_f_reeks",
+            "queries": [
+              {
+                "name": "param_t_reeks_dag_reeks",
+                "query": {
+                  "datasetName": "t_reeks_dag",
+                  "parameters": [
+                    {
+                      "name": "reeks",
+                      "keyword": "reeks"
+                    }
+                  ],
+                  "disaggregated": false
+                }
+              },
+              {
+                "name": "param_t_reeks_info_reeks",
+                "query": {
+                  "datasetName": "t_reeks_info",
+                  "parameters": [
+                    {
+                      "name": "reeks",
+                      "keyword": "reeks"
+                    }
+                  ],
+                  "disaggregated": false
+                }
+              },
+              {
+                "name": "options_t_keuze_reeks",
+                "query": {
+                  "datasetName": "t_keuze",
+                  "fields": [
+                    {
+                      "name": "reeks",
+                      "expression": "`reeks`"
+                    },
+                    {
+                      "name": "reeks_associativity",
+                      "expression": "COUNT_IF(`associative_filter_predicate_group`)"
+                    }
+                  ],
+                  "disaggregated": false
+                }
+              }
+            ],
+            "spec": {
+              "version": 2,
+              "widgetType": "filter-single-select",
+              "frame": {
+                "showTitle": true,
+                "title": {
+                  "value": "6. Reekskiezer (parameter)",
+                  "fields": []
+                }
+              },
+              "encodings": {
+                "fields": [
+                  {
+                    "parameterName": "reeks",
+                    "queryName": "param_t_reeks_dag_reeks"
+                  },
+                  {
+                    "parameterName": "reeks",
+                    "queryName": "param_t_reeks_info_reeks"
+                  },
+                  {
+                    "fieldName": "reeks",
+                    "displayName": "6. Reekskiezer (parameter)",
+                    "queryName": "options_t_keuze_reeks"
+                  }
+                ]
+              }
+            }
+          },
+          "position": {
+            "x": 0,
+            "y": 21,
+            "width": 6,
+            "height": 2
+          }
+        },
+        {
+          "widget": {
+            "name": "t_uitleg_6",
+            "multilineTextboxSpec": {
+              "lines": [
+                "Kies hiernaast een reeks: de tabel en de lijn hieronder moeten dan die reeks tonen.\n"
+              ]
+            }
+          },
+          "position": {
+            "x": 6,
+            "y": 21,
+            "width": 6,
+            "height": 2
+          }
+        },
+        {
+          "widget": {
+            "name": "t_tb_info",
+            "queries": [
+              {
+                "name": "main_query",
+                "query": {
+                  "datasetName": "t_reeks_info",
+                  "fields": [
+                    {
+                      "name": "code",
+                      "expression": "`code`"
+                    },
+                    {
+                      "name": "bronsysteem",
+                      "expression": "`bronsysteem`"
+                    },
+                    {
+                      "name": "meetlocatie_code",
+                      "expression": "`meetlocatie_code`"
+                    },
+                    {
+                      "name": "begin_filter",
+                      "expression": "`begin_filter`"
+                    },
+                    {
+                      "name": "eind_filter",
+                      "expression": "`eind_filter`"
+                    },
+                    {
+                      "name": "bovenkant_peilbuis",
+                      "expression": "`bovenkant_peilbuis`"
+                    }
+                  ],
+                  "disaggregated": true
+                }
+              }
+            ],
+            "spec": {
+              "version": 2,
+              "widgetType": "table",
+              "frame": {
+                "showTitle": true,
+                "title": {
+                  "value": "6a. Tabel met parameter",
+                  "fields": []
+                }
+              },
+              "encodings": {
+                "columns": [
+                  {
+                    "fieldName": "code",
+                    "displayName": "code"
+                  },
+                  {
+                    "fieldName": "bronsysteem",
+                    "displayName": "bronsysteem"
+                  },
+                  {
+                    "fieldName": "meetlocatie_code",
+                    "displayName": "meetlocatie_code"
+                  },
+                  {
+                    "fieldName": "begin_filter",
+                    "displayName": "begin_filter"
+                  },
+                  {
+                    "fieldName": "eind_filter",
+                    "displayName": "eind_filter"
+                  },
+                  {
+                    "fieldName": "bovenkant_peilbuis",
+                    "displayName": "bovenkant_peilbuis"
+                  }
+                ]
+              },
+              "data": {
+                "queryName": "main_query"
+              }
+            }
+          },
+          "position": {
+            "x": 0,
+            "y": 23,
+            "width": 12,
+            "height": 3
+          }
+        },
+        {
+          "widget": {
+            "name": "t_l_reeks",
+            "queries": [
+              {
+                "name": "main_query",
+                "query": {
+                  "datasetName": "t_reeks_dag",
+                  "fields": [
+                    {
+                      "name": "datum",
+                      "expression": "`datum`"
+                    },
+                    {
+                      "name": "waarde",
+                      "expression": "`waarde`"
+                    },
+                    {
+                      "name": "bron",
+                      "expression": "`bron`"
+                    }
+                  ],
+                  "disaggregated": true
+                }
+              }
+            ],
+            "spec": {
+              "version": 3,
+              "widgetType": "line",
+              "frame": {
+                "showTitle": true,
+                "title": {
+                  "value": "6b. Lijn met parameter: daggemiddelde (m NAP)",
+                  "fields": []
+                }
+              },
+              "encodings": {
+                "x": {
+                  "fieldName": "datum",
+                  "scale": {
+                    "type": "temporal"
+                  }
+                },
+                "y": {
+                  "fieldName": "waarde",
+                  "scale": {
+                    "type": "quantitative"
+                  }
+                },
+                "color": {
+                  "fieldName": "bron",
+                  "scale": {
+                    "type": "categorical"
+                  }
+                }
+              },
+              "data": {
+                "queryName": "main_query"
+              }
+            }
+          },
+          "position": {
+            "x": 0,
+            "y": 26,
+            "width": 12,
+            "height": 6
+          }
+        }
+      ]
     }
   ],
   "uiSettings": {
