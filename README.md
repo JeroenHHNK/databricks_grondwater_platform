@@ -135,10 +135,16 @@ Add this repo once as a Git folder. Point notebooks and jobs at the project subf
 ## Tests
 
 ```bash
-uv run pytest tests                  # the central app's own code (platform_app/)
-cd data_validation && uv run --project .. pytest tests
-cd pastas && pip install -e ".[pastas,dev]" && pytest -m "not slow"
+uv sync
+uv run python scripts/run_tests.py          # every suite; skips the real Pastas fits
+uv run python scripts/run_tests.py --slow   # also the real fits
 ```
+
+It runs the suites one after the other, each from its own folder with its own pytest settings:
+`tests/` (the central app), `data_validation/`, `monitoring/`, `boxplots/` and `pastas/`. The Pastas
+suite gets `pastas==1.12.*` on the fly (`uv run --with`): it is not in `uv.lock`, because the
+Databricks App installs from that lock and does not need it. GitHub Actions runs the same on every
+push and pull request (`.github/workflows/tests.yml`), on Python 3.11 like the App.
 
 The Databricks background docs are in [`docs/`](docs/), shared by all projects: the source
 schema (`DATABRICKS_HANDOFF.md` §2.0), the grants and volume layout (`DATABRICKS_PERMISSIONS.md`)

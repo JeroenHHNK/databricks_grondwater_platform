@@ -7,7 +7,7 @@ name = "tarso-pipeline"
 version = "0.1.0"
 description = "Minimal Pastas/Tarso training pipeline for Databricks"
 readme = "README.md"
-requires-python = ">=3.12"
+requires-python = ">=3.11"  # the Databricks App runtime; tests pass on 3.11
 dependencies = [
     "pandas",
     "numpy",
