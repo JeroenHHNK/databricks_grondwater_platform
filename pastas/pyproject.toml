@@ -19,6 +19,17 @@ dependencies = [
 # Pastas is only needed from step 2 onwards (model training).
 pastas = ["pastas==1.12.*"]
 dev = ["pytest"]
+# The model comparison in research/ (branch research/alt-models); not used by the pipeline.
+# LightGBM 4.7 crashes in its C library on Windows (access violation in set_label).
+research = [
+    "statsmodels>=0.14",
+    "scikit-learn>=1.5",
+    "lightgbm==4.6.*",
+    "torch>=2.3",
+    "scipy",
+    "pyarrow",
+    "tabulate",
+]
 
 [tool.setuptools.packages.find]
 where = ["src"]
