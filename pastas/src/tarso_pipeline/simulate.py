@@ -105,6 +105,40 @@ def match_timestep(new: pd.Series, existing: pd.Series) -> pd.Series:
     return resampled
 
 
+HOLD_MODES = ("mean", "climatology")
+
+
+def hold_other_stresses(model, forcing_key: str, index: pd.DatetimeIndex, hold: str = "mean") -> list[str]:
+    """Set every stress outside the P/E stress model to its calibration level over ``index``.
+
+    ``mean``: one constant, the mean over the calibration period, so the stress only
+    contributed its impulses (its deviations from that mean) and adds a constant here.
+    ``climatology``: its mean per day of the year over the calibration period, for a
+    sensitivity run. Returns the names of the stress models it held.
+    """
+    if hold not in HOLD_MODES:
+        raise ValueError(f"hold must be one of {HOLD_MODES}, got {hold!r}")
+    tmin, tmax = model.settings.get("tmin"), model.settings.get("tmax")
+    held = []
+    for name, stressmodel in model.stressmodels.items():
+        if name == forcing_key:
+            continue
+        for stress in stressmodel.stress:
+            original = stress.series_original
+            window = original.loc[tmin:tmax] if tmin is not None else original
+            window = window if window.count() else original
+            if hold == "mean":
+                values = pd.Series(float(window.mean()), index=index)
+            else:
+                by_day = window.groupby(window.index.day_of_year).mean()
+                by_day = by_day.reindex(range(1, 367)).interpolate(limit_direction="both")
+                values = pd.Series(by_day.loc[index.day_of_year].to_numpy(), index=index)
+            values.name = original.name
+            stress.series_original = values
+        held.append(name)
+    return held
+
+
 def simulate_member(
     model,
     precipitation: pd.Series,
@@ -112,8 +146,12 @@ def simulate_member(
     member: str = "",
     warmup_years: int = WARMUP_YEARS,
     freq: str = "D",
+    hold: str = "mean",
 ) -> SimulationResult:
     """Replace the stresses and simulate, dropping the spin-up from the front.
+
+    Any stress model beside the P/E one (a water level, air pressure) has no IMPREX
+    counterpart; ``hold_other_stresses`` keeps it at its calibration mean (``hold``).
 
     The members start on 1951-01-01 with no history and the Tarso response
     carries a memory of years, so the first ``warmup_years`` are computed but
@@ -134,6 +172,7 @@ def simulate_member(
 
     stressmodel.stress[0].series_original = precipitation
     stressmodel.stress[1].series_original = evaporation
+    hold_other_stresses(model, key, precipitation.index, hold=hold)
 
     warmup_days = warmup_years * DAYS_PER_YEAR
     tmin = pd.Timestamp(precipitation.index[0]) + pd.DateOffset(years=warmup_years)

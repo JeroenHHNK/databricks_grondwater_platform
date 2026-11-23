@@ -13,6 +13,11 @@ dist/
 !tests/data/*.csv
 # Forcing is small and ships with the code: the cluster has no internet.
 !data/forcing/*.csv
+!data/forcing/local/*.csv
+!data/stresses/*.csv
+# Research result tables (small; the README cites them).
+!research/results/*.csv
+!research/accepted/results/*.csv
 
 # Databricks / local config with secrets
 .databricks/
