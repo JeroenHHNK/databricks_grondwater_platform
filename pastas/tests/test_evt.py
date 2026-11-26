@@ -7,13 +7,15 @@ from tarso_pipeline.evt import (
     MIN_BLOCKS,
     MIN_SPREAD,
     as_maxima,
+    diagnose,
     empirical_points,
     exceedance_probability,
     fit_all_families,
     fit_family,
     from_maxima,
     return_level,
-    select_family,
+    tail_threshold,
+    threshold_scan,
     trim_tail,
 )
 
@@ -68,9 +70,9 @@ def test_the_correction_changes_the_exceedance_probability():
 def test_the_uncorrected_level_is_materially_more_extreme():
     # The bug the spec warns about: without lam, trimmed levels drift out.
     kept, lam = trim_tail(SAMPLE, 450)
-    params = fit_family(kept, "gev")
-    corrected = return_level(params, "gev", 100, lam)
-    naive = return_level(params, "gev", 100, 1.0)
+    params = fit_family(kept, "gpd", tail_threshold(SAMPLE, 450))
+    corrected = return_level(params, "gpd", 100, lam)
+    naive = return_level(params, "gpd", 100, 1.0)
     assert naive > corrected
 
 
@@ -78,14 +80,15 @@ def test_a_return_period_below_the_trim_threshold_is_nan():
     # With lam = 0.361 the smallest computable T is 1/lam = 2.77, so T=2 cannot
     # be recovered from the trimmed sample and must not be invented.
     kept, lam = trim_tail(SAMPLE, 450)
-    params = fit_family(kept, "gev")
-    assert np.isnan(return_level(params, "gev", 2, lam))
-    assert np.isfinite(return_level(params, "gev", 5, lam))
+    params = fit_family(kept, "gpd", tail_threshold(SAMPLE, 450))
+    assert np.isnan(return_level(params, "gpd", 2, lam))
+    assert np.isfinite(return_level(params, "gpd", 5, lam))
 
 
-def test_the_whole_table_is_nan_at_t2_when_trimmed():
+def test_the_trimmed_families_are_nan_at_t2_but_the_gev_on_all_years_is_not():
     _, levels = fit_all_families(SAMPLE, exclude_first=450, t_list=(2, 10))
-    assert levels.loc[2].isna().all()
+    assert levels.loc[2, ["gpd", "exp"]].isna().all()
+    assert np.isfinite(levels.loc[2, "gev"])
     assert levels.loc[10].notna().all()
 
 
@@ -106,56 +109,64 @@ def test_the_trimmed_body_is_dropped_not_renumbered():
     assert trimmed["return_period"].min() == pytest.approx(705 / 254)
 
 
-# --- family selection ------------------------------------------------------
+# --- the threshold and the families ------------------------------------------
 
 
-@pytest.mark.parametrize(
-    "shape,expected_family,expected_verdict",
-    [(0.0, "exp", "gumbel"), (0.3, "gev", "weibull"), (-0.3, "gev", "frechet")],
-)
-def test_known_shapes_get_the_right_verdict(shape, expected_family, expected_verdict):
-    sample = genextreme.rvs(shape, 0, 1, size=704, random_state=7)
-    selection = select_family(sample, replicates=40)
-    assert selection.family == expected_family
-    assert selection.verdict == expected_verdict
+def test_the_threshold_sits_between_the_last_dropped_and_the_first_kept_value():
+    ordered = np.sort(SAMPLE)
+    assert tail_threshold(SAMPLE, 450) == pytest.approx((ordered[449] + ordered[450]) / 2)
+    assert tail_threshold(SAMPLE, 0) == ordered[0]
 
 
-def test_frechet_is_flagged_but_gumbel_and_weibull_are_not():
-    assert select_family(genextreme.rvs(-0.3, 0, 1, size=704, random_state=7),
-                         replicates=40).review_flag is True
-    assert select_family(genextreme.rvs(0.0, 0, 1, size=704, random_state=7),
-                         replicates=40).review_flag is False
+def test_gpd_and_exp_start_at_the_threshold_and_gev_uses_every_year():
+    params, _ = fit_all_families(SAMPLE, exclude_first=450, t_list=(10, 100))
+    u = tail_threshold(SAMPLE, 450)
+    assert params["gpd"]["params"][1] == pytest.approx(u)       # (shape, loc, scale)
+    assert params["exp"]["params"][0] == pytest.approx(u)       # (loc, scale)
+    assert params["gpd"]["n_fitted"] == params["exp"]["n_fitted"] == 254
+    assert params["gev"]["n_fitted"] == 704 and params["gev"]["lam"] == 1.0
 
 
-def test_too_few_blocks_is_insufficient_and_flagged():
-    selection = select_family(SAMPLE[:50], replicates=20)
-    assert selection.verdict == "insufficient"
-    assert selection.family is None and selection.review_flag
+@pytest.mark.parametrize("shape", [0.3, 0.0])
+def test_the_trimmed_gpd_recovers_the_t1000_level_where_a_trimmed_gev_overshoots(shape):
+    # The reason for the GPD: on the top of a GEV sample a GPD is right, a GEV is not.
+    from scipy.stats import genextreme
+
+    true = genextreme.ppf(1 - 1 / 1000, shape, 0, 0.15)
+    errors = {"gpd": [], "gev_trimmed": []}
+    for seed in range(40):
+        x = genextreme.rvs(shape, 0, 0.15, size=704, random_state=seed)
+        kept, lam = trim_tail(x, 450)
+        errors["gpd"].append(return_level(fit_family(kept, "gpd", tail_threshold(x, 450)), "gpd", 1000, lam) - true)
+        errors["gev_trimmed"].append(return_level(fit_family(kept, "gev"), "gev", 1000, lam) - true)
+    assert abs(np.mean(errors["gpd"])) < 0.08         # ~3 cm bias against ~11 cm spread
+    assert np.mean(errors["gev_trimmed"]) > 0.15
 
 
-def test_a_capped_head_is_degenerate_not_a_clean_fit():
-    # The Tarso failure mode: dmax caps the head and all 704 maxima are equal.
-    # A GEV fits that perfectly cleanly and meaninglessly.
+def test_the_threshold_scan_has_a_row_per_threshold_with_shape_and_levels():
+    scan = threshold_scan(SAMPLE, (100, 254, 400, 9999), (100, 1000))
+    assert scan["n_kept"].tolist() == [100, 254, 400]           # more than the sample is skipped
+    assert (scan["exclude_first"] + scan["n_kept"] == 704).all()
+    assert {"gpd_shape", "gpd_shape_se", "gpd_T1000", "exp_T1000", "threshold"} <= set(scan.columns)
+    assert scan["threshold"].is_monotonic_decreasing              # more kept = lower threshold
+    assert scan["gpd_shape_se"].is_monotonic_decreasing           # more kept = more certain
+
+
+def test_the_default_threshold_snaps_to_the_nearest_scanned_one():
+    from tarso_pipeline.evt import snap_exclude_first
+
+    assert snap_exclude_first(704, 450, (100, 250, 400)) == 454
+    assert snap_exclude_first(704, 450, (100, 254)) == 450
+    assert snap_exclude_first(704, 450, ()) == 450
+    assert snap_exclude_first(120, 20, (100, 150)) == 20        # 150 is more than there is
+
+
+def test_too_few_blocks_and_a_capped_head_are_flagged():
+    assert diagnose(SAMPLE[:50])["flag"] == "insufficient"
     capped = np.full(704, -1.2345) + np.random.default_rng(0).normal(0, 1e-6, 704)
-    selection = select_family(capped, replicates=20)
-    assert selection.verdict == "degenerate"
-    assert selection.family is None and selection.review_flag
     assert np.ptp(capped) < MIN_SPREAD
-
-
-def test_an_unresolved_shape_chooses_the_exponential():
-    selection = select_family(genextreme.rvs(0.0, 0, 1, size=704, random_state=3),
-                              replicates=60)
-    assert selection.family == "exp"
-    assert abs(selection.shape) < 2 * selection.shape_se
-
-
-def test_the_selection_records_why():
-    selection = select_family(SAMPLE, replicates=40)
-    row = selection.as_row()
-    assert set(row) >= {"chosen_family", "verdict", "shape", "shape_se",
-                        "n_blocks", "review_flag", "reason"}
-    assert row["reason"]
+    assert diagnose(capped)["flag"] == "degenerate"
+    assert diagnose(SAMPLE, 450)["flag"] == ""
 
 
 def test_min_blocks_matches_the_spec():
@@ -163,36 +174,32 @@ def test_min_blocks_matches_the_spec():
     assert MIN_SPREAD == 1e-3
 
 
-# --- all three families ----------------------------------------------------
-
-
 def test_all_three_families_are_fitted_and_reported():
-    params, levels = fit_all_families(SAMPLE, 0, (10, 100))
+    params, levels = fit_all_families(SAMPLE, 450, (10, 100))
     assert set(levels.columns) == set(FAMILIES)
     for family in FAMILIES:
         assert params[family] is not None
 
 
-def test_gpd_is_fitted_but_never_recommended():
-    from tarso_pipeline.evt import RECOMMENDABLE
+def test_return_level_rows_cover_every_threshold_of_the_scan():
+    from tarso_pipeline.evt_report import RETURN_LEVEL_COLUMNS, return_level_rows, tail_tables
 
-    assert "gpd" in FAMILIES
-    assert "gpd" not in RECOMMENDABLE
-    for shape in (-0.3, 0.0, 0.3):
-        sample = genextreme.rvs(shape, 0, 1, size=704, random_state=5)
-        assert select_family(sample, replicates=20).family != "gpd"
+    per_tail = {"wet": tail_tables(SAMPLE, "wet", exclude_first=450, t_list=(10, 1000), kept_grid=(100, 250, 400))}
+    rows = return_level_rows("id", "series_x", "run", per_tail)
+    assert list(rows[0]) == RETURN_LEVEL_COLUMNS
+    kept = {(r["family"], r["n_kept"]) for r in rows}
+    assert kept == {("emp", 704), ("gev", 704), *((f, k) for f in ("gpd", "exp") for k in (100, 250, 400))}
+    default = [r for r in rows if r["family"] == "gpd" and r["default_kept"]]
+    assert {r["n_kept"] for r in default} == {250}                # 704 - 450 = 254, snapped to 250
+    assert [r["level"] for r in rows if r["family"] == "emp" and r["return_period"] == 1000] == [None]
+    assert return_level_rows("id", "s", "run", {}) == []
 
 
-def test_return_level_rows_are_the_table_in_long_form():
-    import pandas as pd
+def test_the_dry_tail_comes_back_in_head_units():
+    from tarso_pipeline.evt_report import tail_tables
 
-    from tarso_pipeline.evt_report import RETURN_LEVEL_COLUMNS, return_level_rows
-
-    table = pd.DataFrame({"dr_gev": [-2.1, -2.3], "dr_emp": [-2.0, float("nan")], "wet_exp": [0.5, 0.7]},
-                         index=pd.Index([10, 100], name="return_period"))
-    rows = return_level_rows("id", "series_x", "run", table)
-    assert len(rows) == 6 and list(rows[0]) == RETURN_LEVEL_COLUMNS
-    by_key = {(r["tail"], r["family"], r["return_period"]): r["level"] for r in rows}
-    assert by_key[("dry", "gev", 100)] == -2.3 and by_key[("wet", "exp", 10)] == 0.5
-    assert by_key[("dry", "emp", 100)] is None
-    assert return_level_rows("id", "s", "run", None) == []
+    head = -2.0 - np.abs(SAMPLE) * 0.1                            # minima of a head around -2 m
+    data = tail_tables(head, "dry", exclude_first=450, t_list=(10, 100))
+    assert (data["levels"]["emp"] < -2.0).all()
+    assert data["levels"].loc[100, "gpd"] < data["levels"].loc[10, "gpd"]   # rarer = lower
+    assert data["threshold"] < -2.0

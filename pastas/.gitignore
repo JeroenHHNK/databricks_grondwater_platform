@@ -13,6 +13,13 @@ dist/
 !tests/data/*.csv
 # Forcing is small and ships with the code: the cluster has no internet.
 !data/forcing/*.csv
+!data/forcing/local/*.csv
+!data/stresses/*.csv
+# ... except the archived pumping-station records (research only, large)
+data/stresses/archive/
+# Research result tables (small; the README cites them).
+!research/results/*.csv
+!research/accepted/results/*.csv
 
 # Databricks / local config with secrets
 .databricks/
@@ -27,3 +34,6 @@ dist/
 # (notebooks/analysis/export_results.py) and the family picks made in the app.
 !results_export/**/*.csv
 !family_choice/*.csv
+
+# Local runs of scripts/run_local.py (models, plots, tables)
+local_runs/

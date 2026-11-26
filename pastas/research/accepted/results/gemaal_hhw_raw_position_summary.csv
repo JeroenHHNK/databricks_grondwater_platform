@@ -1,0 +1,3 @@
+polder,level,series,prefer_up (dAIC<-2),prefer_ip (dAIC>2),sign test p,median dAIC up-ip,median dAIC up vs base,median dAIC ip vs base,median dR2 up,median dR2 ip,median gain up,median gain ip
+Heerhugowaard,lower,28,17,9,0.169,-3.3,-12.9,-6.7,0.007,0.006,0.54,0.32
+Heerhugowaard,upper,42,17,18,1.0,1.1,-10.7,-10.7,0.006,0.006,0.39,0.21

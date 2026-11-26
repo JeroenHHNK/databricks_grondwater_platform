@@ -391,6 +391,22 @@ def maak_profiel_figuren(
         )
     )
 
+    # Laagste en hoogste gemeten stand per peilbuis, op dezelfde manier tot freatische lijn
+    # verbonden als het gemiddelde: samen de band rond de gemiddelde freatische lijn.
+    bereik_lijnen: dict[str, DataFrame] = {}
+    for sleutel, functie in (("min", np.min), ("max", np.max)):
+        x_lijn, y_lijn = analyse.bouw_geclipte_freatische_lijn(
+            dijkprofiel,
+            buitenwaterstand_gemiddeld,
+            x_peilbuis,
+            [float(functie(data)) for data in stijghoogtes if len(data) > 0],
+            x_ts_min,
+            x_ts_max,
+            teensloot_peil,
+            heeft_kruin_peilbuis,
+        )
+        bereik_lijnen[sleutel] = DataFrame({"x": x_lijn, "y": y_lijn})
+
     # Data voor profiel plot (hoofdprofiel + buitenwaterstand tijdserie)
     kolommen_voor_profielplot = stijghoogte_namen.copy()
     if BUITENWATERSTAND_KOLOM in ts_pb_gegevens.columns:
@@ -405,6 +421,7 @@ def maak_profiel_figuren(
         "x_peilbuis": x_peilbuis,
         "stijghoogtes": stijghoogtes,
         "gem_waterstanden": gem_waterstanden,
+        "bereik_lijnen": bereik_lijnen,
         "freatische_lijn": freatische_lijn,
         "plot_schematisatie": plot_schematisatie,
         "x_ts_min": x_ts_min,

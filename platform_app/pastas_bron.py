@@ -14,7 +14,9 @@ export is used and the reason is returned with the data. Either way the result i
 latest run per series and model type (`tarso_pipeline.results.latest_run_sql`).
 
 The family picks are always the git file `pastas/family_choice/<prefix>_family_choice.csv`:
-the app writes it (locally) and the Databricks table is loaded from it.
+the app writes it (locally) and the Databricks table is loaded from it. The same goes for
+the model a person picked for a series, over the automatic pick of `<prefix>_model_selection`:
+`pastas/model_choice/<prefix>_model_choice.csv`.
 """
 
 from __future__ import annotations
@@ -26,7 +28,7 @@ import pandas as pd
 from pandas import DataFrame
 
 from modules import databricks_live
-from tarso_pipeline import results
+from tarso_pipeline import results, selection
 from tarso_pipeline.paths import DATA_BASES, TABLE_PREFIX, UNVALIDATED, VALIDATED, output_table
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -78,15 +80,23 @@ def prefix(basis: str) -> str:
     return TABLE_PREFIX[basis]
 
 
-def plot(basis: str, series_name: str, kind: str) -> Path | None:
-    """The exported extremes figure of one model (`results.PLOT_KINDS`), or None.
+def plot(basis: str, series_name: str, kind: str, model_type: str = "tarso") -> Path | None:
+    """The exported figure of one model (`results.PLOT_KINDS`), or None.
 
     Always from git (`results_export/<prefix>/plots/`): the figures live on the volume,
     which the app cannot read.
     """
-    pad = results.plot_path(PASTAS, basis, series_name, kind)
-    return pad if pad.is_file() else None
+    return results.find_plot(PASTAS, basis, series_name, model_type, kind)
+
+
+def modelkeuze_pad(basis: str) -> Path:
+    return selection.model_choice_path(PASTAS, basis)
+
+
+def lees_modelkeuze(basis: str) -> DataFrame:
+    """The model a person picked per series (git: `pastas/model_choice/<prefix>_model_choice.csv`)."""
+    return selection.read_model_choice(modelkeuze_pad(basis))
 
 
 __all__ = ["BASIS_LABEL", "DATA_BASES", "EXPORT", "GEEN", "LIVE", "Resultaat", "keuze_pad", "lees",
-           "lees_keuze", "plot", "prefix"]
+           "lees_keuze", "lees_modelkeuze", "modelkeuze_pad", "plot", "prefix"]

@@ -13,7 +13,7 @@ from pathlib import Path
 # --- Unity Catalog: altijd drie-delige namen -------------------------------
 # `spark.catalog.currentCatalog()` geeft de workspace-naam (dbw_hhnkda_prd_05)
 # terug, niet een catalog waarop je kunt queryen. Een twee-delige naam vindt
-# daarom niets. Zie docs/DATABRICKS_PERMISSIONS.md §7.
+# daarom niets. Zie docs/DATABRICKS_PERMISSIONS.md §7 (in de root van de repo).
 
 # Bron: alleen-lezen. Nooit naar gold_prd schrijven.
 TBL_METING = "gold_prd.hl_grondwaterpeilmeting.meting"

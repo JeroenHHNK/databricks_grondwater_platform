@@ -1,0 +1,10 @@
+scenario,passed,gained,lost,p,Heerhugowaard_upper,Heerhugowaard_lower,Heerhugowaard_passed,Heerhugowaard_r2_holdout_median
+baseline,27,0.0,0.0,1.0,13,14,27,0.381
+up,32,5.0,0.0,0.0625,17,15,32,0.437
+ip,30,3.0,0.0,0.25,15,15,30,0.395
+pos,32,5.0,0.0,0.0625,17,15,32,0.417
+upfar,28,1.0,0.0,1.0,14,14,28,0.398
+ipfar,29,2.0,0.0,0.5,14,15,29,0.422
+posfar,29,2.0,0.0,0.5,14,15,29,0.402
+radar,31,4.0,0.0,0.125,16,15,31,0.517
+series,70,,,,42,28,70,

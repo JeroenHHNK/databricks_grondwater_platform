@@ -1,0 +1,48 @@
+# Pastas pipeline: the settings that hold for every series (tarso_pipeline.settings).
+#
+# Read by scripts/run_local.py and the Databricks notebooks fit_pastas_models,
+# run_extremes (the model selection) and export_results. A notebook widget left blank
+# takes the value from here. Per-series exceptions go in series_overrides.csv, not here.
+# A key left out falls back to the built-in default; "off" switches an optional rule off.
+
+[fit]
+# Every series is fitted with each of these (radar types only in a polder with radar).
+# Empty = tarso_pipeline.fit.EXTENDED_MODEL_TYPES.
+model_types = [
+    "tarso", "linear_exp", "linear_gamma", "linear_dexp", "linear_fourparam",
+    # + Markermeer level (Edam) and air pressure (KNMI 240)
+    "linear_exp_lake_baro", "linear_gamma_lake_baro", "linear_dexp_lake_baro", "linear_fourparam_lake_baro",
+    "flex_exp_lake_baro", "flex_gamma_lake_baro",
+    # ... on the polder's radar precipitation
+    "linear_exp_lake_baro_radar", "linear_gamma_lake_baro_radar", "linear_dexp_lake_baro_radar",
+    "linear_fourparam_lake_baro_radar", "flex_exp_lake_baro_radar", "flex_gamma_lake_baro_radar",
+    # ... + the soil-moisture bucket ([bucket] below)
+    "linear_exp_lake_baro_bucket", "linear_gamma_lake_baro_bucket", "linear_dexp_lake_baro_bucket",
+    "linear_fourparam_lake_baro_bucket", "flex_exp_lake_baro_bucket", "flex_gamma_lake_baro_bucket",
+    "linear_exp_lake_baro_bucket_radar", "linear_gamma_lake_baro_bucket_radar", "linear_dexp_lake_baro_bucket_radar",
+    "linear_fourparam_lake_baro_bucket_radar", "flex_exp_lake_baro_bucket_radar", "flex_gamma_lake_baro_bucket_radar",
+]
+holdout = 0.3      # the last 30 % of the observations is held out for r2_holdout (0 = off)
+min_days = 365     # a series needs this span after cleaning
+noise = "none"     # none, ar1 or arma
+
+[selection]
+# Per series, among the models that pass the checks (else all) and do not run away in
+# the extremes (tarso_pipeline.selection). In this order, each drops a candidate only
+# while one is left; then the lowest AIC wins.
+aic_tolerance = 2.0              # a model with fewer parameters within this AIC of the lowest wins
+holdout_vs_tarso = 0.05          # a. drop r2_holdout more than this below Tarso's
+max_r2_loss = 0.10               # R. drop R2 more than this below the best R2 left (so b-d cannot give up the fit)
+holdout_vs_without_bucket = 0.05 # b. drop a bucket model with r2_holdout more than this below the same model without it
+holdout_gap = 0.10               # c. drop r2_holdout more than this below the best one left
+min_holdout = "off"              # d. drop r2_holdout below this
+runaway_margin_m = 1.5           # T=100 more than this beyond the observed range = runaway
+# Chosen on the run of 2026-11-25 (160 series): the same 122 passed, median r2_holdout of
+# the picks 0.57 -> 0.61 (lowest quarter 0.15 -> 0.31), median R2 0.861 -> 0.859
+# (docs/experiments/2026-11-26_selection_holdout.md).
+
+[bucket]
+# The root-zone soil-moisture bucket of the *_bucket types (tarso_pipeline.inputs.bucket_deficit),
+# chosen on the validated Beemster/Purmer series (docs/experiments/2026-11-24_drought.md).
+smax_mm = 150.0    # root-zone storage
+lp = 0.7           # evaporation is reduced below this share of Smax

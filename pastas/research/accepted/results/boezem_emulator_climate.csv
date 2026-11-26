@@ -1,0 +1,3 @@
+series,years,mean,std_cm,p99,annual_max_median,annual_max_p90,max
+observed 2019-2026,8,-0.481,1.75,-0.433,-0.42,-0.406,-0.404
+IMPREX emulated,800,-0.479,0.97,-0.459,-0.454,-0.443,-0.398

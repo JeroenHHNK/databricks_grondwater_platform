@@ -9,11 +9,99 @@ all three projects.
 | [`boxplots/`](boxplots/README.md) | Boxplots peilbuizen | Cross-sections with soil build-up, wells and heads; the **Boxplots** section of the app, and its notebooks | `JeroenHHNK/databricks_boxplots-pipeline` (`development`) |
 | [`data_validation/`](data_validation/README.md) | Groundwater data validation | Source copy → automated checks → manual review; the **Data validation** section of the app, and its Databricks job | `JeroenHHNK/databricks_data_validation` (`main`) |
 | [`pastas/`](pastas/README.md) | Pastas/Tarso pipeline | Model fits and extremes on validated or unvalidated data, Databricks notebooks; the **Pastas** section of the app reads their results | `JeroenHHNK/databricks_pastas_pipeline` (`main`) |
+| [`monitoring/`](monitoring/README.md) | Monitoring | The daily job that writes the `monitoring_*` tables, and the generator of the `Grondwater_Monitoring` dashboard | new |
+| [`databricks_dashboard/`](databricks_dashboard/README.md) | Dashboards | The Databricks AI/BI dashboards (`.lvdash.json`): what each one monitors and with which data | new |
 
 Each project came in with its full git history (`git log -- boxplots/` shows it) and keeps
-its own `pyproject.toml`, `docs/`, notebooks, tests and data. Every project finds its
+its own `pyproject.toml`, notebooks, tests and data. Every project finds its
 files by walking up to its **own** `pyproject.toml`, so its notebooks and scripts work
 unchanged from inside its folder.
+
+## How the repository works
+
+### From measurement to return level
+
+```
+gold_prd (read-only source: heads, series, locations)      KNMI / RWS / IMPREX (forcing, in git)
+   │                                                                │
+   ▼  data_validation, on Databricks (notebooks 00-02)              │
+copy + one CSV per series ──git──► laptop: automatic flags, then a person
+                                    reviews in the app (approve / reject / correct)
+                                           │  review stores ──git──►
+                                           ▼
+             Databricks 03_validated_to_delta ──► validated_meting (Delta)
+                                           │
+                                           ▼
+pastas, on Databricks (or scripts/run_local.py on a laptop)  ◄───────┘
+   fit every model type per series ─► checks ─► IMPREX extremes ─► one model picked per series
+   ──► valid_pastas_* / unvalid_pastas_* tables, .pas files on the volume
+                                           │  export_results ──git──► (or live SQL)
+                                           ▼
+the app (Databricks App, Streamlit): Boxplots cross sections with return levels, Peilbuizen,
+Pastas (models, picks), Data validation          monitoring: daily job ─► Grondwater_Monitoring dashboard
+```
+
+1. **Data validation** ([`data_validation/`](data_validation/README.md)): copies the heads from the source, flags suspect hours automatically, and lets a person approve, reject or correct them. The approved hours become `validated_meting`.
+2. **Pastas** ([`pastas/`](pastas/README.md)): fits time-series models that explain each head from rain and evaporation (plus lake level, air pressure and a soil-moisture bucket), checks them, and picks one per series. It drives the picked models with 16 × 50 years of synthetic climate (IMPREX) to estimate how high or low the head gets once in T years.
+3. **Boxplots** ([`boxplots/`](boxplots/README.md)): the dike cross sections, with the wells, the heads and those return levels.
+4. **Monitoring** ([`monitoring/`](monitoring/README.md), [`databricks_dashboard/`](databricks_dashboard/README.md)): a daily job and a dashboard showing what is measured, reviewed and modelled, and which models are up for review.
+
+### Where things run
+
+| where | what | why there |
+|---|---|---|
+| **Databricks** (jobs, notebooks) | everything that reads `gold_prd` or writes Delta tables: the source copy, `validated_meting`, the Pastas runs, monitoring | the data and the compute are there |
+| **Laptop** | the review (saving decisions), picks in the app, `pastas/scripts/run_local.py`, research, tests | a Databricks App cannot save files or push to git |
+| **Databricks App** | the central app, read-only (`VALIDATION_READ_ONLY=1`) | for everyone to look at |
+
+`gold_prd` is never written to. Everything we write goes to `waterkeringbeheer_prd.jvanruitenbeek` and the `misc_files` volume.
+
+### Git carries data between the laptop and Databricks
+
+The laptop and Databricks share no file system, so some data travels through this repository. **Pull before a run, push after saving.**
+
+| what | from → to | where in the repo |
+|---|---|---|
+| one CSV per series, for the review | Databricks → laptop | `data_validation/input_output/output_databricks/` |
+| review decisions (approve / reject / correction / note) | laptop → Databricks | `data_validation/input_output/output_repository/` |
+| family and model picks made in the app | laptop → Databricks | `pastas/family_choice/`, `pastas/model_choice/` |
+| model settings and per-series exceptions | laptop → Databricks | `pastas/config/` |
+| KNMI, radar, lake and pressure forcing, IMPREX members | laptop → Databricks | `pastas/data/forcing/` |
+| the latest Pastas results, for the app until it reads live | Databricks (or a local run) → app | `pastas/results_export/` |
+
+### Changing something
+
+| to change | edit | then |
+|---|---|---|
+| a review decision | *Data validation → Review* in the app, locally | push, run `03_validated_to_delta` |
+| which model or family a series uses | *Pastas* in the app, locally | push, run `load_family_choice` |
+| a selection threshold, the candidate model types, the bucket | [`pastas/config/model_settings.toml`](pastas/config/README.md) | push; on Databricks rerun `run_extremes` (thresholds) or the full chain (model types, bucket) |
+| an exception for one series (no lake stress, extremes not trusted) | [`pastas/config/series_overrides.csv`](pastas/config/README.md) | push, rerun the fit |
+| a table name or volume path | `pastas/src/tarso_pipeline/paths.py` | – |
+| a page of the app | `platform_app/` (the navigation is `platform_app/nav.py`) | redeploy the app |
+
+Research that might change the pipeline is done on a `research/…` branch, in `pastas/research/`, and logged in [`docs/experiments/`](docs/experiments/README.md): the question, the decision rule fixed before the results, the results and the mistakes. [`docs/experiments/NEXT_STEPS.md`](docs/experiments/NEXT_STEPS.md) is where to continue.
+
+### Branches
+
+```
+feature/… · fix/… · research/…  ──PR──►  development  ──►  beta-0.1  ──►  main
+```
+
+- Work happens on a branch from `development` and goes back by pull request. Nothing goes straight to `main`.
+- `beta-0.1` is the release branch toward `v0.1.0-beta`.
+- GitHub Actions runs every test suite on each push and pull request.
+
+### Top-level layout
+
+| path | what |
+|---|---|
+| `app.py`, `app.yaml` | the central app and its Databricks App settings |
+| `platform_app/` | the app's pages that combine projects (Peilbuizen, Pastas, Refresh data, access checks) |
+| `pyproject.toml`, `uv.lock` | the app's dependencies (what the Databricks App installs) |
+| `boxplots/`, `data_validation/`, `pastas/`, `monitoring/`, `databricks_dashboard/` | the projects, each with its own README |
+| `docs/` | the shared Databricks docs (source schema, permissions, location registry) and `experiments/` |
+| `scripts/run_tests.py`, `tests/`, `.github/workflows/tests.yml` | every test suite, the app's tests, CI |
 
 ## The app
 
@@ -133,10 +221,18 @@ Add this repo once as a Git folder. Point notebooks and jobs at the project subf
 ## Tests
 
 ```bash
-uv run pytest tests                  # the central app's own code (platform_app/)
-cd data_validation && uv run --project .. pytest tests
-cd pastas && pip install -e ".[pastas,dev]" && pytest -m "not slow"
+uv sync
+uv run python scripts/run_tests.py          # every suite; skips the real Pastas fits
+uv run python scripts/run_tests.py --slow   # also the real fits
 ```
 
-The Databricks background docs (`docs/`) were nearly identical in the three projects
-and are kept per project for now.
+It runs the suites one after the other, each from its own folder with its own pytest settings:
+`tests/` (the central app), `data_validation/`, `monitoring/`, `boxplots/` and `pastas/`. The Pastas
+suite gets `pastas==1.12.*` on the fly (`uv run --with`): it is not in `uv.lock`, because the
+Databricks App installs from that lock and does not need it. GitHub Actions runs the same on every
+push and pull request (`.github/workflows/tests.yml`), on Python 3.11 like the App.
+
+The Databricks background docs are in [`docs/`](docs/), shared by all projects: the source
+schema (`DATABRICKS_HANDOFF.md` §2.0), the grants and volume layout (`DATABRICKS_PERMISSIONS.md`)
+and the location registry (`DATABRICKS_layer_cs_objecten.md`). `pastas/docs/PIPELINE_DATASETS.md`
+describes what the Pastas pipeline reads and writes.

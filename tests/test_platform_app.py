@@ -62,6 +62,22 @@ def test_catalogus_links_wells_to_series_and_zones():
     assert data.zones_in(cat) == ["BUKR", "BIKR"]
 
 
+@pytest.mark.parametrize("profiel, code, naam", [
+    ("BE_0072", "B_BE0072+3_BUKR_GMW_PB1_F-385", "BE_0072_BUKR_PB1"),
+    ("BE_0072", "B_BE0072+3_BIT_GMW_PB2_F-769", "BE_0072_BIT_PB2"),
+    ("BE_0188", "B_BE0188+23_KR_GMW_PB1_F-547", "BE_0188_KR_PB1"),
+    (None, "B_BE0072+3_BUKR_GMW_PB1_F-385", None),
+])
+def test_profielnaam(profiel, code, naam):
+    assert data.profielnaam(profiel, code) == naam
+
+
+def test_profielnamen_give_each_series_its_cross_section():
+    namen = data.profielnamen(data.catalogus(_bron(), _config())).set_index("meetreeks_id")
+    assert set(namen.index) == {"r1", "r2"}
+    assert "_BIKR" in namen.loc["r1", "profielnaam"]
+
+
 def test_samenvatting_and_breed():
     b = _bron()
     cat = data.catalogus(b, _config()).dropna(subset=["meetreeks_id"])
@@ -175,14 +191,56 @@ def test_return_levels_land_on_the_wells_of_the_cross_section():
                            "peilbuis": ["PB1", "PB2", "PB3"], "diepte_niveau": "hoofd"})
     niveaus = pd.DataFrame({"meetreeks_id": ["r1", "r1", "r1", "r9"], "model_type": "tarso",
                             "tail": ["wet", "wet", "dry", "wet"], "family": "gev",
-                            "return_period": [10, 100, 10, 10], "level": [0.5, 0.8, -2.0, 9.0],
-                            "family_source": "automatisch"})
+                            "return_period": [10, 100, 10, 10], "level": [0.5, 0.8, -2.0, 9.0]})
     pt = h.punten(putten, niveaus, [10, 100])
     assert set(pt["peilbuis"]) == {"PB1"} and len(pt) == 3          # r2 has no model, r9 is elsewhere
     fig = go.Figure(go.Scatter(x=[0], y=[0]), layout={"yaxis": {"range": [-1, 1]}})
     uit = h.voeg_toe(fig, pt)
     assert len(fig.data) == 1 and len(uit.data) == 4                  # the original is not changed
     assert tuple(uit.layout.yaxis.range) == (-2.3, 1.1)               # widened to show every marker
+
+
+def test_the_return_levels_come_from_the_model_each_series_uses():
+    from platform_app import herhalingstijden as h
+
+    putten = pd.DataFrame({"meetreeks_id": ["r1", "r2"], "x_profiel": [10.0, 30.0], "peilbuis": ["PB1", "PB2"],
+                           "diepte_niveau": "hoofd"})
+    niveaus = pd.DataFrame({"meetreeks_id": ["r1", "r1", "r2", "r2"],
+                            "model_type": ["tarso", "linear_gamma", "tarso", "linear_gamma"],
+                            "tail": "wet", "family": "emp", "return_period": 10, "level": [1.0, 2.0, 3.0, 4.0]})
+    gebruikt = pd.DataFrame({"meetreeks_id": ["r1", "r2"], "model_type": ["linear_gamma", "tarso"]})
+    pt = h.punten(putten, niveaus, [10], gebruikt).set_index("peilbuis")
+    assert pt["level"].to_dict() == {"PB1": 2.0, "PB2": 3.0}
+    assert pt["model_type"].to_dict() == {"PB1": "linear_gamma", "PB2": "tarso"}
+    assert h.punten(putten, niveaus, [10])["level"].tolist() == [1.0, 3.0]   # no selection: Tarso
+
+
+def test_the_models_table_gets_the_stamp_and_the_model_in_use():
+    from platform_app.pastas_pagina import voeg_selectie_toe
+
+    tabel = pd.DataFrame({"meetreeks_id": ["r1", "r1"], "model_type": ["tarso", "linear_dexp"]})
+    selectie = pd.DataFrame({"meetreeks_id": ["r1", "r1"], "model_type": ["tarso", "linear_dexp"],
+                             "passed": [False, True], "selected": [False, True], "d_aic_tarso": [0.0, -297.0]})
+    gebruikt = pd.DataFrame({"meetreeks_id": ["r1"], "model_type": ["linear_dexp"], "bron": ["automatisch"]})
+    uit = voeg_selectie_toe(tabel, selectie, gebruikt).set_index("model_type")
+    assert uit.loc["linear_dexp", ["stempel", "in_gebruik"]].tolist() == ["passed", "✓ automatisch"]
+    assert uit.loc["tarso", ["stempel", "in_gebruik"]].tolist() == ["", ""]
+    leeg = voeg_selectie_toe(tabel, pd.DataFrame(), gebruikt.iloc[:0])     # a run from before the selection
+    assert leeg["stempel"].tolist() == ["", ""] and leeg["in_gebruik"].tolist() == ["", ""]
+
+
+def test_a_return_period_is_one_line_across_the_wells_sorted_by_x():
+    import plotly.graph_objects as go
+    from platform_app import herhalingstijden as h
+
+    # PB2 has two filters at the same x: the line goes through their mean, not up and down.
+    pt = pd.DataFrame({"x_profiel": [30.0, 10.0, 30.0], "peilbuis": ["PB2", "PB1", "PB2"],
+                       "diepte_niveau": "hoofd", "tail": "wet", "return_period": 10,
+                       "level": [1.0, 0.5, 2.0], "family": "gev", "meetreeks_id": ["r2", "r1", "r3"]})
+    uit = h.voeg_toe(go.Figure(), pt)
+    lijn = uit.data[-1]
+    assert lijn.mode == "lines+markers"
+    assert list(lijn.x) == [10.0, 30.0] and list(lijn.y) == [0.5, 1.5]
 
 
 def test_pastas_results_come_from_the_export_when_there_is_no_warehouse(monkeypatch, tmp_path):
@@ -200,3 +258,34 @@ def test_pastas_results_come_from_the_export_when_there_is_no_warehouse(monkeypa
                   "r2": [0.1, 0.9]}).to_csv(uit / "fit_metrics.csv", index=False)
     r = pastas_bron.lees("validated", "fit_metrics")
     assert r.bron == pastas_bron.EXPORT and r.data["r2"].tolist() == [0.9]   # the latest run only
+
+
+def test_the_family_overview_shows_per_model_what_is_picked():
+    from platform_app.pastas_familie import overzicht
+
+    tabel = pd.DataFrame({"meetreeks_id": ["a", "b", "c"], "model_type": "tarso",
+                          "series_name": ["sa", "sb", "sc"], "code": ["A", "B", "C"]})
+    keuze = pd.DataFrame({"meetreeks_id": ["a", "a", "b"], "series_name": ["sa", "sa", "sb"],
+                          "model_type": "tarso", "tail": ["dry", "wet", "wet"], "family": ["gpd", "exp", "gev"],
+                          "n_kept": ["200", "", ""], "note": ["lang", "", ""], "chosen_by": "jeroen",
+                          "chosen_at": "2026-11-12T15:09:09+01:00"})
+    uit = overzicht(tabel, keuze).set_index("series_name")
+    # b's only pick is an old gev one, which no longer counts.
+    assert uit["status"].to_dict() == {"sa": "klaar", "sb": "open", "sc": "open"}
+    assert uit.loc["sa", ["droog", "drempel droog", "drempel nat", "notitie droog"]].tolist() == [
+        "GPD (staart vlakt af)", "200", "standaard", "lang"]
+    assert uit.loc["sb", "nat"] == "gev (opnieuw kiezen)" and uit.loc["sb", "droog"] == "–"
+    assert uit.loc["sa", "op droog"] == "2026-11-12 15:09"
+
+
+def test_bronnen_show_the_forcing_source_with_a_fallback_for_old_rows():
+    from platform_app.pastas_pagina import voeg_bronnen_toe
+
+    tabel = pd.DataFrame({"model_type": ["a", "b", "c"], "forcing_station": ["249", "249", 249.0],
+                          "precipitation_source": ["radar_purmer", None, None],
+                          "evaporation_source": ["knmi_249", None, None],
+                          "extra_stresses": ["lake,pressure", None, ""]})
+    uit = voeg_bronnen_toe(tabel)
+    assert uit["neerslag"].tolist() == ["KNMI radar (Purmer)", "KNMI 249 Berkhout", "KNMI 249 Berkhout"]
+    assert uit["verdamping"].tolist() == ["KNMI 249 Berkhout"] * 3
+    assert uit["extra"].tolist() == ["meerpeil (Edam) + luchtdruk (KNMI 240)", "–", "–"]

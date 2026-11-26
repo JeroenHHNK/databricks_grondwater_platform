@@ -3,7 +3,7 @@
 The notebooks and helpers that read the read-only source, replicate it per well, and move it
 in and out of git. Validation does **not** run here — it runs locally on the export
 (`../local_validation/validate.ipynb`). Read
-[`../docs/DATABRICKS_PERMISSIONS.md`](../docs/DATABRICKS_PERMISSIONS.md) first — the grants
+[`docs/DATABRICKS_PERMISSIONS.md`](../../docs/DATABRICKS_PERMISSIONS.md) first — the grants
 are asymmetric (read `gold_prd`, write only `waterkeringbeheer_prd`).
 
 ## Layout

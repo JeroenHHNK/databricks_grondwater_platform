@@ -8,6 +8,9 @@ Boxplots plots use) and the dike zone read from the well code.
 
 from __future__ import annotations
 
+import re
+from types import SimpleNamespace
+
 import pandas as pd
 from pandas import DataFrame
 
@@ -67,6 +70,43 @@ def catalogus(bron: databricks_reeksen.Bron, config: DataFrame | None = None) ->
         "keuze": rijen["keuze"],
     })
     return uit.sort_values(["project", "dwarsprofiel", "diepte_niveau", "x_profiel"], ignore_index=True)
+
+
+_FILTER_REGEX = re.compile(r"_(PB\d+)")
+_LOSSE_ZONE_REGEX = re.compile(r"\+[\d.]+_([A-Z]+)_(?:GMW|PB)")
+
+
+def profielnaam(dwarsprofiel: object, code: object) -> str | None:
+    """`BE_0072_BUKR_PB1`: cross section, zone and filter of a well, from its code."""
+    if not isinstance(dwarsprofiel, str) or not dwarsprofiel:
+        return None
+    filt = _FILTER_REGEX.search(code) if isinstance(code, str) else None
+    zone = zone_token(code)
+    if zone == ONBEKEND:  # a token the zone list does not know (KR, …): the one after "+metres_"
+        los = _LOSSE_ZONE_REGEX.search(code) if isinstance(code, str) else None
+        zone = los.group(1) if los else None
+    return "_".join(d for d in (dwarsprofiel, zone, filt.group(1) if filt else None) if d)
+
+
+def profielnamen(cat: DataFrame) -> DataFrame:
+    """meetreeks_id -> dwarsprofiel and profielnaam, from a catalogue (a series in more cross
+    sections gets them all, comma-separated)."""
+    rijen = cat.dropna(subset=["meetreeks_id"]).assign(
+        profielnaam=lambda d: [profielnaam(p, c) for p, c in zip(d["dwarsprofiel"], d["code"])])
+    if rijen.empty:
+        return DataFrame(columns=["meetreeks_id", "project", "dwarsprofiel", "profielnaam"])
+
+    def samen(waarden) -> str:
+        return ", ".join(dict.fromkeys(str(w) for w in waarden if isinstance(w, str) and w))
+
+    return (rijen.groupby("meetreeks_id", as_index=False)
+            .agg(project=("project", samen), dwarsprofiel=("dwarsprofiel", samen), profielnaam=("profielnaam", samen)))
+
+
+def profielnamen_uit_reeksen(reeksen: DataFrame, config: DataFrame | None = None) -> DataFrame:
+    """`profielnamen` straight from the series list: the same pick as the cross sections,
+    without the daily heads."""
+    return profielnamen(catalogus(SimpleNamespace(reeksen=reeksen), config))
 
 
 def dagwaarden(bron: databricks_reeksen.Bron, meetreeks_ids: list[str]) -> DataFrame:
