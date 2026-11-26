@@ -29,6 +29,7 @@ from review_app import common
 from tarso_pipeline import results, selection
 from tarso_pipeline.evt import EMPIRICAL_MAX_T, INDICATIVE_MIN_T
 from tarso_pipeline.fit import DEFAULT_MODEL_TYPES, MODEL_LABELS
+from tarso_pipeline.inputs import source_label
 from tarso_pipeline.paths import DATA_BASES, UNVALIDATED, VALIDATED
 
 from . import pastas_bron as bron
@@ -39,6 +40,26 @@ KLEUR = {"observed": "#4a4a4a", "simulated": "#2a78d6", "ander": "#eb6834"}
 FAMILIE_KLEUR = {"gpd": "#2a78d6", "exp": "#eb6834", "gev": "#8a8984", "emp": "#0b0b0b"}
 STAART_KLEUR = {"dry": "#eb6834", "wet": "#2a78d6"}
 GEEN = "geen"  # no pick: the tail gets no return levels
+STRESS_LABELS = {"lake": "meerpeil (Edam)", "pressure": "luchtdruk (KNMI 240)",
+                 "bucket": "bodemvochtbakje (150 mm)"}
+
+
+def voeg_bronnen_toe(tabel: DataFrame) -> DataFrame:
+    """`neerslag`, `verdamping` and `extra` per model: where its forcing came from.
+
+    From `precipitation_source` / `evaporation_source` / `extra_stresses` of the fit; a fit
+    from before those columns existed used the KNMI station in `forcing_station` for both.
+    """
+    tabel = tabel.copy()
+    station = (tabel["forcing_station"] if "forcing_station" in tabel else pd.Series(None, index=tabel.index))
+    station = station.map(lambda s: None if pd.isna(s) or s == "" else f"knmi_{str(s).removesuffix('.0')}")
+    for kolom, bron_kolom in (("neerslag", "precipitation_source"), ("verdamping", "evaporation_source")):
+        waarde = tabel[bron_kolom] if bron_kolom in tabel else pd.Series(None, index=tabel.index)
+        tabel[kolom] = waarde.where(waarde.notna() & waarde.astype(str).ne(""), station).map(source_label)
+    extra = tabel["extra_stresses"] if "extra_stresses" in tabel else pd.Series(None, index=tabel.index)
+    tabel["extra"] = extra.map(lambda e: "–" if pd.isna(e) or e == "" else
+                               " + ".join(STRESS_LABELS.get(s, s) for s in str(e).split(",")))
+    return tabel
 
 
 @st.cache_data(ttl=600, show_spinner="Pastas-resultaten laden…", max_entries=40)
@@ -122,7 +143,7 @@ def _overzicht(basis: str) -> DataFrame | None:
                 "toegang daarna `analysis/export_results.py` en push `pastas/results_export/`.")
         return None
     st.caption(f"{bron.prefix(basis)}_* · {_herkomst(metrics)}")
-    tabel = metrics.data.merge(_namen(), on="meetreeks_id", how="left")
+    tabel = voeg_bronnen_toe(metrics.data).merge(_namen(), on="meetreeks_id", how="left")
 
     checks = _lees(basis, "model_checks").data
     if not checks.empty:
@@ -384,7 +405,14 @@ def _modelvergelijking(basis: str, rij) -> None:
                 "`run_extremes.py` (die schrijft `<prefix>_model_selection`).")
         return
     tabel = eigen.assign(model=eigen["model_type"].map(lambda m: MODEL_LABELS.get(m, m))).sort_values("aic")
-    st.dataframe(tabel[[c for c in ("model", "selected", "passed", "pass_runs", "runaway", "n_param", "r2",
+    bronnen = _lees(basis, "fit_metrics").data
+    if not bronnen.empty:
+        bronnen = voeg_bronnen_toe(bronnen[bronnen["meetreeks_id"] == rij.meetreeks_id])
+        if "run_id" in bronnen:
+            bronnen = bronnen.sort_values("run_id").drop_duplicates("model_type", keep="last")
+        tabel = tabel.merge(bronnen[["model_type", "neerslag", "verdamping", "extra"]], on="model_type", how="left")
+    st.dataframe(tabel[[c for c in ("model", "neerslag", "verdamping", "extra", "selected", "passed", "pass_runs",
+                                    "runaway", "n_param", "r2",
                                     "r2_holdout", "aic", "d_aic", "d_aic_tarso", "dry_T100", "wet_T100", "reason")
                         if c in tabel]], hide_index=True, width="stretch", column_config={
         "selected": st.column_config.CheckboxColumn("automatisch gekozen"),
@@ -401,7 +429,9 @@ def _modelvergelijking(basis: str, rij) -> None:
                                                      help="negatief = beter dan Tarso; < −2 telt als beter"),
         "dry_T100": st.column_config.NumberColumn("T100 droog", format="%.2f"),
         "wet_T100": st.column_config.NumberColumn("T100 nat", format="%.2f"),
-        "reason": "waarom"})
+        "reason": "waarom", "neerslag": st.column_config.TextColumn("neerslag", help="Bron van de neerslag"),
+        "verdamping": st.column_config.TextColumn("verdamping", help="Bron van de verdamping (Makkink)"),
+        "extra": st.column_config.TextColumn("extra stresses", help="Op het IMPREX-klimaat op hun gemiddelde gehouden")})
     st.caption("Automatische keuze: onder de modellen die de checks halen (anders alle), niet weggelopen en op de "
                "holdout niet slechter dan Tarso, de laagste AIC; een model met minder parameters binnen 2 AIC wint.")
 
@@ -438,6 +468,11 @@ def _detail(basis: str, rij) -> None:
     m[3].metric("Waarnemingen", f"{int(rij.nobs)}")
     if pd.notna(getattr(rij, "checks", None)):
         m[4].metric("Modelchecks", f"{int(rij.checks_ok)}/{int(rij.checks)} gehaald")
+    b = st.columns(3)
+    b[0].metric("Neerslag", getattr(rij, "neerslag", "–"), help="Bron van de neerslag waarop het model getraind is")
+    b[1].metric("Verdamping", getattr(rij, "verdamping", "–"), help="Bron van de (Makkink-)verdamping")
+    b[2].metric("Extra stresses", getattr(rij, "extra", "–"),
+                help="Naast neerslag en verdamping; op het IMPREX-klimaat op hun kalibratiegemiddelde gehouden")
     st.caption(f"run `{rij.run_id}` · {rij.tmin} t/m {rij.tmax} · `{rij.meetreeks_id}`"
                + (f" · **{rij.stempel}**" if getattr(rij, "stempel", "") else "")
                + (f" · in gebruik ({rij.in_gebruik[2:]})" if getattr(rij, "in_gebruik", "") else ""))
@@ -494,7 +529,8 @@ def render_modellen() -> None:
     sleutel = st.selectbox("Zoek een model", list(labels), index=list(labels).index(gevraagd) if gevraagd else None,
                            format_func=labels.get, placeholder="dwarsprofiel (BE_0072…), code, locatienaam of series_…")
 
-    kolommen = [c for c in ("profielnaam", "code", "cs_naam", "model_type", "in_gebruik", "stempel", "success", "evp",
+    kolommen = [c for c in ("profielnaam", "code", "cs_naam", "model_type", "neerslag", "verdamping", "extra",
+                            "in_gebruik", "stempel", "success", "evp",
                             "r2", "r2_holdout", "d_aic_tarso", "n_param", "rmse", "nobs", "checks_ok", "checks",
                             "familie_dry", "familie_wet", "series_name") if c in tabel]
     gekozen = st.dataframe(tabel[kolommen], hide_index=True, width="stretch", height=320, on_select="rerun",
@@ -514,6 +550,12 @@ def render_modellen() -> None:
                                    "(de runs-test telt niet mee)"),
                                "rmse": st.column_config.NumberColumn("RMSE", format="%.3f"),
                                "familie_dry": "familie droog", "familie_wet": "familie nat",
+                               "neerslag": st.column_config.TextColumn(
+                                   "neerslag", help="Bron van de neerslag: een KNMI-station of KNMI-radar per polder"),
+                               "verdamping": st.column_config.TextColumn(
+                                   "verdamping", help="Bron van de Makkink-verdamping"),
+                               "extra": st.column_config.TextColumn(
+                                   "extra stresses", help="Meerpeil en luchtdruk naast neerslag en verdamping"),
                                "profielnaam": st.column_config.TextColumn(
                                    "dwarsprofiel", help="Dwarsprofiel, zone en filter van de peilbuis "
                                    "(zoals in de Boxplots)")})

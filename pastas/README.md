@@ -8,16 +8,16 @@ For every groundwater series we:
 
 The Boxplots cross sections and the app show those return levels. The monitoring dashboard shows which series have a usable model.
 
-Everything runs on Databricks:
+Everything runs on Databricks (or, for the validated series, on a laptop with `scripts/run_local.py`):
 - **Code:** read from this Git folder.
 - **Source:** read-only, from `gold_prd`.
 - **Results:** written to our own schema `waterkeringbeheer_prd.jvanruitenbeek`. Model files go to the `misc_files` volume.
 
 ```
-meting (raw) or validated_meting (reviewed)        KNMI 249 Berkhout, daily P and Makkink E
+meting (raw) or validated_meting (reviewed)        KNMI 249 Berkhout P + Makkink E, radar P, lake, pressure
         │                                                       │
         ▼                                                       ▼
- build_manifest ──► fit_pastas_models: 5 model types per series, checks, holdout R²
+ build_manifest ──► fit_pastas_models: 29 model types per series (config/), checks, holdout R²
                             │  .pas files, fit_metrics, model_checks, simulations
                             ▼
                     run_extremes: each model × 16 IMPREX climate members → ~704 synthetic years
@@ -72,7 +72,7 @@ Turning the simulations into extremes:
 
 ## Which models
 
-Every series is fitted with five model types (`tarso_pipeline.fit.MODEL_SPECS`):
+The model types (`tarso_pipeline.fit.MODEL_SPECS`) build on five base types. Which ones every series is fitted with is set in [`config/model_settings.toml`](config/model_settings.toml) (`[fit] model_types`; by default the extended set below):
 
 | model type | recharge | response | parameters |
 |---|---|---|---|
@@ -81,6 +81,20 @@ Every series is fitted with five model types (`tarso_pipeline.fit.MODEL_SPECS`):
 | `linear_gamma` | linear | Gamma (A, n, a) | 4 (+ constant) |
 | `linear_dexp` | linear | DoubleExponential (A, α, a1, a2) | 5 (+ constant) |
 | `linear_fourparam` | linear | FourParam (A, n, a, b) | 5 (+ constant) |
+
+**The extended set (default since 2026-11-24, `EXTENDED_MODEL_TYPES`, 29 types since 2026-11-25).** The five above, plus:
+
+| model types | what is added |
+|---|---|
+| `linear_<rfunc>_lake_baro`, `flex_exp_lake_baro`, `flex_gamma_lake_baro` | the Markermeer level at Edam and air pressure (KNMI 240), each an instantaneous response (`ps.One`) on its anomaly from the calibration mean; `flex_*` is a soil-moisture bucket (`ps.rch.FlexModel`, `kv` fixed) |
+| `<type>_lake_baro_bucket` (the 6 types above) | also the deficit of a root-zone soil-moisture bucket (Smax 150 mm, ET reduced below 70 % full; `inputs.bucket_deficit`) from the model's own P and E, with an Exponential response of either sign; solved nested on the type without it (`fit.solve_model`) |
+| each of the above with `_radar` | precipitation from the KNMI radar pixel of the series' polder (Beemster, Purmer, Heerhugowaard) instead of Berkhout |
+
+- **Why:** on the 89 validated series lake + pressure took the passed models from 35 to 61, and the bucket from 60 to 65 (none lost, a better drought fit with the drought left out of the fit). The selection picks per series whichever model passes, on the station or on radar. See `docs/experiments/2026-11-24_gemaal-peilen.md` and `docs/experiments/2026-11-24_drought.md`.
+- **Logged per fit:** `precipitation_source` (`knmi_249`, `radar_purmer`, ...), `evaporation_source` and `extra_stresses`. The app shows them as *neerslag*, *verdamping* and *extra stresses*.
+- **Inputs:** `tarso_pipeline.inputs`, from `data/forcing/` (`radar_forcing_<polder>.csv`, `stress_lake_edam.csv`, `stress_pressure_240.csv`, built by `scripts/build_forcing_sources.py`).
+- **Return periods:** IMPREX has no lake level or air pressure, so they are held at their calibration mean, and the return periods are rain-driven, given a normal lake. Radar models get the IMPREX members scaled per month to their radar climate. The bucket is rebuilt from each member's own P and E (`InputLibrary.member_forcing`), so a dry IMPREX year has its own empty bucket.
+- **Radar types** are fitted only for series in a polder with a radar file. Elsewhere, a series gets 17 types.
 
 Why these five:
 - **Grid test:** a test on the validated series compared Tarso, Linear, Berendrecht, Peterson and FlexModel × four responses. It left these five.
@@ -111,8 +125,16 @@ A checklist that errors becomes one `checklist_error` row and passes nothing.
 
 1. **Candidates:** the fits that succeeded and do **not run away**. Running away means a T=100 level more than **1.5 m** beyond the measured range of the series (`eligible`, `runaway`).
 2. **"Passed" stamp:** R², memory, gain *and* bounds all pass (`passed`). If any candidate has the stamp, only those compete (`tier = passed`); otherwise all candidates do (`tier = best_effort`).
-3. **Holdout:** drop a candidate whose holdout R² is more than 0.05 below Tarso's. A lower AIC bought with worse prediction is overfitting.
+3. **Holdout:** a lower AIC bought with worse prediction is overfitting. In this order, each rule drops a candidate only while at least one is left:
+   - a. holdout R² more than 0.05 below Tarso's;
+   - R. calibration R² more than 0.10 below the best R² left, so the next rules cannot give up the fit;
+   - b. a bucket model with a holdout R² more than 0.05 below the same model without the bucket;
+   - c. holdout R² more than 0.10 below the best holdout left.
 4. **AIC:** the lowest AIC wins, but a model with fewer parameters within 2 AIC of the lowest wins over it.
+
+The thresholds are in [`config/model_settings.toml`](config/model_settings.toml). Rules R, b and c were added on 2026-11-26. On the run of 2026-11-25 they kept the same 122 of 160 passed, changed 37 picks (all with a better holdout, at most 0.095 lower R²) and took the median holdout R² of the picks from 0.57 to 0.61 ([the log](../docs/experiments/2026-11-26_selection_holdout.md)).
+
+Model types that [`config/series_overrides.csv`](config/README.md) excludes for a series are not fitted and never picked.
 
 The reason is in `reason`, in Dutch, for every model type.
 
@@ -203,7 +225,8 @@ Settings:
 - **Same parameters:** give every task the same `data_basis` and `run_folder`. The run folder defaults to today's date, so a job that crosses midnight would otherwise split.
 - **Saving and resuming:** the fit writes its results every `write_every` series (default 25). If a run stops, rerun it with the same `run_id` and `run_folder`; series that already have rows for that run are skipped. `<prefix>_simulations` keeps the newest `keep_simulation_runs` (3) runs per series and model type.
 - **First run:** run the fit with `limit_series=1` first. The `WRITE VOLUME` grant is separate from the table grant, and the notebook probes it with a throwaway file before fitting.
-- **Widgets:** `model_types` (comma-separated), `noise` (`none`/`ar1`/`arma`) and `holdout` (default 0.3) are widgets on the fit notebook.
+- **Widgets:** `model_types` (comma-separated), `noise` (`none`/`ar1`/`arma`), `holdout` and `min_days` are widgets on the fit notebook. Left blank, `model_types`, `holdout` and `min_days` take their value from [`config/model_settings.toml`](config/model_settings.toml).
+- **Settings and exceptions:** the settings for every series are in `config/model_settings.toml`, the exceptions for one series in `config/series_overrides.csv` (see [config/README.md](config/README.md)). Pull the repo before a run, so a change is picked up.
 - **Figures:** only the models in use get figures. The fit draws none (`save_plots=false`); `run_extremes` (`make_plots=in_use`) draws them after the pick, and `export_results` (`plot_models=in_use`) copies only those to git.
 
 ### Locally
@@ -219,7 +242,8 @@ python scripts/run_local.py --imprex-dir <IMPREX csv folder> --export
 - `--imprex-dir` also runs the extremes;
 - `--pooled-dir <pooled_extremes folder>` refits the pooled extremes of an earlier run;
 - `--export` writes to `results_export/valid_pastas/`;
-- `--model-types`, `--noise` and `--holdout` work as in the fit notebook, and `--workers` runs the extremes of that many models at once.
+- `--model-types`, `--noise` and `--holdout` work as in the fit notebook (defaults from `config/model_settings.toml`), and `--workers` runs the extremes of that many models at once;
+- `--reselect <run folder> --export` redoes only the model selection of a finished run, for example after changing `[selection]` in the settings. It takes minutes, not a refit.
 
 Run folders go to `local_runs/`, which is git-ignored.
 
@@ -242,20 +266,26 @@ src/tarso_pipeline/
   meting.py        SQL over the source: verdicts, manifest, duplicates
   clean.py         collapse duplicate timestamps + resample; counts recorded
   forcing.py, io.py, knmi.py, forcing_plot.py   forcing: load, coverage, KNMI download, chart
-  fit.py           model types, build_model, fit_series (never raises), holdout R²
+  fit.py           model types, build_model, solve_model (nested bucket solve), fit_series (never raises), holdout R²
+  inputs.py        per model type: station or radar P, lake and pressure stresses, the bucket; IMPREX per member
   fit_metrics.py   the fit_metrics row
   model_checks.py  the Brakenhoff (2022) checklist
   imprex.py, simulate.py, extremes.py, extremes_run.py   IMPREX members, simulation, block extremes
   evt.py, evt_report.py, evt_plots.py, uncertainty.py    return levels, plots, bootstrap
   selection.py     the stamp, the runaway check, the pick, the person's model choice
+  settings.py      config/model_settings.toml: the settings for every series
+  overrides.py     config/series_overrides.csv: exceptions for one series
   results.py       latest run per series, the levels per pick (shared with the app)
   model_plots.py   figures of the models in use
   paths.py         every table name, volume path and the data_basis switch
 notebooks/          see "Running it"
-scripts/            run_local.py, check_knmi.py
+config/             model_settings.toml, series_overrides.csv (see config/README.md)
+scripts/            run_local.py, check_knmi.py, build_forcing_sources.py (radar, lake, pressure)
 results_export/     the app's copy of the latest results (in git)
 family_choice/, model_choice/   the picks made in the app (in git)
-data/forcing/       the committed KNMI CSVs
+data/forcing/       the committed KNMI, radar, lake and pressure CSVs and the IMPREX members
+data/stresses/      daily pumping-station levels (research)
+research/           experiments that may change the pipeline (logs in ../docs/experiments/)
 docs/               PIPELINE_DATASETS.md: what the pipeline reads and writes (the shared Databricks docs are in ../docs/)
 tests/              pytest (no Spark; -m "not slow" skips the real fits)
 ```

@@ -57,3 +57,26 @@ def test_unknown_hold_mode_is_refused():
     model, *_ = _model()
     with pytest.raises(ValueError):
         hold_other_stresses(model, "Recharge", pd.date_range("1951", periods=3), hold="random")
+
+
+@pytest.mark.slow
+def test_simulate_member_uses_a_synthetic_stress_instead_of_holding_it():
+    model, precipitation, evaporation = _model()
+    member = pd.date_range("1951-01-01", "1960-12-31", freq="D")
+    p = pd.Series(np.resize(precipitation.to_numpy(), len(member)), member)
+    e = pd.Series(np.resize(evaporation.to_numpy(), len(member)), member)
+    level = pd.Series(np.sin(np.arange(len(member)) / 30.0) * 0.1, member)
+    simulate_member(model, p, e, warmup_years=2, synthetic={"level": level})
+    series = model.stressmodels["level"].stress[0].series_original
+    assert np.allclose(series.to_numpy(), level.to_numpy())
+    contribution = model.get_contribution("level", tmin="1954-01-01", tmax="1960-12-31", warmup=3650)
+    assert contribution.std() > 1e-4
+
+
+def test_synthetic_stress_for_an_unknown_stress_model_is_refused():
+    model, precipitation, evaporation = _model()
+    member = pd.date_range("1951-01-01", "1956-12-31", freq="D")
+    p = pd.Series(np.resize(precipitation.to_numpy(), len(member)), member)
+    e = pd.Series(np.resize(evaporation.to_numpy(), len(member)), member)
+    with pytest.raises(ValueError):
+        simulate_member(model, p, e, warmup_years=2, synthetic={"boezem": p})

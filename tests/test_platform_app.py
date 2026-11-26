@@ -276,3 +276,16 @@ def test_the_family_overview_shows_per_model_what_is_picked():
         "GPD (staart vlakt af)", "200", "standaard", "lang"]
     assert uit.loc["sb", "nat"] == "gev (opnieuw kiezen)" and uit.loc["sb", "droog"] == "–"
     assert uit.loc["sa", "op droog"] == "2026-11-12 15:09"
+
+
+def test_bronnen_show_the_forcing_source_with_a_fallback_for_old_rows():
+    from platform_app.pastas_pagina import voeg_bronnen_toe
+
+    tabel = pd.DataFrame({"model_type": ["a", "b", "c"], "forcing_station": ["249", "249", 249.0],
+                          "precipitation_source": ["radar_purmer", None, None],
+                          "evaporation_source": ["knmi_249", None, None],
+                          "extra_stresses": ["lake,pressure", None, ""]})
+    uit = voeg_bronnen_toe(tabel)
+    assert uit["neerslag"].tolist() == ["KNMI radar (Purmer)", "KNMI 249 Berkhout", "KNMI 249 Berkhout"]
+    assert uit["verdamping"].tolist() == ["KNMI 249 Berkhout"] * 3
+    assert uit["extra"].tolist() == ["meerpeil (Edam) + luchtdruk (KNMI 240)", "–", "–"]

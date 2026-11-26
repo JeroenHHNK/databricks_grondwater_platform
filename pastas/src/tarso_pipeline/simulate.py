@@ -108,7 +108,8 @@ def match_timestep(new: pd.Series, existing: pd.Series) -> pd.Series:
 HOLD_MODES = ("mean", "climatology")
 
 
-def hold_other_stresses(model, forcing_key: str, index: pd.DatetimeIndex, hold: str = "mean") -> list[str]:
+def hold_other_stresses(model, forcing_key: str, index: pd.DatetimeIndex, hold: str = "mean",
+                        skip: tuple = ()) -> list[str]:
     """Set every stress outside the P/E stress model to its calibration level over ``index``.
 
     ``mean``: one constant, the mean over the calibration period, so the stress only
@@ -121,7 +122,7 @@ def hold_other_stresses(model, forcing_key: str, index: pd.DatetimeIndex, hold: 
     tmin, tmax = model.settings.get("tmin"), model.settings.get("tmax")
     held = []
     for name, stressmodel in model.stressmodels.items():
-        if name == forcing_key:
+        if name == forcing_key or name in skip:
             continue
         for stress in stressmodel.stress:
             original = stress.series_original
@@ -147,11 +148,15 @@ def simulate_member(
     warmup_years: int = WARMUP_YEARS,
     freq: str = "D",
     hold: str = "mean",
+    synthetic: dict | None = None,
 ) -> SimulationResult:
     """Replace the stresses and simulate, dropping the spin-up from the front.
 
     Any stress model beside the P/E one (a water level, air pressure) has no IMPREX
     counterpart; ``hold_other_stresses`` keeps it at its calibration mean (``hold``).
+    ``synthetic`` maps a stress model name to a synthetic series for this member, on the
+    same reference as the series the model was fitted on (e.g. an emulated boezem level
+    minus the same calibration mean); those stress models are replaced, not held.
 
     The members start on 1951-01-01 with no history and the Tarso response
     carries a memory of years, so the first ``warmup_years`` are computed but
@@ -172,7 +177,16 @@ def simulate_member(
 
     stressmodel.stress[0].series_original = precipitation
     stressmodel.stress[1].series_original = evaporation
-    hold_other_stresses(model, key, precipitation.index, hold=hold)
+    synthetic = synthetic or {}
+    unknown = set(synthetic) - set(model.stressmodels)
+    if unknown:
+        raise ValueError(f"synthetic stresses for unknown stress models: {sorted(unknown)}")
+    for name, series in synthetic.items():
+        stress = model.stressmodels[name].stress[0]
+        values = series.reindex(precipitation.index)
+        values.name = stress.series_original.name
+        stress.series_original = values
+    hold_other_stresses(model, key, precipitation.index, hold=hold, skip=tuple(synthetic))
 
     warmup_days = warmup_years * DAYS_PER_YEAR
     tmin = pd.Timestamp(precipitation.index[0]) + pd.DateOffset(years=warmup_years)

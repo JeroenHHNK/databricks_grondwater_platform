@@ -78,7 +78,8 @@ def simulate_pooled(
     """Simulate every member and pool the annual extremes: ``(pooled, n_members, failures)``.
 
     ``forcing`` may map a member name to its loaded ``(precipitation, evaporation)``,
-    so a run over many models reads the ensemble once.
+    so a run over many models reads the ensemble once. A third element, a dict of
+    synthetic stresses by stress model name, is passed on to ``simulate_member``.
     """
     import pastas as ps
 
@@ -87,15 +88,17 @@ def simulate_pooled(
     wet_per: dict[str, pd.DataFrame] = {}
     for member in members:
         try:
+            synthetic = None
             if forcing is not None and member.member in forcing:
-                precipitation, evaporation = forcing[member.member]
+                precipitation, evaporation, *rest = forcing[member.member]
+                synthetic = rest[0] if rest else None
             else:
                 precipitation, evaporation = load_member(member, units=units)
             # Reload per member: simulate_member mutates the model's stresses.
             model = ps.io.load(str(model_path))
             result = simulate_member(
                 model, precipitation, evaporation,
-                member=member.member, warmup_years=warmup_years,
+                member=member.member, warmup_years=warmup_years, synthetic=synthetic,
             )
             dry, wet = annual_extremes(result.head)
             dry_per[member.member] = dry

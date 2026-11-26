@@ -10,7 +10,7 @@
 # MAGIC ```
 # MAGIC pastas/results_export/<prefix>/
 # MAGIC     fit_metrics.csv      model_checks.csv    evt_selection.csv
-# MAGIC     return_levels.csv    simulations.parquet (daily observed + simulated head)
+# MAGIC     return_levels.parquet  simulations.parquet (daily observed + simulated head)
 # MAGIC     model_selection.csv  (per series x model type: the stamp, runaway check and the pick)
 # MAGIC     plots/<series_name>_<model_type>_{return_periods,threshold,qq,confidence,results,diagnostics}.png
 # MAGIC ```
@@ -32,8 +32,7 @@
 dbutils.widgets.dropdown("data_basis", "unvalidated", ["unvalidated", "validated"], "Results of")
 dbutils.widgets.text("output_catalog", "waterkeringbeheer_prd", "Output catalog")
 dbutils.widgets.text("output_schema", "jvanruitenbeek", "Output schema")
-dbutils.widgets.text("model_types", "tarso,linear_exp,linear_gamma,linear_dexp,linear_fourparam",
-                     "Model types to export (comma-separated)")
+dbutils.widgets.text("model_types", "", "Model types to export (comma-separated; blank = model_settings.toml)")
 dbutils.widgets.text("volume_base",
                      "/Volumes/waterkeringbeheer_prd/misc_files/misc_files/pastas_pipeline",
                      "Volume prefix (for the plots)")
@@ -64,6 +63,7 @@ ROOT = _repo_root()
 if os.path.join(ROOT, "src") not in sys.path:
     sys.path.insert(0, os.path.join(ROOT, "src"))
 
+from tarso_pipeline.fit import CANDIDATE_MODEL_TYPES  # noqa: E402
 from tarso_pipeline.paths import basis_volume, output_table  # noqa: E402
 from tarso_pipeline.results import (  # noqa: E402
     EXPORT_FILES,
@@ -76,7 +76,8 @@ from tarso_pipeline.results import (  # noqa: E402
 BASIS = dbutils.widgets.get("data_basis")
 CATALOG = dbutils.widgets.get("output_catalog").strip()
 SCHEMA = dbutils.widgets.get("output_schema").strip()
-MODEL_TYPES = [m.strip() for m in dbutils.widgets.get("model_types").split(",") if m.strip()]
+MODEL_TYPES = ([m.strip() for m in dbutils.widgets.get("model_types").split(",") if m.strip()]
+               or list(CANDIDATE_MODEL_TYPES))
 VOLUME_BASE = dbutils.widgets.get("volume_base").strip().rstrip("/")
 EXPORT_PLOTS = dbutils.widgets.get("export_plots") == "true"
 PLOT_KINDS = [k.strip() for k in dbutils.widgets.get("plot_kinds").split(",") if k.strip()]

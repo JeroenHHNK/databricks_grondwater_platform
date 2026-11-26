@@ -25,10 +25,28 @@ The pick, per series
 --------------------
 1. Candidates: the fits that succeeded and did not run away.
 2. If any candidate passed, only those; otherwise all of them (``tier`` says which).
-3. Drop a candidate whose ``r2_holdout`` is more than ``HOLDOUT_TOLERANCE`` below Tarso's:
-   a lower AIC bought with worse prediction is overfitting (when both are known).
-4. Lowest AIC wins, except that a model with fewer parameters within ``AIC_TOLERANCE`` of
+3. The holdout rules: a lower AIC bought with worse prediction is overfitting. In this
+   order, each only while at least one candidate is left, a candidate is dropped when
+
+   a. its ``r2_holdout`` is more than ``holdout_vs_tarso`` below Tarso's;
+   R. its R2 is more than ``max_r2_loss`` below the best R2 left, so that b-d cannot buy a
+      better holdout with a model that no longer fits (after a: the new rules only narrow
+      what the Tarso rule keeps);
+
+   and when its ``r2_holdout`` (where known) is
+
+   b. a bucket model: more than ``holdout_vs_without_bucket`` below the same model without
+      the bucket (the bucket nearly always lowers the AIC, so it has to show it predicts
+      better too);
+   c. more than ``holdout_gap`` below the best candidate left;
+   d. below ``min_holdout``.
+
+4. Lowest AIC wins, except that a model with fewer parameters within ``aic_tolerance`` of
    the lowest wins over it: complexity has to earn its place.
+
+The thresholds are in ``config/model_settings.toml`` (``tarso_pipeline.settings``); b-d are
+off when unset. A series can exclude model types or stresses (``config/series_overrides.csv``,
+``tarso_pipeline.overrides``): those models are not eligible.
 
 AIC is only comparable between fits of the same series on the same observations with the
 same noise setting; the pipeline fits all model types of a series in one run, so it is.
@@ -44,9 +62,12 @@ from pathlib import Path
 import numpy as np
 import pandas as pd
 
-AIC_TOLERANCE = 2.0
-HOLDOUT_TOLERANCE = 0.05
-RUNAWAY_MARGIN_M = 1.5
+from tarso_pipeline.settings import SelectionSettings, load_settings
+
+_DEFAULTS = load_settings().selection
+AIC_TOLERANCE = _DEFAULTS.aic_tolerance
+HOLDOUT_TOLERANCE = _DEFAULTS.holdout_vs_tarso
+RUNAWAY_MARGIN_M = _DEFAULTS.runaway_margin_m
 STAMP_CHECKS = ("rsq", "memory", "gain", "bounds")
 TIER_PASSED, TIER_BEST_EFFORT = "passed", "best_effort"
 
@@ -129,39 +150,74 @@ def runaway(dry_T100, wet_T100, min_value, max_value, margin: float = RUNAWAY_MA
     return bool(dry or wet)
 
 
-def _pick(group: pd.DataFrame) -> tuple[object, str, str]:
+def without_bucket(model_type: str) -> str | None:
+    """``linear_dexp_lake_baro_bucket_radar`` -> ``linear_dexp_lake_baro_radar``; None without a bucket."""
+    return model_type.replace("_bucket", "") if "_bucket" in str(model_type) else None
+
+
+def _holdout_rules(group: pd.DataFrame, pool: pd.DataFrame, rules: SelectionSettings) -> tuple[pd.DataFrame, str]:
+    """The pool after the holdout rules (3. in the module docstring) and what they dropped."""
+    notes = []
+
+    def keep(mask: pd.Series, label: str):
+        nonlocal pool
+        kept = pool[pool["r2_holdout"].isna() | mask]
+        if not kept.empty and len(kept) < len(pool):
+            notes.append(f"{len(pool) - len(kept)} {label}")
+            pool = kept
+
+    if not pool["r2_holdout"].notna().any():
+        return pool, ""
+    holdout = group.drop_duplicates("model_type").set_index("model_type")["r2_holdout"]
+    tarso = holdout.get("tarso")
+    if tarso is not None and pd.notna(tarso):
+        keep(pool["r2_holdout"] >= float(tarso) - rules.holdout_vs_tarso, "t.o.v. Tarso")
+    if rules.max_r2_loss is not None and pool["r2"].notna().any():
+        # not a holdout rule and not in the reason: it only keeps b-d from giving up the fit
+        pool = pool[pool["r2"].isna() | (pool["r2"] >= pool["r2"].max() - rules.max_r2_loss)]
+    if rules.holdout_vs_without_bucket is not None:
+        reference = pool["model_type"].map(lambda m: holdout.get(without_bucket(m), np.nan)
+                                           if without_bucket(m) else np.nan).astype(float)
+        keep(reference.isna() | (pool["r2_holdout"] >= reference - rules.holdout_vs_without_bucket),
+             "t.o.v. zonder bakje")
+    if rules.holdout_gap is not None:
+        keep(pool["r2_holdout"] >= pool["r2_holdout"].max() - rules.holdout_gap, "t.o.v. de beste")
+    if rules.min_holdout is not None:
+        keep(pool["r2_holdout"] >= rules.min_holdout, f"onder {rules.min_holdout:g}")
+    return pool, (f"; afgevallen op R2 holdout: {', '.join(notes)}" if notes else "")
+
+
+def _pick(group: pd.DataFrame, rules: SelectionSettings | None = None) -> tuple[object, str, str]:
     """(index of the pick, tier, reason) within one series; index None if nothing can be picked."""
+    rules = rules or _DEFAULTS
     eligible = group[group["eligible"]]
     if eligible.empty:
-        return None, "", "geen bruikbaar model (alle fits mislukt of weggelopen)"
+        return None, "", "geen bruikbaar model (alle fits mislukt, weggelopen of uitgesloten)"
     passed = eligible[eligible["passed"]]
     tier, pool = (TIER_PASSED, passed) if not passed.empty else (TIER_BEST_EFFORT, eligible)
-    tarso = group[(group["model_type"] == "tarso") & group["r2_holdout"].notna()]
-    dropped = ""
-    if not tarso.empty and pool["r2_holdout"].notna().any():
-        floor = float(tarso["r2_holdout"].iloc[0]) - HOLDOUT_TOLERANCE
-        kept = pool[pool["r2_holdout"].isna() | (pool["r2_holdout"] >= floor)]
-        if not kept.empty and len(kept) < len(pool):
-            dropped = f"; {len(pool) - len(kept)} afgevallen op R2 holdout"
-            pool = kept
+    pool, dropped = _holdout_rules(group, pool, rules)
     lowest = pool["aic"].min()
-    near = pool[pool["aic"] <= lowest + AIC_TOLERANCE].sort_values(["n_param", "aic"])
+    near = pool[pool["aic"] <= lowest + rules.aic_tolerance].sort_values(["n_param", "aic"])
     best = near.index[0]
     simpler = near.loc[best, "aic"] > lowest
     why = ("haalt de checks" if tier == TIER_PASSED else "haalt de checks niet; beste beschikbare")
-    why += (f", minder parameters binnen {AIC_TOLERANCE:g} AIC van de laagste" if simpler else ", laagste AIC")
+    why += (f", minder parameters binnen {rules.aic_tolerance:g} AIC van de laagste" if simpler else ", laagste AIC")
     return best, tier, why + dropped
 
 
 def select_models(metrics: pd.DataFrame, checks: pd.DataFrame | None = None,
-                  extremes: pd.DataFrame | None = None, run_id: str | None = None) -> pd.DataFrame:
+                  extremes: pd.DataFrame | None = None, run_id: str | None = None,
+                  rules: SelectionSettings | None = None, overrides: pd.DataFrame | None = None) -> pd.DataFrame:
     """The ``<prefix>_model_selection`` rows for every series in ``metrics``.
 
     ``metrics``: ``fit_metrics`` rows (the latest run per series and model type);
     ``checks``: ``model_checks`` rows; ``extremes``: ``extremes_summary`` rows (for the
     runaway check; ``dr_emp_T100`` / ``wet_emp_T100``). ``run_id`` defaults to the newest
-    run id in ``metrics``.
+    run id in ``metrics``. ``rules`` default to ``config/model_settings.toml``;
+    ``overrides`` (``tarso_pipeline.overrides.read_overrides``) make the excluded model
+    types of a series not eligible and add their extremes note to the pick's reason.
     """
+    rules = rules or _DEFAULTS
     columns = list(MODEL_SELECTION_SCHEMA)
     if metrics is None or metrics.empty:
         return pd.DataFrame(columns=columns)
@@ -182,9 +238,15 @@ def select_models(metrics: pd.DataFrame, checks: pd.DataFrame | None = None,
         frame["dry_T100"], frame["wet_T100"] = np.nan, np.nan
     for column in ("aic", "r2", "r2_holdout", "n_param", "min_value", "max_value", "dry_T100", "wet_T100"):
         frame[column] = pd.to_numeric(frame[column], errors="coerce")
-    frame["runaway"] = [runaway(d, w, lo, hi) for d, w, lo, hi in
+    frame["runaway"] = [runaway(d, w, lo, hi, rules.runaway_margin_m) for d, w, lo, hi in
                         zip(frame["dry_T100"], frame["wet_T100"], frame["min_value"], frame["max_value"])]
-    frame["eligible"] = frame["aic"].notna() & ~frame["runaway"]
+    excluded = pd.Series(False, index=frame.index)
+    if overrides is not None and not overrides.empty:
+        from tarso_pipeline.overrides import excludes
+
+        excluded = pd.Series([excludes(overrides, i, m) for i, m in zip(frame["meetreeks_id"], frame["model_type"])],
+                             index=frame.index, dtype=bool)
+    frame["eligible"] = frame["aic"].notna() & ~frame["runaway"] & ~excluded
     frame["n_param"] = frame["n_param"].fillna(99)
 
     frame["d_aic"] = frame["aic"] - frame.groupby("meetreeks_id")["aic"].transform("min")
@@ -193,7 +255,7 @@ def select_models(metrics: pd.DataFrame, checks: pd.DataFrame | None = None,
     frame["selected"], frame["tier"], frame["reason"] = False, "", ""
     labels = {"rsq": "R2", "memory": "geheugen", "gain": "gain", "bounds": "grenzen"}
     for _, group in frame.groupby("meetreeks_id"):
-        best, tier, why = _pick(group)
+        best, tier, why = _pick(group, rules)
         frame.loc[group.index, "tier"] = tier
         if best is None:
             frame.loc[group.index, "reason"] = why
@@ -204,7 +266,15 @@ def select_models(metrics: pd.DataFrame, checks: pd.DataFrame | None = None,
             frame.at[i, "reason"] = (f"haalt niet: {', '.join(failed)}" if failed and tier == TIER_PASSED
                                      else f"AIC {delta:+.1f} t.o.v. de keuze")
         frame.loc[best, ["selected", "reason"]] = [True, why]
-    frame.loc[frame["runaway"], "reason"] = "loopt weg in de extremen (T=100 > 1,5 m buiten het gemeten bereik)"
+    margin = f"{rules.runaway_margin_m:g}".replace(".", ",")
+    frame.loc[frame["runaway"], "reason"] = f"loopt weg in de extremen (T=100 > {margin} m buiten het gemeten bereik)"
+    frame.loc[excluded, "reason"] = "uitgesloten voor deze reeks (series_overrides.csv)"
+    if overrides is not None and not overrides.empty:
+        from tarso_pipeline.overrides import extremes_note
+
+        notes = frame["meetreeks_id"].map(lambda i: extremes_note(overrides, i))
+        flagged = frame["selected"] & notes.astype(bool)
+        frame.loc[flagged, "reason"] = frame.loc[flagged, "reason"] + "; " + notes[flagged]
     frame["n_param"] = frame["n_param"].where(frame["n_param"] != 99).astype("Int64")
     frame["run_id"] = run_id or str(metrics["run_id"].max())
     frame["selected_at"] = dt.datetime.now()

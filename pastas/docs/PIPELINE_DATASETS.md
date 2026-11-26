@@ -18,7 +18,7 @@ describes running code. Verified against the code on 2026-10-20:
 |---|---|---|
 | 1 | Input: head CSV, "raw" | ❌ **superseded** — heads come from the `meting` Delta table. `read_head_csv` still exists in `io.py` but **no notebook calls it**. |
 | 2 | Input: head CSV, "validated" | ❌ **superseded** — same. The `gecontroleerd`/`afgekeurd` filter was replaced by `validatie_status`, which is currently ignored. |
-| 3 | Input: forcing CSVs | ✅ **current** — `data/forcing/knmi_forcing_249.csv`. |
+| 3 | Input: forcing CSVs | ✅ **current** — `data/forcing/knmi_forcing_249.csv`, plus `radar_forcing_<polder>.csv` and `stress_*.csv` (`tarso_pipeline.inputs`). |
 | 3a | `knmi_daily_forcing` Delta table | ⚠️ **never built** — marked *proposed*, and `notebooks/ingestion/knmi_forcing.py` does not exist. The cluster has no egress, so the forcing is committed to the repo instead. The KNMI API facts and the conversion rules in this section are accurate and still used by `scripts/check_knmi.py`. |
 | 4 | `LoadedHead` / `PreparedHead` | ❌ **superseded** — `LoadedHead` is unused; **`prepare_head` and `PreparedHead` no longer exist**. Cleaning is `clean.py::clean_head` → `CleanedSeries`. |
 | 5 | Discovery DataFrame | ❌ **superseded** — replaced by `pastas_series_manifest`, keyed on `meetreeks_id`, not `(survey, file_path)`. |
@@ -432,6 +432,9 @@ cleaning rather than the solver. This has no equivalent in §6.
 | `plot_path`, `diagnostics_path` | `string` | The two PNGs; null if plotting failed, which never fails the fit. |
 | `forcing_station` | `string` | KNMI station, e.g. `249`. |
 | `forcing_units` | `string` | `m` or `mm` — **recorded because it rescales the gain parameters**, making the two conventions incomparable. |
+| `precipitation_source` | `string` | Where the precipitation came from: `knmi_249` or `radar_<polder>` (`tarso_pipeline.inputs`). NULL on rows from before 2026-11-24 (then `forcing_station`). |
+| `evaporation_source` | `string` | Where the Makkink evaporation came from, e.g. `knmi_249`. |
+| `extra_stresses` | `string` | The extra stresses of the model type: `lake,pressure` or `lake,pressure,bucket` (the soil-moisture bucket deficit); NULL when none. |
 | `pastas_version` | `string` | e.g. `1.12.0`. |
 | `fitted_at` | `timestamp` | Wall clock at row creation. |
 
@@ -530,7 +533,8 @@ Replaces §8. These are the `dbutils.widgets` of task 2
 | `station` | `249` | KNMI station (Berkhout). |
 | `forcing_units` | `m` | `m` or `mm`. **Changes the gain parameters.** |
 | `warmup_days` | `3650` | Pastas warmup. |
-| `model_types` | `tarso,recharge` | Comma-separated. Drives the row multiplier. |
+| `model_types` | the extended set (29 types) | Comma-separated (`tarso_pipeline.fit.EXTENDED_MODEL_TYPES`). Drives the row multiplier. |
+| `object_data` | *(blank)* | Blank = the repo's `object_data.csv`: the polder per series, for the radar types. |
 | `limit_series` | `0` | Cap on manifest series to fit; **`0` = the whole manifest**. **Set `1` for a first run.** Longest-first, so a cap is a prefix, not a sample. |
 | `run_folder` | *(blank)* | Blank = `run_yy_mm_dd`. Set it to stop two same-day runs overwriting artefacts. |
 | `dedup_method` | `mean` | How to collapse duplicate timestamps. |
