@@ -93,6 +93,13 @@ The full route, including the synthetic lake and the warehouse tables, is in [PL
 | `stresses.py` | fetch and cache the KNMI neerslagstations (RD), KNMI EV24/PG, the RWS Markermeer level and the HHNK files; inverse-distance weighting per series |
 | `variants.py` | the variant registry: `<base>@<factor>[+<factor>]`, every one a Pastas model |
 | `run_variants.py` | fit, `extract_metrics`, `run_checks`, holdout and `.pas` for every series and variant → `fit_metrics.csv`, `model_checks.csv` |
+| `compare_boezem.py` | the Schermerboezem level (`bz`, `bz1`, `bzn`, `bzd`, Beemster gauge) against the lake and air pressure, one shared set per scenario, per polder → `results/boezem_*.csv`, `picks_<scenario>.csv` |
+| `emulate_boezem.py` | a synthetic boezem: a Pastas model of the gauge from KNMI P and E, validated out of sample, then driven by the 16 IMPREX members → `results/boezem_emulator_*` |
+| `extremes_boezem.py` | IMPREX return levels with the boezem held at its mean vs the synthetic boezem → `results/extremes_boezem*.csv`. Write-up: `docs/experiments/2026-11-23_schermerboezem.md`. The Dijkgraaf de Boer files it reads were removed on 2026-11-24, so it no longer reruns as is |
+| `radar.py` | KNMI gauge-adjusted daily radar (`rad_nl25_rac_mfbs_24h`), one pixel per polder → `data/forcing/local/radar_<polder>.csv` |
+| `compare_gemaal.py` | pumping-station levels (`up`, `ip`, `pos`, the `far` station) and radar: passed per polder and cross-section level, the position test, the station test → `results/gemaal_*.csv`, `results/radar_fits.csv`. Write-up: `docs/experiments/2026-11-24_gemaal-peilen.md` |
+| `drought.py` | drought indicators from P and E alone: the KNMI potential deficit (`def<D0>`), the rolling E − P (`roll<days>`), a root-zone bucket deficit (`bkt<Smax>l<lp>`); the variant parts of the same names |
+| `compare_drought.py` | the drought indicators: like for like against the same model without the term (`results/drought_paired.csv`), the selection per setting (`drought_scenarios.csv`), with IMPREX extremes (`--extremes`, `drought_extremes.csv`), per series (`drought_series.csv`). Write-up: `docs/experiments/2026-11-24_drought.md` |
 | `report.py` | the selection per scenario with the pipeline's `select_models`; IMPREX extremes for the picks until stable; counts, McNemar test |
 | `results/` | `scenarios.csv` (with extremes), `scenarios_without_extremes.csv` (every factor), the selections, `picks_all_ongoing.csv`, `extremes_summary.csv`, `climatology_sensitivity.csv`, `lake_contribution.csv` |
 | `PLAN_synthetic_lake.md` | the plan for return periods with a synthetic Markermeer level, and the warehouse tables for per-series stress sets |

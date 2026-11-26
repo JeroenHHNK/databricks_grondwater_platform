@@ -31,7 +31,8 @@ for path in (PASTAS, PASTAS / "src"):
     if str(path) not in sys.path:
         sys.path.insert(0, str(path))
 
-from research.accepted import stresses, variants  # noqa: E402
+from research.accepted import drought, stresses, variants  # noqa: E402
+from tarso_pipeline.inputs import scale_members  # noqa: E402
 from tarso_pipeline.selection import STAMP_CHECKS, select_models  # noqa: E402
 
 IMPREX_DIR = PASTAS / "data" / "forcing"
@@ -76,6 +77,23 @@ def _members():
     return members, {m.member: load_member(m, units="m") for m in members}
 
 
+def _radar_factors(meetreeks_id: str) -> pd.Series | None:
+    """Radar over Berkhout per calendar month for the series' polder (as the pipeline's
+    ``InputLibrary.imprex_factors``); None outside a radar polder."""
+    from research import data
+    from tarso_pipeline.inputs import radar_filename
+
+    where = stresses.positions()
+    polder = where["polder"].get(meetreeks_id) if meetreeks_id in where.index else None
+    path = IMPREX_DIR / radar_filename(polder) if isinstance(polder, str) else None
+    if path is None or not path.is_file():
+        return None
+    frame = pd.read_csv(path, parse_dates=["date"]).set_index("date")
+    radar = frame.loc[frame["precipitation_source"].astype(str).str.startswith("radar"), "precipitation_mm"]
+    precipitation, _ = data.load_forcing()
+    return monthly_factors(radar / 1000.0, precipitation)
+
+
 def _extremes_one(row: dict, out: str) -> dict:
     warnings.filterwarnings("ignore")
     from research import data
@@ -91,6 +109,12 @@ def _extremes_one(row: dict, out: str) -> dict:
               if "localPE" in parts else pd.Series(1.0, index=range(1, 13)))
         forcing = {k: (p * fp.loc[p.index.month].to_numpy(), e * fe.loc[e.index.month].to_numpy())
                    for k, (p, e) in forcing.items()}
+    if "radar" in parts:
+        forcing = scale_members(forcing, _radar_factors(row["meetreeks_id"]))
+    dry = [p for p in parts if drought.is_part(p)]
+    if dry:  # the indicator rebuilt from each member's own (scaled) P and E, not held
+        forcing = {k: (p, e, {"drought": drought.from_part(dry[0], p * 1000.0, e * 1000.0)})
+                   for k, (p, e, *_) in forcing.items()}
     result = run_model(row["model_path"], row["meetreeks_id"], row["series_name"], members,
                        run_directory=str(Path(out) / "extremes"), run_id="research", units="m",
                        make_plots=False, forcing=forcing, model_type=row["model_type"])

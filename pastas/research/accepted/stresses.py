@@ -199,6 +199,181 @@ def hhnk_level(name: str) -> pd.Series:
     return regular(series.resample("D").mean()).rename(f"hhnk_{name}")
 
 
+BOEZEM_FILES = {
+    # Schermerboezem gauges (HHNK, 15-minute, m NAP). Same water body (r = 0.88 on 2019-2021).
+    "beemster": "Beemster_Dijkgraaf_de_Boer_boezempeil.xlsx",   # 2019-05 .. now
+    "purmer_zuid": "Purmer_Purmer_Zuid_Boezempeil.xlsx",        # 2015-09 .. 2021-12 (ended)
+}
+
+
+def despike(series: pd.Series, window: str = "3h", tolerance: float = 0.05) -> pd.Series:
+    """Drop 15-minute values more than ``tolerance`` m from their centred running median."""
+    median = series.rolling(window, center=True, min_periods=3).median()
+    return series[(series - median).abs() <= tolerance]
+
+
+def cache_boezem(name: str) -> Path:
+    """Daily mean of one despiked HHNK boezem gauge -> ``data/stresses/boezem_<name>_daily.csv``.
+
+    The workbooks (CET/CEST, ``waterhoogte``) have up to 0.5 M rows; the fits read the CSV.
+    """
+    frame = pd.read_excel(STRESSES / BOEZEM_FILES[name])
+    frame.columns = ["time", "level"]
+    series = pd.Series(pd.to_numeric(frame["level"], errors="coerce").to_numpy(),
+                       index=pd.to_datetime(frame["time"], errors="coerce")).dropna()
+    series = series[series.index.notna()].sort_index()
+    # The Schermerboezem is held at about -0.50 m NAP; outside -0.80 .. -0.20 is a sensor error.
+    series = despike(series[series.between(-0.80, -0.20)])
+    daily = series.resample("D").agg(["mean", "count"])
+    daily = daily.loc[daily["count"] >= 48, "mean"]  # at least half a day of 15-minute values
+    path = STRESSES / f"boezem_{name}_daily.csv"
+    daily.rename("level_m_nap").rename_axis("date").to_frame().to_csv(path)
+    return path
+
+
+def boezem_level(name: str = "beemster") -> pd.Series:
+    """The Dijkgraaf de Boer / Purmer Zuid gauges of 2026-11-23. Their files were removed on
+    2026-11-24 (superseded by the pumping-station records below); this raises if they are gone."""
+    path = STRESSES / f"boezem_{name}_daily.csv"
+    if not path.exists():
+        cache_boezem(name)
+    frame = pd.read_csv(path, parse_dates=["date"], index_col="date")
+    return regular(frame["level_m_nap"]).rename(f"boezem_{name}")
+
+
+# --- pumping stations (gemalen): polder side and boezem side ------------------------
+#
+# HHNK 15-minute records (CET/CEST wall clock, m NAP), converted from the delivered xlsx to
+# ``data/stresses/<Polder>_<Station>.csv`` with columns ``time, instroompeil, uitstroompeil``:
+# ``instroompeil`` is the polder side (the pump inlet, the polder water level) and
+# ``uitstroompeil`` the boezem side (the outlet into the Schermerboezem). Huygendijk's
+# original columns were ``waterhoogte_krooshek`` (inlet) and ``waterhoogte_boezem``.
+# Locations: OpenStreetMap / Nominatim (address of the station), good to a few hundred m.
+GEMALEN = {
+    "jacobus_bouman": ("Beemster", "Beemster_Jacobus_Bouman.csv", 52.5614, 4.9759),     # Oostdijk, east
+    "wouter_sluis": ("Beemster", "Beemster_Wouter_Sluis.csv", 52.5683, 4.8636),         # Westdijk, west
+    "purmer_stedelijk": ("Purmer", "Purmer_Stedelijk.csv", None, None),                 # the only Purmer record
+    "hensbroek": ("Heerhugowaard", "Heerhugowaard_Hensbroek.csv", 52.6535, 4.8677),    # north-east
+    "huygendijk": ("Heerhugowaard", "Heerhugowaard_Huygendijk.csv", 52.6365, 4.8012),  # south-west
+}
+COLUMNS = ("instroompeil", "uitstroompeil")
+# Cleaning, the same for every record and column (see notebooks/exploration/gemaal_peilen.ipynb):
+BAND_M = 0.40        # a value more than 0.40 m from the record's median is a sensor error
+SPIKE_M = 0.10       # ... and so is one more than 0.10 m from its centred 3-hour running median
+FLAT_VALUES = 192    # ... and a run of identical values longer than 2 days (192 x 15 min)
+MIN_PER_DAY = 48     # a daily mean needs at least half a day of 15-minute values
+
+
+def gemaal_raw(name: str) -> pd.DataFrame:
+    """The converted 15-minute record, as delivered (unsorted, duplicates kept)."""
+    return pd.read_csv(STRESSES / GEMALEN[name][1], parse_dates=["time"])
+
+
+def clean_gemaal(raw: pd.Series) -> tuple[pd.Series, pd.Series]:
+    """``(kept, removed)`` for one 15-minute column; ``removed`` has ``reason`` and ``value`` per stamp.
+
+    1. missing values dropped; duplicate stamps averaged (the CET/CEST fall-back hour, and
+       Huygendijk's 2018-2020, which is in the file twice with identical values);
+    2. ``band``: further than ``BAND_M`` from the median (e.g. Purmer's boezem column reading
+       the polder level, 4-13 Feb 2026);
+    3. ``spike``: further than ``SPIKE_M`` from the centred 3-hour running median;
+    4. ``flat``: inside a run of more than ``FLAT_VALUES`` identical values (a frozen sensor).
+    """
+    series = raw.dropna()
+    series = series.groupby(level=0).mean().sort_index()
+    reason = pd.Series(pd.NA, index=series.index, dtype="object")
+    reason[(series - series.median()).abs() > BAND_M] = "band"
+    ok = reason.isna()
+    median = series[ok].rolling("3h", center=True, min_periods=3).median()
+    spike = (series[ok] - median).abs() > SPIKE_M
+    reason[spike[spike].index] = "spike"
+    ok = reason.isna()
+    same = series[ok].diff().eq(0)
+    run_id = (~same).cumsum()
+    run_len = run_id.map(run_id.value_counts())
+    reason[run_len[run_len > FLAT_VALUES].index] = "flat"
+    ok = reason.isna()
+    return series[ok], reason[~ok].astype(str).rename("reason").to_frame().assign(value=series[~ok])
+
+
+def gemaal_daily(name: str, refresh: bool = False) -> pd.DataFrame:
+    """Cleaned daily means of both columns -> ``data/stresses/gemaal_<name>_daily.csv`` (cached)."""
+    path = STRESSES / f"gemaal_{name}_daily.csv"
+    if path.exists() and not refresh:
+        return pd.read_csv(path, parse_dates=["date"], index_col="date")
+    raw = gemaal_raw(name).set_index("time")
+    out = {}
+    for column in COLUMNS:
+        kept, _ = clean_gemaal(raw[column])
+        daily = kept.resample("D").agg(["mean", "count"])
+        out[column] = daily.loc[daily["count"] >= MIN_PER_DAY, "mean"]
+    frame = pd.DataFrame(out).rename_axis("date")
+    frame.round(4).to_csv(path)
+    return frame
+
+
+def gemaal_level(name: str, column: str) -> pd.Series:
+    return regular(gemaal_daily(name)[column]).rename(f"{name}_{column}")
+
+
+# --- where a series sits: dike, cross-section position, nearest station --------------
+
+DIKES = {"BE": "Beemster", "PU": "Purmer", "HH": "Heerhugowaard", "SC": "Schermer"}
+# Crest (buitenkruin, kruin, binnenkruin) against berm and toe (binnenberm, insteek/kruin
+# binnenberm, binnenteen). The crest is closer to the boezem, the toe to the polder ditch.
+UPPER = ("BUKR", "KR", "BIKR")
+LOWER = ("BIB", "INBIB", "KRBIB", "BIT", "BITA", "INST", "INSD", "BIRK")
+
+
+def positions() -> pd.DataFrame:
+    """Per series: ``dike`` (polder), ``pos`` (BUKR, BIT, ...), ``level`` (upper/lower), lat, lon.
+
+    From ``object_data.csv`` ``meetlocatie_code``, e.g. ``_86349_MB028_(B_BE0213+10_BUKR_GMW)...``
+    or ``2424-258424_B01_HH0259+67_BUKR_GMW_PB1``.
+    """
+    frame = pd.read_csv(OBJECT_DATA, usecols=["meetreeks_id", "meetlocatie_code", "lat", "lon"])
+    parts = frame["meetlocatie_code"].astype(str).str.extract(r"(?P<dike>[A-Z]{2})\d+\+\d+_(?P<pos>[A-Z]+)_")
+    frame = pd.concat([frame, parts], axis=1)
+    frame["polder"] = frame["dike"].map(DIKES)
+    frame["level"] = frame["pos"].map(lambda p: "upper" if p in UPPER else "lower" if p in LOWER else pd.NA)
+    return frame.drop_duplicates("meetreeks_id").set_index("meetreeks_id")
+
+
+def stations_by_distance(lat: float, lon: float, polder: str) -> list[tuple[str, float]]:
+    """The polder's stations, nearest first, as ``(name, km)``; a station without a location
+    (the polder's only one) gets distance NaN."""
+    out = []
+    for name, (where, _, s_lat, s_lon) in GEMALEN.items():
+        if where != polder:
+            continue
+        km = distance_km(lat, lon, s_lat, s_lon) if s_lat is not None and pd.notna(lat) else float("nan")
+        out.append((name, km))
+    return sorted(out, key=lambda item: (math.isnan(item[1]), item[1]))
+
+
+def polder_points() -> dict[str, tuple[float, float]]:
+    """One point per polder (the centroid of its piezometers): where the radar pixel is read."""
+    frame = positions().dropna(subset=["polder", "lat", "lon"])
+    frame = frame[frame["polder"].isin(["Beemster", "Purmer", "Heerhugowaard"])]
+    return {p: (round(float(g["lat"].mean()), 4), round(float(g["lon"].mean()), 4))
+            for p, g in frame.groupby("polder")}
+
+
+def setpoint_deviation(series: pd.Series, days: int = 31) -> pd.Series:
+    """The level minus its centred running median: what is left after the managed set point."""
+    setpoint = series.rolling(days, center=True, min_periods=days // 2).median()
+    return (series - setpoint).rename(f"{series.name}_dev")
+
+
+def polders() -> dict[str, str]:
+    """``meetreeks_id -> project`` (Purmer, Beemster, ...) via the boxplots config."""
+    config = pd.read_csv(REPO / "boxplots" / "input_data" / "config.csv",
+                         usecols=["LD_project", "DD_meetlocatie_id"]).drop_duplicates()
+    objects = pd.read_csv(OBJECT_DATA, usecols=["meetreeks_id", "meetlocatie_object_id"])
+    both = objects.merge(config, left_on="meetlocatie_object_id", right_on="DD_meetlocatie_id")
+    return dict(zip(both["meetreeks_id"], both["LD_project"]))
+
+
 def regular(series: pd.Series, limit: int = 7) -> pd.Series:
     """On every day (Pastas needs a regular index); gaps up to ``limit`` days interpolated,
     longer ones left NaN for Pastas' own ``fill_nan``."""

@@ -27,7 +27,7 @@
 
 - No runaway in any IMPREX run. The holdout R² of the series that turned green rose (median 0.42 → 0.49).
 - Single factors: lake level +13, air pressure +3 (but R² 0.71 → 0.90 on the smoke series), local precipitation +3 (AIC *worse*, median +42 per fit), bucket +1.
-- Every single-factor count: `results/scenarios_without_extremes.csv`. A greedy combination of variant groups (computed in the session, not saved as a CSV) went 36 → 54 → 60 → 63 → 65 (+wl1+baro incl. its flex versions, +wlmid, +wl, +wl+baro), but stacking groups means per-series stress sets, which the user ruled out. **The number for "one shared set" is 48.**
+- Every single-factor count: `results/scenarios_without_extremes.csv`. A greedy combination of variant groups (computed in the session, not saved as a CSV) went 36 → 54 → 60 → 63 → 65 (+wl1+baro incl. its flex versions, +wlmid, +wl, +wl+baro), but stacking groups means per-series stress sets, which the user ruled out. **The number for "one shared set" is 48 with the linear types only, 55 when the bucket versions (`flex_*@wl1+baro`) are allowed too** (recomputed in [2026-11-23_purmer-boezem.md](2026-11-23_purmer-boezem.md)).
 - Per polder (validated, now → lean): Purmer 20/48 (42 %) → 36 (75 %); Beemster 14/40 (35 %) → 23 (58 %).
 - Unvalidated pass rates per project: Schermer 4 % (347 series), Heerhugowaard 6 % (71), Beemster 11 %, Purmer 2 %. **Validation is the biggest lever.**
 - Still yellow in lean (29): memory 19 (record too short), rsq 17, gain 9, bounds 9.

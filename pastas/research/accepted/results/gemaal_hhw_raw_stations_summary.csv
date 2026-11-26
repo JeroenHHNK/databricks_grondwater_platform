@@ -1,0 +1,4 @@
+stress,polder,series,near better (dAIC<-2),far better (dAIC>2),sign test p,median dAIC near-far,"spearman(dAIC, km gap)"
+up,Heerhugowaard,70,35,21,0.081,-2.1,0.07
+ip,Heerhugowaard,70,28,30,0.896,0.3,-0.23
+pos,Heerhugowaard,70,29,29,1.0,0.4,0.12

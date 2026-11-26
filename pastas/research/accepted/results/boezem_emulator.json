@@ -1,0 +1,25 @@
+{
+  "chosen": "pulse_wet",
+  "calibration": [
+    "2019-05-01",
+    "2023-12-31"
+  ],
+  "validation": [
+    "2024-01-01",
+    null
+  ],
+  "other_gauge": [
+    "2015-09-22",
+    "2019-04-30"
+  ],
+  "parameters": {
+    "rain_A": 76.343215,
+    "rain_a": 7.238175,
+    "Recharge_A": -77.515338,
+    "Recharge_a": 7.826071,
+    "Recharge_f": -0.066775,
+    "season_sin_d": 0.005481,
+    "season_cos_d": 0.0,
+    "constant_d": -0.484323
+  }
+}

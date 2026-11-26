@@ -42,10 +42,26 @@ def load_forcing(station: str = "249") -> tuple[pd.Series, pd.Series]:
     return load_forcing_pair(forcing_file(str(PASTAS / "data" / "forcing"), station), units="m")
 
 
+def raw_heads(ids: set[str]) -> dict[str, pd.DataFrame]:
+    """``meetreeks_id -> frame(tijdstempel, waarde)`` from the raw export (not validated)."""
+    objects = pd.read_csv(REPO / "data_validation" / "input_output" / "output_databricks" / "metadata" / "object_data.csv",
+                          usecols=["filename", "meetreeks_id"]).drop_duplicates("meetreeks_id")
+    folder = REPO / "data_validation" / "input_output" / "output_databricks" / "time_series_data"
+    out = {}
+    for row in objects[objects["meetreeks_id"].isin(ids)].itertuples():
+        path = folder / f"{row.filename}.csv"
+        if path.exists():
+            frame = pd.read_csv(path)
+            out[row.meetreeks_id] = pd.DataFrame({"tijdstempel": pd.to_datetime(frame.iloc[:, 0]),
+                                                  "waarde": pd.to_numeric(frame.iloc[:, 1], errors="coerce")})
+    return out
+
+
 def load_series(precipitation: pd.Series, min_obs: int = 100, min_days: int = 365,
-                limit: int | None = None) -> list[Series]:
+                limit: int | None = None, heads: dict | None = None) -> list[Series]:
     out = []
-    for meetreeks_id, raw in _run_local().validated_heads().items():
+    heads = _run_local().validated_heads() if heads is None else heads
+    for meetreeks_id, raw in heads.items():
         cleaned = clean_head(raw)
         if cleaned.n_final < min_obs or cleaned.span_days < min_days:
             continue
