@@ -28,6 +28,9 @@ PASTAS = Path(__file__).resolve().parents[2]
 REPO = PASTAS.parent
 LOCAL = PASTAS / "data" / "forcing" / "local"
 STRESSES = PASTAS / "data" / "stresses"
+# The pumping-station records are archived (not used by the pipeline; 2026-11-24_gemaal-peilen.md)
+# and git-ignored: only on the laptop that has them.
+GEMAAL_DIR = STRESSES / "archive" / "gemaal"
 OBJECT_DATA = REPO / "data_validation" / "input_output" / "output_databricks" / "metadata" / "object_data.csv"
 HHNK_DIR = REPO.parent / "pastas_machine" / "input_files" / "stressors"
 
@@ -266,7 +269,7 @@ MIN_PER_DAY = 48     # a daily mean needs at least half a day of 15-minute value
 
 def gemaal_raw(name: str) -> pd.DataFrame:
     """The converted 15-minute record, as delivered (unsorted, duplicates kept)."""
-    return pd.read_csv(STRESSES / GEMALEN[name][1], parse_dates=["time"])
+    return pd.read_csv(GEMAAL_DIR / GEMALEN[name][1], parse_dates=["time"])
 
 
 def clean_gemaal(raw: pd.Series) -> tuple[pd.Series, pd.Series]:
@@ -297,8 +300,8 @@ def clean_gemaal(raw: pd.Series) -> tuple[pd.Series, pd.Series]:
 
 
 def gemaal_daily(name: str, refresh: bool = False) -> pd.DataFrame:
-    """Cleaned daily means of both columns -> ``data/stresses/gemaal_<name>_daily.csv`` (cached)."""
-    path = STRESSES / f"gemaal_{name}_daily.csv"
+    """Cleaned daily means of both columns -> ``data/stresses/archive/gemaal/gemaal_<name>_daily.csv`` (cached)."""
+    path = GEMAAL_DIR / f"gemaal_{name}_daily.csv"
     if path.exists() and not refresh:
         return pd.read_csv(path, parse_dates=["date"], index_col="date")
     raw = gemaal_raw(name).set_index("time")

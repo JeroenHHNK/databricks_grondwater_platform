@@ -15,6 +15,8 @@ dist/
 !data/forcing/*.csv
 !data/forcing/local/*.csv
 !data/stresses/*.csv
+# ... except the archived pumping-station records (research only, large)
+data/stresses/archive/
 # Research result tables (small; the README cites them).
 !research/results/*.csv
 !research/accepted/results/*.csv

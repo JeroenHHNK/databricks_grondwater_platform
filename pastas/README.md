@@ -284,7 +284,7 @@ scripts/            run_local.py, check_knmi.py, build_forcing_sources.py (radar
 results_export/     the app's copy of the latest results (in git)
 family_choice/, model_choice/   the picks made in the app (in git)
 data/forcing/       the committed KNMI, radar, lake and pressure CSVs and the IMPREX members
-data/stresses/      daily pumping-station levels (research)
+data/stresses/      RWS Markermeer daily levels (source of stress_lake_edam.csv); archive/ is git-ignored (pumping stations, research only)
 research/           experiments that may change the pipeline (logs in ../docs/experiments/)
 docs/               PIPELINE_DATASETS.md: what the pipeline reads and writes (the shared Databricks docs are in ../docs/)
 tests/              pytest (no Spark; -m "not slow" skips the real fits)
