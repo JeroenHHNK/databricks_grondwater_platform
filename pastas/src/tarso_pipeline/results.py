@@ -56,7 +56,8 @@ EXPORT_FILES = {
     "fit_metrics": "fit_metrics.csv",
     "model_checks": "model_checks.csv",
     "evt_selection": "evt_selection.csv",
-    "return_levels": "return_levels.csv",
+    # parquet: with the extended model types (17, now 29 per series) the CSV was 74 MB+, too big for git
+    "return_levels": "return_levels.parquet",
     "simulations": "simulations.parquet",
     "model_selection": "model_selection.csv",
 }

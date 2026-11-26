@@ -1,0 +1,5 @@
+polder,level,series,prefer_up (dAIC<-2),prefer_ip (dAIC>2),sign test p,median dAIC up-ip,median dAIC up vs base,median dAIC ip vs base,median dR2 up,median dR2 ip,median gain up,median gain ip
+Beemster,lower,21,16,2,0.001,-11.4,-21.0,-2.1,0.003,0.001,0.47,0.08
+Beemster,upper,19,11,8,0.648,-2.5,-13.3,-8.6,0.005,0.004,0.42,0.15
+Purmer,lower,22,7,10,0.629,0.5,-7.9,-19.4,0.002,0.006,-0.27,-0.74
+Purmer,upper,26,6,19,0.015,15.0,-0.7,-14.2,0.0,0.004,-0.14,-0.52

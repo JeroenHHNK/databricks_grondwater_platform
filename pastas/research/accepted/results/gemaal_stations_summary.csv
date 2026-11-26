@@ -1,0 +1,4 @@
+stress,polder,series,near better (dAIC<-2),far better (dAIC>2),sign test p,median dAIC near-far,"spearman(dAIC, km gap)"
+up,Beemster,40,23,13,0.132,-4.1,-0.31
+ip,Beemster,40,12,19,0.281,1.3,-0.29
+pos,Beemster,40,14,18,0.597,-0.4,-0.38

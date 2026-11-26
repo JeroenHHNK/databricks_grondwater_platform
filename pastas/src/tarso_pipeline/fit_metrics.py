@@ -88,6 +88,11 @@ FIT_METRICS_SCHEMA: dict[str, str] = {
     "diagnostics_path": "string",
     "forcing_station": "string",
     "forcing_units": "string",
+    # where the model's forcing came from (tarso_pipeline.inputs.source_label gives a label):
+    # knmi_249 or radar_<polder>; extra_stresses e.g. "lake,pressure" (NULL: none)
+    "precipitation_source": "string",
+    "evaporation_source": "string",
+    "extra_stresses": "string",
     "pastas_version": "string",
     "fitted_at": "timestamp",
 }

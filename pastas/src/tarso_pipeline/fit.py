@@ -14,6 +14,25 @@ Model types (``MODEL_SPECS``), one ``.pas`` and one metrics row each per series:
 ``peterson_gamma``     non-linear (Peterson) recharge with a Gamma response. Not in the
                        default set: it wins AIC but predicts the unseen part worse.
 ``recharge``           the old name of ``linear_exp``; still accepted.
+``flex_<rfunc>``       a soil-moisture bucket (``ps.rch.FlexModel`` on mm/day, ``kv`` fixed at 1).
+``<type>_lake_baro``   + the Markermeer level at Edam and air pressure, each an instantaneous
+                       response (``ps.One``) on its anomaly from the calibration mean; on the
+                       linear and bucket types (Tarso allows nothing beside it).
+``<type>_lake_baro_bucket``  + also the deficit of a root-zone soil-moisture bucket (Smax
+                       150 mm, ET reduced below 70 % full; ``inputs.bucket_deficit``) built
+                       from the model's own P and E, with an Exponential response whose gain
+                       may take either sign. It acts only when the soil dries out, so it adds
+                       the extra drop (or holds back the linear one) in a drought. Solved
+                       nested (``solve_model``) on the same type without it.
+``<type>_radar``       the same model on the polder's KNMI radar precipitation instead of
+                       the station's (``tarso_pipeline.inputs``).
+
+The extended set (``EXTENDED_MODEL_TYPES``) adds the lake + pressure types, with and
+without the bucket, on station and radar precipitation. On the validated Purmer/Beemster
+series lake + pressure took the passed models from 35 to 61
+(``docs/experiments/2026-11-24_gemaal-peilen.md``) and the bucket from 60 to 65, none lost
+(``docs/experiments/2026-11-24_drought.md``). Every fit row records
+``precipitation_source``, ``evaporation_source`` and ``extra_stresses``.
 
 The grid test on the validated series (Tarso, Linear, Berendrecht, Peterson, FlexModel
 x four responses) is why the default set is Tarso and the four Linear models:
@@ -50,14 +69,21 @@ from tarso_pipeline.fit_metrics import (
 from tarso_pipeline.model_checks import run_checks
 
 STRESSMODEL_NAME = "Tarso"
+PROVENANCE = ("forcing_station", "forcing_units", "precipitation_source", "evaporation_source", "extra_stresses")
+
+
+def _station_source(station) -> str | None:
+    return None if station is None else f"knmi_{station}"
 RECHARGE_NAME = "Recharge"
 
 
 @dataclass(frozen=True)
 class ModelSpec:
-    recharge: str         # "tarso", "linear", "peterson", ...
+    recharge: str         # "tarso", "linear", "peterson", "flex", ...
     rfunc: str            # "exp", "gamma", "dexp", "fourparam"
     forcing_scale: float  # P and E (m/day) are multiplied by this before they go in
+    stresses: tuple = ()  # extra stresses: "lake", "pressure", "bucket" (tarso_pipeline.inputs)
+    radar: bool = False   # precipitation from the polder's radar pixel instead of the station
 
 
 RFUNCS = {"exp": "Exponential", "gamma": "Gamma", "dexp": "DoubleExponential", "fourparam": "FourParam"}
@@ -72,8 +98,53 @@ MODEL_SPECS: dict[str, ModelSpec] = {
     "peterson_gamma": ModelSpec("peterson", "gamma", 1000.0),
     "recharge": ModelSpec("linear", "exp", 1.0),  # the old name of linear_exp
 }
+LAKE_BARO = ("lake", "pressure")
+LAKE_BARO_BUCKET = (*LAKE_BARO, "bucket")
+BUCKET = "bucket"
+LINEAR_RFUNCS = ("exp", "gamma", "dexp", "fourparam")
+FLEX_RFUNCS = ("exp", "gamma")
+for _rfunc in LINEAR_RFUNCS:
+    for _suffix, _stresses in (("_lake_baro", LAKE_BARO), ("_lake_baro_bucket", LAKE_BARO_BUCKET)):
+        MODEL_SPECS[f"linear_{_rfunc}{_suffix}"] = ModelSpec("linear", _rfunc, 1.0, _stresses)
+        MODEL_SPECS[f"linear_{_rfunc}{_suffix}_radar"] = ModelSpec("linear", _rfunc, 1.0, _stresses, radar=True)
+for _rfunc in FLEX_RFUNCS:
+    MODEL_SPECS[f"flex_{_rfunc}"] = ModelSpec("flex", _rfunc, 1000.0)
+    for _suffix, _stresses in (("_lake_baro", LAKE_BARO), ("_lake_baro_bucket", LAKE_BARO_BUCKET)):
+        MODEL_SPECS[f"flex_{_rfunc}{_suffix}"] = ModelSpec("flex", _rfunc, 1000.0, _stresses)
+        MODEL_SPECS[f"flex_{_rfunc}{_suffix}_radar"] = ModelSpec("flex", _rfunc, 1000.0, _stresses, radar=True)
 MODEL_TYPES = tuple(MODEL_SPECS)
 DEFAULT_MODEL_TYPES = ("tarso", "linear_exp", "linear_gamma", "linear_dexp", "linear_fourparam")
+
+
+def _family(suffix: str) -> tuple:
+    return (*(f"linear_{r}{suffix}" for r in LINEAR_RFUNCS), *(f"flex_{r}{suffix}" for r in FLEX_RFUNCS))
+
+
+# The default five plus lake + pressure, with and without the bucket, on station and on
+# radar precipitation, so the selection can pick per series whichever passes (the source
+# is logged on every row).
+EXTENDED_MODEL_TYPES = (
+    *DEFAULT_MODEL_TYPES,
+    *_family("_lake_baro"),
+    *_family("_lake_baro_radar"),
+    *_family("_lake_baro_bucket"),
+    *_family("_lake_baro_bucket_radar"),
+)
+
+
+def candidate_model_types() -> tuple:
+    """The model types every series is fitted with: ``[fit] model_types`` of
+    ``config/model_settings.toml``, or ``EXTENDED_MODEL_TYPES`` when it is empty."""
+    from tarso_pipeline.settings import load_settings
+
+    chosen = tuple(load_settings().fit.model_types) or EXTENDED_MODEL_TYPES
+    unknown = [m for m in chosen if m not in MODEL_SPECS]
+    if unknown:
+        raise ValueError(f"config/model_settings.toml [fit] model_types: unknown {unknown}; use {MODEL_TYPES}")
+    return chosen
+
+
+CANDIDATE_MODEL_TYPES = candidate_model_types()
 MODEL_LABELS = {
     "tarso": "Tarso",
     "linear_exp": "Lineair + exponentieel",
@@ -82,7 +153,16 @@ MODEL_LABELS = {
     "linear_fourparam": "Lineair + FourParam",
     "peterson_gamma": "Peterson + gamma",
     "recharge": "Lineair + exponentieel (oud)",
+    "flex_exp": "Bakje + exponentieel",
+    "flex_gamma": "Bakje + gamma",
 }
+for _type, _spec in list(MODEL_SPECS.items()):
+    if _type not in MODEL_LABELS:
+        _base = _type.replace("_lake_baro", "").replace("_bucket", "").replace("_radar", "")
+        MODEL_LABELS[_type] = (MODEL_LABELS.get(_base, _base) + (" · meer + luchtdruk" if _spec.stresses else "")
+                               + (" + bodemvocht" if BUCKET in _spec.stresses else "")
+                               + (" · radar" if _spec.radar else ""))
+STRESS_NAMES = {"lake": "level", "pressure": "baro", "bucket": "bucket"}  # stress model names in the .pas
 NOISE_MODELS = {"ar1": "ArNoiseModel", "arma": "ArmaNoiseModel"}
 
 
@@ -109,11 +189,17 @@ def build_model(
     precipitation: pd.Series,
     evaporation: pd.Series,
     noise: bool | str = False,
+    stresses: dict | None = None,
 ):
     """Construct an unsolved model of the requested type.
 
     ``precipitation`` and ``evaporation`` in the units of the run (m/day by default);
     the non-linear recharge models get them multiplied by ``forcing_scale``.
+    ``stresses`` holds the extra stresses the type asks for (``spec.stresses``), each in
+    its own units. They go in as the anomaly from their mean over ``head``'s period, so the
+    model learns their excursions and, on IMPREX, holds them at that mean
+    (``simulate.hold_other_stresses``). The P/E stress model is always added first: the
+    t95 and gain in the metrics read the first stress model.
     """
     import pastas as ps
 
@@ -145,13 +231,109 @@ def build_model(
                 rfunc=rfunc, recharge=recharge, name=RECHARGE_NAME,
             )
         )
+        if spec.recharge == "flex":
+            # Only the root-zone storage, its outflow and gamma are fitted: the full FlexModel
+            # was overparameterised on two-year records.
+            model.set_parameter(f"{RECHARGE_NAME}_kv", initial=1.0, vary=False)
+    for name in spec.stresses:
+        series = (stresses or {}).get(name)
+        if series is None:
+            raise ValueError(f"model type {model_type} needs the stress {name!r}")
+        window = series.loc[head.index.min():head.index.max()]
+        if window.count() < 100:
+            raise ValueError(f"stress {name!r} covers {window.count()} days of this series (< 100)")
+        stress_name = STRESS_NAMES[name]
+        if name == BUCKET:
+            # The deficit as is (0 when the soil is full), so on IMPREX it is rebuilt per
+            # member rather than held; either sign: the head may drop more or less than
+            # the linear response says once the soil dries out.
+            model.add_stressmodel(ps.StressModel(series.rename("bucket_deficit"), rfunc=ps.Exponential(),
+                                                 name=stress_name, settings="evap", up=None))
+            continue
+        anomaly = (series - float(window.mean())).rename(f"{name}_anomaly")
+        model.add_stressmodel(ps.StressModel(anomaly, rfunc=ps.One(), name=stress_name, settings="waterlevel"))
+        limit = 5.0 if name == "lake" else 10.0  # m per m; m per hPa
+        model.set_parameter(f"{stress_name}_d", pmin=-limit, pmax=limit)
     if kind is not None:
         model.add_noisemodel(getattr(ps, NOISE_MODELS[kind])())
     return model
 
 
+def nested_type(model_type: str) -> str | None:
+    """The same type without the bucket (``linear_exp_lake_baro_bucket_radar`` ->
+    ``linear_exp_lake_baro_radar``); None for a type without it."""
+    if BUCKET not in model_spec(model_type).stresses:
+        return None
+    nested = model_type.replace("_bucket", "")
+    return nested if nested in MODEL_SPECS else None
+
+
+def _sse(model) -> float:
+    residuals = model.residuals()
+    return float((residuals ** 2).sum()) if residuals is not None else float("inf")
+
+
+_NESTED: dict = {}  # per process: the optimal parameters of the last nested fits
+_NESTED_MAX = 64
+
+
+def solve_model(model_type: str, series_name: str, head: pd.Series, precipitation: pd.Series,
+                evaporation: pd.Series, tmin: str, tmax: str, noise: bool | str = False,
+                stresses: dict | None = None):
+    """Build and solve; a bucket type is solved *nested* on the same type without the bucket.
+
+    The bucket gain's default start has the sign opposite to the usual effect, and a fit
+    from there can end worse than the model without the term. So the type without it is
+    solved first (cached per series and period, so the bucket and holdout fits of one
+    series share it), its parameters start the bucket model, and the bucket gain starts at
+    a small value of either sign; the lower sum of squares wins. Same data, so nothing leaks.
+    """
+    def key_of(nested_name: str) -> tuple:
+        return (series_name, nested_name, tmin, tmax, len(head), head.index[-1], str(noise),
+                float(precipitation.sum()))
+
+    def remember(nested_name: str, solved) -> None:
+        if len(_NESTED) >= _NESTED_MAX:
+            _NESTED.pop(next(iter(_NESTED)))
+        _NESTED[key_of(nested_name)] = solved.parameters["optimal"].copy()
+
+    nested = nested_type(model_type)
+    if nested is None:
+        model = build_model(model_type, series_name, head, precipitation, evaporation, noise=noise,
+                            stresses=stresses)
+        model.solve(tmin=tmin, tmax=tmax, report=False)
+        if model_spec(model_type).stresses == LAKE_BARO:
+            remember(model_type, model)  # the start of its bucket type, if that is fitted next
+        return model
+    if key_of(nested) not in _NESTED:
+        base = build_model(nested, series_name, head, precipitation, evaporation, noise=noise, stresses=stresses)
+        base.solve(tmin=tmin, tmax=tmax, report=False)
+        remember(nested, base)
+    start = _NESTED[key_of(nested)]
+    bucket = STRESS_NAMES[BUCKET]
+    best = None
+    for sign in (-1.0, 1.0):
+        trial = build_model(model_type, series_name, head, precipitation, evaporation, noise=noise,
+                            stresses=stresses)
+        scale = float(trial.stressmodels[bucket].stress[0].series.std()) or 1.0
+        for parameter, value in start.items():
+            if parameter in trial.parameters.index and pd.notna(value):
+                trial.set_parameter(parameter, initial=float(value))
+        trial.set_parameter(f"{bucket}_A", initial=sign * 0.1 / scale)
+        try:
+            trial.solve(tmin=tmin, tmax=tmax, report=False)
+        except Exception:  # noqa: BLE001 - the other sign may still solve
+            continue
+        if best is None or _sse(trial) < _sse(best):
+            best = trial
+    if best is None:
+        raise RuntimeError(f"{model_type} did not solve from either sign of the bucket gain")
+    return best
+
+
 def holdout_r2(model_type: str, series_name: str, head: pd.Series, precipitation: pd.Series,
-               evaporation: pd.Series, tmin: str, holdout: float, noise: bool | str = False) -> float | None:
+               evaporation: pd.Series, tmin: str, holdout: float, noise: bool | str = False,
+               stresses: dict | None = None) -> float | None:
     """R2 on the last ``holdout`` share of the observations, of a fit on the rest.
 
     The simulation runs on over the held-out part with the forcing only, as it would
@@ -168,8 +350,8 @@ def holdout_r2(model_type: str, series_name: str, head: pd.Series, precipitation
     later = head[head.index > split]
     if len(later) < 10:
         return None
-    model = build_model(model_type, series_name, earlier, precipitation, evaporation, noise=noise)
-    model.solve(tmin=tmin, tmax=split.strftime("%Y-%m-%d"), report=False)
+    model = solve_model(model_type, series_name, earlier, precipitation, evaporation, tmin,
+                        split.strftime("%Y-%m-%d"), noise=noise, stresses=stresses)
     observed, simulated = later.align(model.simulate(tmin=head.index[0], tmax=head.index[-1]), join="inner")
     spread = float(((observed - observed.mean()) ** 2).sum())
     if len(observed) < 10 or spread == 0:
@@ -254,8 +436,15 @@ def fit_series(
     holdout: float = 0.0,
     check_rows: list | None = None,
     simulation_frames: list | None = None,
+    stresses: dict | None = None,
+    precipitation_source: str | None = None,
+    evaporation_source: str | None = None,
 ) -> dict:
     """Clean, fit, save and report one series. Never raises.
+
+    ``stresses`` are the extra stresses the model type needs. ``precipitation_source`` and
+    ``evaporation_source`` (e.g. ``knmi_249``, ``radar_purmer``) are recorded on the row,
+    defaulting to ``knmi_<forcing_station>`` (see ``tarso_pipeline.inputs.InputLibrary``).
 
     ``noise`` adds a noise model (``True`` = AR(1), or "ar1" / "arma"); ``holdout``
     (0..1) adds ``r2_holdout``, the R2 on that last share of a second fit on the rest.
@@ -275,8 +464,13 @@ def fit_series(
             "model_type": model_type,
             "forcing_station": None if forcing_station is None else str(forcing_station),
             "forcing_units": forcing_units,
+            "precipitation_source": precipitation_source or _station_source(forcing_station),
+            "evaporation_source": evaporation_source or _station_source(forcing_station),
+            "extra_stresses": (",".join(MODEL_SPECS[model_type].stresses) or None)
+            if model_type in MODEL_SPECS else None,
         }
     )
+    provenance = {k: row[k] for k in PROVENANCE}
 
     try:
         cleaned: CleanedSeries = clean_head(
@@ -317,12 +511,9 @@ def fit_series(
         row["days_trimmed_from_end"] = int(coverage.days_trimmed_from_end)
         row["warmup_available_days"] = int(coverage.available_warmup_days)
 
-        model = build_model(model_type, series_name, head, precipitation, evaporation, noise=noise)
-        model.solve(
-            tmin=coverage.tmin.strftime("%Y-%m-%d"),
-            tmax=coverage.tmax.strftime("%Y-%m-%d"),
-            report=False,
-        )
+        model = solve_model(model_type, series_name, head, precipitation, evaporation,
+                            coverage.tmin.strftime("%Y-%m-%d"), coverage.tmax.strftime("%Y-%m-%d"),
+                            noise=noise, stresses=stresses)
 
         metrics = extract_metrics(model, model_type=model_type)
         row.update(metrics)
@@ -331,7 +522,8 @@ def fit_series(
             row["holdout_share"] = float(holdout)
             try:
                 row["r2_holdout"] = holdout_r2(model_type, series_name, head, precipitation, evaporation,
-                                               coverage.tmin.strftime("%Y-%m-%d"), holdout, noise=noise)
+                                               coverage.tmin.strftime("%Y-%m-%d"), holdout, noise=noise,
+                                               stresses=stresses)
             except Exception:  # noqa: BLE001 - a failed second fit must not lose the first
                 row["r2_holdout"] = None
         row.update(
@@ -341,6 +533,7 @@ def fit_series(
                 "series_name": series_name,
             }
         )
+        row.update(provenance)
         row.update(cleaned.as_row())
         row.update(observed_fields(head))
 
@@ -409,6 +602,7 @@ def fit_series(
             model_type=model_type,
             message=f"{type(exc).__name__}: {exc}",
         )
+        failure.update(provenance)
         # Keep whatever cleaning facts were established before the failure.
         for key, value in row.items():
             if value is not None and failure.get(key) is None:

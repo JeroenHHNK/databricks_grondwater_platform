@@ -28,14 +28,31 @@
 # MAGIC Then `<prefix>_model_selection`: per series x model type the "passed" stamp, the
 # MAGIC runaway check on these extremes and which model the series uses
 # MAGIC (`tarso_pipeline.selection`): among the models that pass the checks (else all), no
-# MAGIC runaway, not worse than Tarso on the holdout, the lowest AIC - a simpler model within
-# MAGIC 2 AIC wins. A person can overrule it in the app (`pastas/model_choice/`).
+# MAGIC runaway, then the holdout rules of `config/model_settings.toml` (not worse than Tarso,
+# MAGIC a bucket model not worse than without it, close to the best holdout, without giving up
+# MAGIC much R2), the lowest AIC - a simpler model within 2 AIC wins. The model types that
+# MAGIC `config/series_overrides.csv` excludes for a series are never picked. A person can
+# MAGIC overrule the pick in the app (`pastas/model_choice/`).
 # MAGIC
 # MAGIC ### What this is, and is not
 # MAGIC
 # MAGIC It is **simulation, not extrapolation**. Each `.pas` is loaded, the two stresses
 # MAGIC in its Tarso or Recharge stressmodel are replaced with one IMPREX ensemble member's forcing,
 # MAGIC and `simulate()` is called. Fitted parameters are untouched.
+# MAGIC
+# MAGIC **Extra stresses and radar** (`*_lake_baro`, `*_lake_baro_radar` model types). IMPREX
+# MAGIC has no lake level or air pressure: they are held at their calibration mean
+# MAGIC (`simulate.hold_other_stresses`), so the return periods are rain-driven, given a normal
+# MAGIC lake. IMPREX is bias-corrected to the KNMI station; a model calibrated on the polder's
+# MAGIC radar precipitation (about 10 % wetter) gets each member's precipitation scaled per
+# MAGIC calendar month by radar / station (`tarso_pipeline.inputs.InputLibrary.imprex_factors`),
+# MAGIC so its climate matches its calibration forcing.
+# MAGIC
+# MAGIC **The soil-moisture bucket** (`*_lake_baro_bucket*`) is not held: its deficit is a function
+# MAGIC of precipitation and evaporation only, so it is rebuilt from each (scaled) member's own P
+# MAGIC and E and passed to `simulate_member(synthetic=...)`
+# MAGIC (`tarso_pipeline.inputs.InputLibrary.member_forcing`). A dry IMPREX year gets its own
+# MAGIC empty bucket.
 # MAGIC
 # MAGIC The model is the only calibrated thing here. The forcing is synthetic, the heads
 # MAGIC are synthetic, and a return period is a statement about **the model's response to
@@ -100,6 +117,7 @@ dbutils.widgets.text("imprex_dir", "", "IMPREX dir (blank = <volume>/knmi_forcin
 dbutils.widgets.text("location", "berkhout", "IMPREX location")
 
 dbutils.widgets.text("forcing_units", "m", "Forcing units (match stage 2)")
+dbutils.widgets.text("station", "249", "KNMI station (match stage 2; radar scaling)")
 dbutils.widgets.text("warmup_years", "5", "Spin-up years dropped per member")
 dbutils.widgets.text("exclude_first", "450", "Least-extreme values trimmed per tail")
 dbutils.widgets.text("t_list", "2 5 10 25 50 100 250 500 1000", "Return periods")
@@ -161,6 +179,7 @@ from pyspark.sql import functions as F
 from tarso_pipeline.evt_report import RETURN_LEVEL_COLUMNS, TAILS
 from tarso_pipeline.extremes_run import discover_models, run_model
 from tarso_pipeline.imprex import discover_members
+from tarso_pipeline.inputs import OBJECT_DATA, InputLibrary, read_polders
 from tarso_pipeline.paths import (
     BIAS_LOG_FILE,
     EVT_SELECTION_FILE,
@@ -265,6 +284,13 @@ if len(members) < 16:
 from tarso_pipeline.imprex import load_member  # noqa: E402
 
 FORCING = {m.member: load_member(m, units=UNITS) for m in members}
+# Radar models: the members scaled per month to the polder's radar climate; bucket models:
+# the bucket rebuilt per member (see the top).
+_PASTAS_ROOT = os.path.dirname(SRC.rstrip("/"))
+_OBJECT_DATA = os.path.join(os.path.dirname(_PASTAS_ROOT), str(OBJECT_DATA))
+LIBRARY = InputLibrary(IMPREX_DIR, station=dbutils.widgets.get("station").strip() or "249", units=UNITS,
+                       fallback=os.path.join(_PASTAS_ROOT, "data", "forcing"),
+                       polders=read_polders(_OBJECT_DATA) if os.path.isfile(_OBJECT_DATA) else {})
 for kind in EXTREMES_DIRS:
     os.makedirs(extremes_dir(RUN_DIR, kind), exist_ok=True)
 print(f"\nartefact folders ready under {RUN_DIR}")
@@ -296,7 +322,7 @@ for item in models.itertuples():
         t_list=T_LIST,
         kept_grid=KEPT_GRID,
         make_plots=MAKE_PLOTS,
-        forcing=FORCING,
+        forcing=LIBRARY.member_forcing(item.model_type, item.meetreeks_id, FORCING),
         model_type=item.model_type,
     )
     summaries.append(result.summary)
@@ -397,6 +423,7 @@ else:
 # COMMAND ----------
 
 from tarso_pipeline.results import latest_run_sql  # noqa: E402
+from tarso_pipeline.overrides import read_overrides  # noqa: E402
 from tarso_pipeline.selection import select_models  # noqa: E402
 from tarso_pipeline.selection import spark_schema as selection_schema  # noqa: E402
 
@@ -413,7 +440,8 @@ else:
     check_rows = (spark.sql(f"SELECT * FROM ({latest_run_sql(CHECKS_TABLE)}) "
                             f"WHERE meetreeks_id IN ({quoted_ids})").toPandas()
                   if spark.catalog.tableExists(CHECKS_TABLE) else pd.DataFrame())
-    selection_models = select_models(fit_rows, check_rows, summary_frame, run_id=RUN_ID)
+    selection_models = select_models(fit_rows, check_rows, summary_frame, run_id=RUN_ID,
+                                     overrides=read_overrides())
     chosen = selection_models[selection_models["selected"]]
     print(f"{len(chosen)} series: {chosen['model_type'].value_counts().to_dict()}; "
           f"passed {int(chosen['passed'].sum())}, runaway models {int(selection_models['runaway'].sum())}")
